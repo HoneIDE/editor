@@ -15,6 +15,12 @@ pub extern "C" fn hone_editor_create(width: f64, height: f64) -> *mut EditorView
 }
 
 #[no_mangle]
+pub extern "C" fn hone_editor_attach_to_view(view: *mut EditorView, parent_view: i64) {
+    let view = unsafe { &mut *view };
+    view.parent_view = parent_view as *mut std::ffi::c_void;
+}
+
+#[no_mangle]
 pub extern "C" fn hone_editor_destroy(view: *mut EditorView) {
     if !view.is_null() { unsafe { drop(Box::from_raw(view)); } }
 }

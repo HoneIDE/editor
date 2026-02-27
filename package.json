@@ -4,6 +4,10 @@
   "description": "High-performance, cross-platform code editor surface",
   "main": "core/index.ts",
   "types": "core/index.ts",
+  "exports": {
+    ".": "./core/index.ts",
+    "./perry": "./perry/index.ts"
+  },
   "scripts": {
     "test": "bun test",
     "test:watch": "bun test --watch",
@@ -27,5 +31,57 @@
     "@lezer/generator": "^1.7.2",
     "@types/bun": "latest",
     "typescript": "^5.7.0"
+  },
+  "perry": {
+    "nativeLibrary": {
+      "module": "@honeide/editor",
+      "functions": [
+        { "name": "hone_editor_create", "params": ["f64", "f64"], "returns": "i64" },
+        { "name": "hone_editor_destroy", "params": ["i64"], "returns": "void" },
+        { "name": "hone_editor_set_font", "params": ["i64", "i64", "f64"], "returns": "void" },
+        { "name": "hone_editor_render_line", "params": ["i64", "f64", "i64", "i64", "f64"], "returns": "void" },
+        { "name": "hone_editor_set_cursor", "params": ["i64", "f64", "f64", "f64"], "returns": "void" },
+        { "name": "hone_editor_set_selection", "params": ["i64", "i64"], "returns": "void" },
+        { "name": "hone_editor_scroll", "params": ["i64", "f64"], "returns": "void" },
+        { "name": "hone_editor_measure_text", "params": ["i64", "i64"], "returns": "f64" },
+        { "name": "hone_editor_invalidate", "params": ["i64"], "returns": "void" },
+        { "name": "hone_editor_begin_frame", "params": ["i64"], "returns": "void" },
+        { "name": "hone_editor_end_frame", "params": ["i64"], "returns": "void" },
+        { "name": "hone_editor_render_ghost_text", "params": ["i64", "i64", "f64", "f64", "i64"], "returns": "void" },
+        { "name": "hone_editor_render_decorations", "params": ["i64", "i64"], "returns": "void" },
+        { "name": "hone_editor_set_cursors", "params": ["i64", "i64"], "returns": "void" },
+        { "name": "hone_editor_attach_to_view", "params": ["i64", "i64"], "returns": "void" }
+      ],
+      "targets": {
+        "macos": {
+          "crate": "native/macos/",
+          "lib": "libhone_editor_macos.a",
+          "frameworks": ["CoreText", "CoreGraphics", "CoreFoundation", "Metal", "QuartzCore"]
+        },
+        "ios": {
+          "crate": "native/ios/",
+          "lib": "libhone_editor_ios.a",
+          "frameworks": ["CoreText", "CoreGraphics", "CoreFoundation", "UIKit"]
+        },
+        "windows": {
+          "crate": "native/windows/",
+          "lib": "hone_editor_windows.lib",
+          "libs": ["dwrite", "d2d1", "dcomp"]
+        },
+        "linux": {
+          "crate": "native/linux/",
+          "lib": "libhone_editor_linux.a",
+          "pkgConfig": ["pango", "pangocairo", "cairo"]
+        },
+        "android": {
+          "crate": "native/android/",
+          "lib": "libhone_editor_android.a"
+        },
+        "web": {
+          "crate": "native/web/",
+          "lib": "hone_editor_web.wasm"
+        }
+      }
+    }
   }
 }

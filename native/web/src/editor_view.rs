@@ -23,6 +23,8 @@ pub struct EditorView {
     height: f64,
     scroll_offset_y: f64,
     needs_display: bool,
+    /// The DOM element ID of the parent container this editor is attached to.
+    pub parent_element_id: Option<String>,
     // In production: references to DOM container element, line pool, etc.
 }
 
@@ -35,6 +37,7 @@ impl EditorView {
             height,
             scroll_offset_y: 0.0,
             needs_display: true,
+            parent_element_id: None,
         }
     }
 

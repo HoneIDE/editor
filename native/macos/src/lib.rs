@@ -1,14 +1,19 @@
 //! macOS native rendering for Hone Editor.
 //!
-//! Implements the FFI contract using Core Text for text rendering,
-//! Core Animation (CALayer) for compositing, and optionally Metal
-//! for high-performance texture atlas rendering.
+//! Implements the FFI contract using Core Text for text rendering
+//! and a drawRect:-based NSView for compositing.
+
+#[macro_use]
+extern crate objc;
 
 mod text_renderer;
-mod layer_manager;
+mod view;
 mod editor_view;
+mod metal_blitter;
 
-use editor_view::EditorView;
+pub use editor_view::EditorView;
+
+use editor_view::{ActionCallback, MouseDownCallback, ScrollCallback, TextInputCallback};
 use std::ffi::{c_char, CStr};
 
 // === FFI Contract Implementation ===
@@ -16,8 +21,16 @@ use std::ffi::{c_char, CStr};
 /// Create a new editor view with the given dimensions.
 #[no_mangle]
 pub extern "C" fn hone_editor_create(width: f64, height: f64) -> *mut EditorView {
-    let view = Box::new(EditorView::new(width, height));
-    Box::into_raw(view)
+    let mut ev = Box::new(EditorView::new(width, height));
+    ev.init_nsview();
+    Box::into_raw(ev)
+}
+
+/// Attach the editor view to a parent NSView.
+#[no_mangle]
+pub extern "C" fn hone_editor_attach_to_view(view: *mut EditorView, parent_view: i64) {
+    let view = unsafe { &mut *view };
+    view.attach_to_parent(parent_view as *mut std::ffi::c_void);
 }
 
 /// Destroy an editor view and free all resources.
@@ -140,6 +153,74 @@ pub extern "C" fn hone_editor_set_cursors(
     let view = unsafe { &mut *view };
     let json_str = unsafe { CStr::from_ptr(cursors_json) }.to_str().unwrap_or("[]");
     view.set_cursors(json_str);
+}
+
+/// Set the callback for text input (printable characters).
+#[no_mangle]
+pub extern "C" fn hone_editor_set_text_input_callback(
+    view: *mut EditorView,
+    callback: TextInputCallback,
+) {
+    let view = unsafe { &mut *view };
+    view.set_text_input_callback(callback);
+}
+
+/// Set the callback for action selectors (arrows, delete, enter, etc.).
+#[no_mangle]
+pub extern "C" fn hone_editor_set_action_callback(
+    view: *mut EditorView,
+    callback: ActionCallback,
+) {
+    let view = unsafe { &mut *view };
+    view.set_action_callback(callback);
+}
+
+/// Set the callback for mouse-down events (click to position cursor).
+#[no_mangle]
+pub extern "C" fn hone_editor_set_mouse_down_callback(
+    view: *mut EditorView,
+    callback: MouseDownCallback,
+) {
+    let view = unsafe { &mut *view };
+    view.set_mouse_down_callback(callback);
+}
+
+/// Set the callback for scroll wheel events.
+#[no_mangle]
+pub extern "C" fn hone_editor_set_scroll_callback(
+    view: *mut EditorView,
+    callback: ScrollCallback,
+) {
+    let view = unsafe { &mut *view };
+    view.set_scroll_callback(callback);
+}
+
+/// Add a custom item to the editor's right-click context menu.
+/// The `action_id` is dispatched through the action callback when the item is clicked.
+#[no_mangle]
+pub extern "C" fn hone_editor_add_context_menu_item(
+    view: *mut EditorView,
+    title: *const c_char,
+    action_id: *const c_char,
+) {
+    let view = unsafe { &mut *view };
+    let title_str = unsafe { CStr::from_ptr(title) }.to_str().unwrap_or("");
+    let action_str = unsafe { CStr::from_ptr(action_id) }.to_str().unwrap_or("");
+    view.add_context_menu_item(title_str, action_str);
+}
+
+/// Remove all custom context menu items.
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_context_menu_items(view: *mut EditorView) {
+    let view = unsafe { &mut *view };
+    view.clear_context_menu_items();
+}
+
+/// Get the NSView handle for the editor view (as a raw pointer).
+#[no_mangle]
+pub extern "C" fn hone_editor_nsview(view: *mut EditorView) -> *mut std::ffi::c_void {
+    let view = unsafe { &*view };
+    view.nsview() as *mut std::ffi::c_void
 }
 
 /// Begin a frame batch.

@@ -24,6 +24,8 @@ pub struct EditorView {
     height: f64,
     scroll_offset_y: f64,
     needs_display: bool,
+    /// Pointer to the parent HWND that this editor is attached to.
+    pub parent_view: *mut std::ffi::c_void,
 }
 
 impl EditorView {
@@ -35,6 +37,7 @@ impl EditorView {
             height,
             scroll_offset_y: 0.0,
             needs_display: true,
+            parent_view: std::ptr::null_mut(),
         }
     }
 

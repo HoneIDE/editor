@@ -23,6 +23,13 @@ pub fn hone_editor_create(width: f64, height: f64) -> *mut EditorView {
     Box::into_raw(Box::new(EditorView::new(width, height)))
 }
 
+/// Attach the editor view to a parent DOM element by its ID.
+#[wasm_bindgen]
+pub fn hone_editor_attach_to_view(view: *mut EditorView, parent_element_id: &str) {
+    let view = unsafe { &mut *view };
+    view.parent_element_id = Some(parent_element_id.to_string());
+}
+
 /// Destroy an editor view.
 #[wasm_bindgen]
 pub fn hone_editor_destroy(view: *mut EditorView) {
