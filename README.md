@@ -26,7 +26,7 @@ All editor logic is written in TypeScript and shared across every platform. Nati
 |----------|---------------|--------|
 | macOS | Core Text + Core Animation | Working (interactive demo) |
 | iOS | Core Text + UIKit | Scaffolded |
-| Windows | DirectWrite + Direct2D | Scaffolded |
+| Windows | DirectWrite + Direct2D | Working (interactive demo) |
 | Linux | Pango + Cairo | Scaffolded |
 | Android | Canvas + Skia (JNI) | Scaffolded |
 | Web | DOM + CSS + WASM | Scaffolded |
@@ -89,6 +89,15 @@ cargo run --example demo_editor
 ```
 
 Opens a window with a fully interactive editor — type, navigate with arrow keys, select with Shift+arrows, copy/paste with Cmd+C/V, scroll, right-click context menu.
+
+### Run the Windows Demo
+
+```bash
+cd native/windows
+cargo run --example demo_editor
+```
+
+Opens a window with a fully interactive editor — type, navigate with arrow keys, select with Shift+arrows, copy/paste with Ctrl+C/V, scroll, right-click context menu.
 
 ## Design Decisions
 

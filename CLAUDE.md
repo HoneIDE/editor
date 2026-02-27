@@ -79,6 +79,8 @@ Install deps: `bun install`
 Build (Perry): `perry compile core/index.ts --target macos --bundle-ffi native/macos/`
 Build macOS crate: `cd native/macos && cargo build`
 Run macOS interactive demo: `cd native/macos && cargo run --example demo_editor`
+Build Windows crate: `cd native/windows && cargo build`
+Run Windows interactive demo: `cd native/windows && cargo run --example demo_editor`
 
 ## Development Phases (from PROJECT_PLAN.md)
 
@@ -124,7 +126,7 @@ Native FFI bridge, render coordinator, touch input, word wrap, all 6 platform Ru
 - [x] Word wrap engine: none/word/bounded modes, WrapCache with binary-search break finding, CJK support
 - [x] macOS Rust FFI crate: Core Text text renderer, NSView input handling (keyboard/mouse/scroll/context menu), EditorView with callbacks, interactive demo
 - [x] iOS Rust FFI crate: Core Text rendering (shared with macOS), UIKit integration, touch handler
-- [x] Windows Rust FFI crate: DirectWrite + Direct2D scaffolding
+- [x] Windows Rust FFI crate: DirectWrite + Direct2D rendering, Win32 input handling, interactive demo
 - [x] Linux Rust FFI crate: Pango + Cairo scaffolding
 - [x] Android Rust FFI crate: Canvas/Skia via JNI scaffolding
 - [x] Web Rust FFI crate: DOM rendering + WASM (wasm-bindgen), CSS generation
