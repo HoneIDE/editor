@@ -6,8 +6,14 @@
 use std::ffi::{c_char, CStr};
 
 mod editor_view;
+mod input_handler;
+mod demo_jni;
 
-use editor_view::EditorView;
+pub use editor_view::EditorView;
+
+use editor_view::{ActionCallback, MouseDownCallback, ScrollCallback, TextInputCallback};
+
+// === FFI Contract Implementation ===
 
 #[no_mangle]
 pub extern "C" fn hone_editor_create(width: f64, height: f64) -> *mut EditorView {
@@ -82,4 +88,110 @@ pub extern "C" fn hone_editor_begin_frame(view: *mut EditorView) {
 pub extern "C" fn hone_editor_end_frame(view: *mut EditorView) {
     let view = unsafe { &mut *view };
     view.end_frame();
+}
+
+// === Extended FFI (matching iOS/macOS) ===
+
+/// Render decorations (underlines, backgrounds) for a line.
+#[no_mangle]
+pub extern "C" fn hone_editor_render_decorations(
+    view: *mut EditorView,
+    decorations_json: *const c_char,
+) {
+    let view = unsafe { &mut *view };
+    let json_str = unsafe { CStr::from_ptr(decorations_json) }.to_str().unwrap_or("[]");
+    view.render_decorations(json_str);
+}
+
+/// Render ghost text (semi-transparent inline completion).
+#[no_mangle]
+pub extern "C" fn hone_editor_render_ghost_text(
+    view: *mut EditorView,
+    text: *const c_char,
+    x: f64,
+    y: f64,
+    color: *const c_char,
+) {
+    let view = unsafe { &mut *view };
+    let text_str = unsafe { CStr::from_ptr(text) }.to_str().unwrap_or("");
+    let color_str = unsafe { CStr::from_ptr(color) }.to_str().unwrap_or("#808080");
+    view.render_ghost_text(text_str, x, y, color_str);
+}
+
+/// Set multiple cursor positions.
+#[no_mangle]
+pub extern "C" fn hone_editor_set_cursors(
+    view: *mut EditorView,
+    cursors_json: *const c_char,
+) {
+    let view = unsafe { &mut *view };
+    let json_str = unsafe { CStr::from_ptr(cursors_json) }.to_str().unwrap_or("[]");
+    view.set_cursors(json_str);
+}
+
+/// Set the callback for text input (printable characters).
+#[no_mangle]
+pub extern "C" fn hone_editor_set_text_input_callback(
+    view: *mut EditorView,
+    callback: TextInputCallback,
+) {
+    let view = unsafe { &mut *view };
+    view.set_text_input_callback(callback);
+}
+
+/// Set the callback for action selectors (arrows, delete, enter, etc.).
+#[no_mangle]
+pub extern "C" fn hone_editor_set_action_callback(
+    view: *mut EditorView,
+    callback: ActionCallback,
+) {
+    let view = unsafe { &mut *view };
+    view.set_action_callback(callback);
+}
+
+/// Set the callback for touch-down events (tap to position cursor).
+#[no_mangle]
+pub extern "C" fn hone_editor_set_mouse_down_callback(
+    view: *mut EditorView,
+    callback: MouseDownCallback,
+) {
+    let view = unsafe { &mut *view };
+    view.set_mouse_down_callback(callback);
+}
+
+/// Set the callback for scroll events (pan gesture).
+#[no_mangle]
+pub extern "C" fn hone_editor_set_scroll_callback(
+    view: *mut EditorView,
+    callback: ScrollCallback,
+) {
+    let view = unsafe { &mut *view };
+    view.set_scroll_callback(callback);
+}
+
+/// Add a custom item to the editor's context menu.
+#[no_mangle]
+pub extern "C" fn hone_editor_add_context_menu_item(
+    view: *mut EditorView,
+    title: *const c_char,
+    action_id: *const c_char,
+) {
+    let view = unsafe { &mut *view };
+    let title_str = unsafe { CStr::from_ptr(title) }.to_str().unwrap_or("");
+    let action_str = unsafe { CStr::from_ptr(action_id) }.to_str().unwrap_or("");
+    view.add_context_menu_item(title_str, action_str);
+}
+
+/// Remove all custom context menu items.
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_context_menu_items(view: *mut EditorView) {
+    let view = unsafe { &mut *view };
+    view.clear_context_menu_items();
+}
+
+/// Get the Android parent view handle (as a raw pointer).
+#[no_mangle]
+pub extern "C" fn hone_editor_android_view(view: *mut EditorView) -> i64 {
+    let view = unsafe { &*view };
+    view.parent_view as i64
 }

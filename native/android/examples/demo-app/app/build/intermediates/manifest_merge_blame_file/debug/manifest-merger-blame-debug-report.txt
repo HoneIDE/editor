@@ -1,0 +1,77 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="com.honeide.demo"
+4    android:versionCode="1"
+5    android:versionName="0.2.0" >
+6
+7    <uses-sdk
+8        android:minSdkVersion="26"
+9        android:targetSdkVersion="34" />
+10
+11    <permission
+11-->[androidx.core:core:1.12.0] /Users/amlug/.gradle/caches/transforms-3/b1099485be73c56bcc4c7e4aa2f5bbb2/transformed/core-1.12.0/AndroidManifest.xml:22:5-24:47
+12        android:name="com.honeide.demo.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+12-->[androidx.core:core:1.12.0] /Users/amlug/.gradle/caches/transforms-3/b1099485be73c56bcc4c7e4aa2f5bbb2/transformed/core-1.12.0/AndroidManifest.xml:23:9-81
+13        android:protectionLevel="signature" />
+13-->[androidx.core:core:1.12.0] /Users/amlug/.gradle/caches/transforms-3/b1099485be73c56bcc4c7e4aa2f5bbb2/transformed/core-1.12.0/AndroidManifest.xml:24:9-44
+14
+15    <uses-permission android:name="com.honeide.demo.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
+15-->[androidx.core:core:1.12.0] /Users/amlug/.gradle/caches/transforms-3/b1099485be73c56bcc4c7e4aa2f5bbb2/transformed/core-1.12.0/AndroidManifest.xml:26:5-97
+15-->[androidx.core:core:1.12.0] /Users/amlug/.gradle/caches/transforms-3/b1099485be73c56bcc4c7e4aa2f5bbb2/transformed/core-1.12.0/AndroidManifest.xml:26:22-94
+16
+17    <application
+17-->/Users/amlug/projects/hone/hone-editor/native/android/examples/demo-app/app/src/main/AndroidManifest.xml:4:5-18:19
+18        android:allowBackup="false"
+18-->/Users/amlug/projects/hone/hone-editor/native/android/examples/demo-app/app/src/main/AndroidManifest.xml:5:9-36
+19        android:appComponentFactory="androidx.core.app.CoreComponentFactory"
+19-->[androidx.core:core:1.12.0] /Users/amlug/.gradle/caches/transforms-3/b1099485be73c56bcc4c7e4aa2f5bbb2/transformed/core-1.12.0/AndroidManifest.xml:28:18-86
+20        android:debuggable="true"
+21        android:extractNativeLibs="false"
+22        android:label="Hone Editor"
+22-->/Users/amlug/projects/hone/hone-editor/native/android/examples/demo-app/app/src/main/AndroidManifest.xml:6:9-36
+23        android:theme="@style/Theme.HoneEditor" >
+23-->/Users/amlug/projects/hone/hone-editor/native/android/examples/demo-app/app/src/main/AndroidManifest.xml:7:9-48
+24        <activity
+24-->/Users/amlug/projects/hone/hone-editor/native/android/examples/demo-app/app/src/main/AndroidManifest.xml:9:9-17:20
+25            android:name="com.honeide.demo.MainActivity"
+25-->/Users/amlug/projects/hone/hone-editor/native/android/examples/demo-app/app/src/main/AndroidManifest.xml:10:13-41
+26            android:exported="true"
+26-->/Users/amlug/projects/hone/hone-editor/native/android/examples/demo-app/app/src/main/AndroidManifest.xml:11:13-36
+27            android:windowSoftInputMode="adjustResize" >
+27-->/Users/amlug/projects/hone/hone-editor/native/android/examples/demo-app/app/src/main/AndroidManifest.xml:12:13-55
+28            <intent-filter>
+28-->/Users/amlug/projects/hone/hone-editor/native/android/examples/demo-app/app/src/main/AndroidManifest.xml:13:13-16:29
+29                <action android:name="android.intent.action.MAIN" />
+29-->/Users/amlug/projects/hone/hone-editor/native/android/examples/demo-app/app/src/main/AndroidManifest.xml:14:17-69
+29-->/Users/amlug/projects/hone/hone-editor/native/android/examples/demo-app/app/src/main/AndroidManifest.xml:14:25-66
+30
+31                <category android:name="android.intent.category.LAUNCHER" />
+31-->/Users/amlug/projects/hone/hone-editor/native/android/examples/demo-app/app/src/main/AndroidManifest.xml:15:17-77
+31-->/Users/amlug/projects/hone/hone-editor/native/android/examples/demo-app/app/src/main/AndroidManifest.xml:15:27-74
+32            </intent-filter>
+33        </activity>
+34
+35        <provider
+35-->[androidx.emoji2:emoji2:1.2.0] /Users/amlug/.gradle/caches/transforms-3/9ff5255ca25274e9f7d4b1ee60b5666d/transformed/emoji2-1.2.0/AndroidManifest.xml:24:9-32:20
+36            android:name="androidx.startup.InitializationProvider"
+36-->[androidx.emoji2:emoji2:1.2.0] /Users/amlug/.gradle/caches/transforms-3/9ff5255ca25274e9f7d4b1ee60b5666d/transformed/emoji2-1.2.0/AndroidManifest.xml:25:13-67
+37            android:authorities="com.honeide.demo.androidx-startup"
+37-->[androidx.emoji2:emoji2:1.2.0] /Users/amlug/.gradle/caches/transforms-3/9ff5255ca25274e9f7d4b1ee60b5666d/transformed/emoji2-1.2.0/AndroidManifest.xml:26:13-68
+38            android:exported="false" >
+38-->[androidx.emoji2:emoji2:1.2.0] /Users/amlug/.gradle/caches/transforms-3/9ff5255ca25274e9f7d4b1ee60b5666d/transformed/emoji2-1.2.0/AndroidManifest.xml:27:13-37
+39            <meta-data
+39-->[androidx.emoji2:emoji2:1.2.0] /Users/amlug/.gradle/caches/transforms-3/9ff5255ca25274e9f7d4b1ee60b5666d/transformed/emoji2-1.2.0/AndroidManifest.xml:29:13-31:52
+40                android:name="androidx.emoji2.text.EmojiCompatInitializer"
+40-->[androidx.emoji2:emoji2:1.2.0] /Users/amlug/.gradle/caches/transforms-3/9ff5255ca25274e9f7d4b1ee60b5666d/transformed/emoji2-1.2.0/AndroidManifest.xml:30:17-75
+41                android:value="androidx.startup" />
+41-->[androidx.emoji2:emoji2:1.2.0] /Users/amlug/.gradle/caches/transforms-3/9ff5255ca25274e9f7d4b1ee60b5666d/transformed/emoji2-1.2.0/AndroidManifest.xml:31:17-49
+42            <meta-data
+42-->[androidx.lifecycle:lifecycle-process:2.4.1] /Users/amlug/.gradle/caches/transforms-3/c4ac3e8cbca862d258cde842ec45ade0/transformed/lifecycle-process-2.4.1/AndroidManifest.xml:31:13-33:52
+43                android:name="androidx.lifecycle.ProcessLifecycleInitializer"
+43-->[androidx.lifecycle:lifecycle-process:2.4.1] /Users/amlug/.gradle/caches/transforms-3/c4ac3e8cbca862d258cde842ec45ade0/transformed/lifecycle-process-2.4.1/AndroidManifest.xml:32:17-78
+44                android:value="androidx.startup" />
+44-->[androidx.lifecycle:lifecycle-process:2.4.1] /Users/amlug/.gradle/caches/transforms-3/c4ac3e8cbca862d258cde842ec45ade0/transformed/lifecycle-process-2.4.1/AndroidManifest.xml:33:17-49
+45        </provider>
+46    </application>
+47
+48</manifest>

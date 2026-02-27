@@ -75,7 +75,7 @@
         },
         "android": {
           "crate": "native/android/",
-          "lib": "libhone_editor_android.a"
+          "lib": "libhone_editor_android.so"
         },
         "web": {
           "crate": "native/web/",
