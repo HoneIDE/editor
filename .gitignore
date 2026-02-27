@@ -8,3 +8,5 @@ target/
 *.lib
 *.wasm
 .DS_Store
+.env
+.env.*
