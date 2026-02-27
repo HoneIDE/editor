@@ -1,0 +1,31 @@
+{
+  "name": "@honeide/editor",
+  "version": "0.0.1",
+  "description": "High-performance, cross-platform code editor surface",
+  "main": "core/index.ts",
+  "types": "core/index.ts",
+  "scripts": {
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "bench": "bun run tests/benchmarks/keystroke-latency.ts && bun run tests/benchmarks/large-file-open.ts && bun run tests/benchmarks/scroll-perf.ts"
+  },
+  "keywords": ["editor", "code-editor", "perry", "native"],
+  "license": "MIT",
+  "dependencies": {
+    "@lezer/common": "^1.2.3",
+    "@lezer/highlight": "^1.2.1",
+    "@lezer/javascript": "^1.4.21",
+    "@lezer/html": "^1.3.10",
+    "@lezer/css": "^1.1.9",
+    "@lezer/json": "^1.0.3",
+    "@lezer/markdown": "^1.3.2",
+    "@lezer/python": "^1.1.15",
+    "@lezer/rust": "^1.0.2",
+    "@lezer/cpp": "^1.1.2"
+  },
+  "devDependencies": {
+    "@lezer/generator": "^1.7.2",
+    "@types/bun": "latest",
+    "typescript": "^5.7.0"
+  }
+}

@@ -1,0 +1,10 @@
+node_modules/
+dist/
+target/
+*.dylib
+*.so
+*.dll
+*.a
+*.lib
+*.wasm
+.DS_Store
