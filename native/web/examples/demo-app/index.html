@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hone Editor — Web Demo</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #1e1e1e; }
+canvas { display: block; outline: none; }
+</style>
+</head>
+<body>
+<canvas id="editor" tabindex="0"></canvas>
+<script>
+"use strict";
+
+// ── Token data (VS Code dark theme, matching Android/iOS/macOS demos) ──
+
+const INITIAL_CONTENT = [
+  ["import { TextBuffer } from './buffer';",
+   [{"s":0,"e":6,"c":"#c586c0","st":"normal"},{"s":7,"e":8,"c":"#d4d4d4","st":"normal"},{"s":9,"e":19,"c":"#9cdcfe","st":"normal"},{"s":20,"e":21,"c":"#d4d4d4","st":"normal"},{"s":22,"e":26,"c":"#c586c0","st":"normal"},{"s":27,"e":37,"c":"#ce9178","st":"normal"},{"s":37,"e":38,"c":"#d4d4d4","st":"normal"}]],
+  ["", []],
+  ["export class Editor {",
+   [{"s":0,"e":6,"c":"#569cd6","st":"normal"},{"s":7,"e":12,"c":"#569cd6","st":"normal"},{"s":13,"e":19,"c":"#4ec9b0","st":"normal"},{"s":20,"e":21,"c":"#d4d4d4","st":"normal"}]],
+  ["  private buffer: TextBuffer;",
+   [{"s":2,"e":9,"c":"#569cd6","st":"normal"},{"s":10,"e":16,"c":"#9cdcfe","st":"normal"},{"s":16,"e":17,"c":"#d4d4d4","st":"normal"},{"s":18,"e":28,"c":"#4ec9b0","st":"normal"},{"s":28,"e":29,"c":"#d4d4d4","st":"normal"}]],
+  ["  private cursorLine: number = 0;",
+   [{"s":2,"e":9,"c":"#569cd6","st":"normal"},{"s":10,"e":20,"c":"#9cdcfe","st":"normal"},{"s":20,"e":21,"c":"#d4d4d4","st":"normal"},{"s":22,"e":28,"c":"#4ec9b0","st":"normal"},{"s":29,"e":30,"c":"#d4d4d4","st":"normal"},{"s":31,"e":32,"c":"#b5cea8","st":"normal"}]],
+  ["", []],
+  ["  constructor(content: string) {",
+   [{"s":2,"e":13,"c":"#569cd6","st":"normal"},{"s":13,"e":14,"c":"#d4d4d4","st":"normal"},{"s":14,"e":21,"c":"#9cdcfe","st":"normal"},{"s":21,"e":22,"c":"#d4d4d4","st":"normal"},{"s":23,"e":29,"c":"#4ec9b0","st":"normal"},{"s":29,"e":30,"c":"#d4d4d4","st":"normal"},{"s":31,"e":32,"c":"#d4d4d4","st":"normal"}]],
+  ["    this.buffer = new TextBuffer(content);",
+   [{"s":4,"e":8,"c":"#569cd6","st":"normal"},{"s":8,"e":9,"c":"#d4d4d4","st":"normal"},{"s":9,"e":15,"c":"#9cdcfe","st":"normal"},{"s":16,"e":17,"c":"#d4d4d4","st":"normal"},{"s":18,"e":21,"c":"#569cd6","st":"normal"},{"s":22,"e":32,"c":"#4ec9b0","st":"normal"},{"s":32,"e":33,"c":"#d4d4d4","st":"normal"},{"s":33,"e":40,"c":"#9cdcfe","st":"normal"},{"s":40,"e":41,"c":"#d4d4d4","st":"normal"},{"s":41,"e":42,"c":"#d4d4d4","st":"normal"}]],
+  ["  }",
+   [{"s":2,"e":3,"c":"#d4d4d4","st":"normal"}]],
+  ["", []],
+  ["  // Insert text at the cursor position",
+   [{"s":2,"e":40,"c":"#6a9955","st":"italic"}]],
+  ["  insert(text: string): void {",
+   [{"s":2,"e":8,"c":"#dcdcaa","st":"normal"},{"s":8,"e":9,"c":"#d4d4d4","st":"normal"},{"s":9,"e":13,"c":"#9cdcfe","st":"normal"},{"s":13,"e":14,"c":"#d4d4d4","st":"normal"},{"s":15,"e":21,"c":"#4ec9b0","st":"normal"},{"s":21,"e":22,"c":"#d4d4d4","st":"normal"},{"s":23,"e":27,"c":"#569cd6","st":"normal"},{"s":28,"e":29,"c":"#d4d4d4","st":"normal"}]],
+  ["    this.buffer.insert(this.cursorLine, text);",
+   [{"s":4,"e":8,"c":"#569cd6","st":"normal"},{"s":8,"e":9,"c":"#d4d4d4","st":"normal"},{"s":9,"e":15,"c":"#9cdcfe","st":"normal"},{"s":15,"e":16,"c":"#d4d4d4","st":"normal"},{"s":16,"e":22,"c":"#dcdcaa","st":"normal"},{"s":22,"e":23,"c":"#d4d4d4","st":"normal"},{"s":23,"e":27,"c":"#569cd6","st":"normal"},{"s":27,"e":28,"c":"#d4d4d4","st":"normal"},{"s":28,"e":38,"c":"#9cdcfe","st":"normal"},{"s":38,"e":39,"c":"#d4d4d4","st":"normal"},{"s":40,"e":44,"c":"#9cdcfe","st":"normal"},{"s":44,"e":45,"c":"#d4d4d4","st":"normal"},{"s":45,"e":46,"c":"#d4d4d4","st":"normal"}]],
+  ["  }",
+   [{"s":2,"e":3,"c":"#d4d4d4","st":"normal"}]],
+  ["}",
+   [{"s":0,"e":1,"c":"#d4d4d4","st":"normal"}]],
+];
+
+// ── DemoEditor ──
+
+class DemoEditor {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext("2d");
+    this.dpr = window.devicePixelRatio || 1;
+
+    // Editor state
+    this.lines = INITIAL_CONTENT.map(([text]) => text);
+    this.originalLines = INITIAL_CONTENT.map(([text, tokens]) => ({ text, tokens }));
+    this.lineOrigins = this.lines.map((_, i) => i);
+    this.cursorLine = 0;
+    this.cursorCol = 0;
+    this.selAnchor = null; // {line, col} or null
+    this.scrollY = 0;
+
+    // Metrics
+    this.fontSize = 14;
+    this.fontFamily = "Menlo, Consolas, 'Courier New', monospace";
+    this.lineHeight = 21;
+    this.charWidth = 0;
+    this.width = 0;
+    this.height = 0;
+
+    // Cursor blink
+    this.cursorVisible = true;
+    this.blinkTimer = null;
+
+    this._measureFont();
+    this._resize();
+    this._startBlink();
+    this._bindEvents();
+    this.render();
+  }
+
+  _measureFont() {
+    const ctx = this.ctx;
+    ctx.font = `${this.fontSize}px ${this.fontFamily}`;
+    this.charWidth = ctx.measureText("M").width;
+  }
+
+  _resize() {
+    const dpr = this.dpr;
+    this.width = window.innerWidth;
+    this.height = window.innerHeight;
+    this.canvas.width = this.width * dpr;
+    this.canvas.height = this.height * dpr;
+    this.canvas.style.width = this.width + "px";
+    this.canvas.style.height = this.height + "px";
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this._measureFont();
+  }
+
+  _startBlink() {
+    clearInterval(this.blinkTimer);
+    this.cursorVisible = true;
+    this.blinkTimer = setInterval(() => {
+      this.cursorVisible = !this.cursorVisible;
+      this.render();
+    }, 530);
+  }
+
+  _resetBlink() {
+    this.cursorVisible = true;
+    this._startBlink();
+  }
+
+  // ── Metrics ──
+
+  gutterWidth() {
+    const digits = Math.max(2, Math.floor(Math.log10(Math.max(this.lines.length, 1))) + 1);
+    return digits * this.charWidth + 36;
+  }
+
+  totalContentHeight() {
+    return this.lines.length * this.lineHeight;
+  }
+
+  measureText(text) {
+    return text.length * this.charWidth;
+  }
+
+  tokensForLine(idx) {
+    const origin = this.lineOrigins[idx];
+    if (origin === undefined || origin >= this.originalLines.length) return [];
+    const orig = this.originalLines[origin];
+    const currentText = this.lines[idx];
+    if (currentText === orig.text) return orig.tokens;
+    if (currentText.length === 0) return [];
+
+    const origText = orig.text;
+    const origLen = origText.length;
+    const currLen = currentText.length;
+    const DEFAULT_C = "#d4d4d4";
+    const DEFAULT_ST = "normal";
+
+    // Find common prefix and suffix to map original positions to current
+    let prefixLen = 0;
+    while (prefixLen < origLen && prefixLen < currLen &&
+           origText[prefixLen] === currentText[prefixLen]) prefixLen++;
+    let suffixLen = 0;
+    while (suffixLen < (origLen - prefixLen) && suffixLen < (currLen - prefixLen) &&
+           origText[origLen - 1 - suffixLen] === currentText[currLen - 1 - suffixLen]) suffixLen++;
+
+    // Expand changed region to word boundaries so entire affected words go gray
+    const isWordChar = (ch) => /\w/.test(ch);
+    while (prefixLen > 0 && isWordChar(origText[prefixLen - 1])) prefixLen--;
+    while (suffixLen > 0 && isWordChar(origText[origLen - suffixLen])) suffixLen--;
+
+    const delta = currLen - origLen;
+    const origChangeEnd = origLen - suffixLen;
+
+    // Build per-character color/style arrays for current text
+    const colors = new Array(currLen).fill(DEFAULT_C);
+    const styles = new Array(currLen).fill(DEFAULT_ST);
+    for (const tok of orig.tokens) {
+      for (let p = tok.s; p < tok.e && p < origLen; p++) {
+        let cp;
+        if (p < prefixLen) cp = p;
+        else if (p >= origChangeEnd) cp = p + delta;
+        else continue; // in changed region — stays default
+        if (cp >= 0 && cp < currLen) {
+          colors[cp] = tok.c;
+          styles[cp] = tok.st;
+        }
+      }
+    }
+
+    // Merge consecutive same-colored characters into token spans
+    const tokens = [];
+    let start = 0;
+    for (let i = 1; i <= currLen; i++) {
+      if (i === currLen || colors[i] !== colors[start] || styles[i] !== styles[start]) {
+        tokens.push({ s: start, e: i, c: colors[start], st: styles[start] });
+        start = i;
+      }
+    }
+    return tokens;
+  }
+
+  // ── Cursor/scroll helpers ──
+
+  clampCursor() {
+    if (this.cursorLine >= this.lines.length) {
+      this.cursorLine = Math.max(0, this.lines.length - 1);
+    }
+    const lineLen = this.lines[this.cursorLine].length;
+    if (this.cursorCol > lineLen) this.cursorCol = lineLen;
+  }
+
+  clampScroll() {
+    const maxScroll = Math.max(0, this.totalContentHeight() - this.height);
+    this.scrollY = Math.max(0, Math.min(this.scrollY, maxScroll));
+  }
+
+  scrollToCursor() {
+    const cursorTop = this.cursorLine * this.lineHeight;
+    const cursorBottom = cursorTop + this.lineHeight;
+    if (cursorTop < this.scrollY) {
+      this.scrollY = cursorTop;
+    } else if (cursorBottom > this.scrollY + this.height) {
+      this.scrollY = cursorBottom - this.height;
+    }
+    this.clampScroll();
+  }
+
+  // ── Selection ──
+
+  selectionRange() {
+    if (!this.selAnchor) return null;
+    const { line: al, col: ac } = this.selAnchor;
+    const cl = this.cursorLine, cc = this.cursorCol;
+    if (al < cl || (al === cl && ac <= cc)) {
+      return { sl: al, sc: ac, el: cl, ec: cc };
+    } else {
+      return { sl: cl, sc: cc, el: al, ec: ac };
+    }
+  }
+
+  hasSelection() {
+    if (!this.selAnchor) return false;
+    return this.selAnchor.line !== this.cursorLine || this.selAnchor.col !== this.cursorCol;
+  }
+
+  deleteSelection() {
+    const range = this.selectionRange();
+    if (!range) return;
+    const { sl, sc, el, ec } = range;
+    if (sl === el) {
+      this.lines[sl] = this.lines[sl].slice(0, sc) + this.lines[sl].slice(ec);
+    } else {
+      const tail = this.lines[el].slice(ec);
+      this.lines[sl] = this.lines[sl].slice(0, sc) + tail;
+      this.lines.splice(sl + 1, el - sl);
+      this.lineOrigins.splice(sl + 1, el - sl);
+    }
+    this.cursorLine = sl;
+    this.cursorCol = sc;
+    this.selAnchor = null;
+  }
+
+  selectAll() {
+    this.selAnchor = { line: 0, col: 0 };
+    const last = this.lines.length - 1;
+    this.cursorLine = last;
+    this.cursorCol = this.lines[last].length;
+  }
+
+  selectedText() {
+    const range = this.selectionRange();
+    if (!range) return "";
+    const { sl, sc, el, ec } = range;
+    if (sl === el) return this.lines[sl].slice(sc, ec);
+    let result = this.lines[sl].slice(sc);
+    for (let i = sl + 1; i < el; i++) {
+      result += "\n" + this.lines[i];
+    }
+    result += "\n" + this.lines[el].slice(0, ec);
+    return result;
+  }
+
+  // ── Editing ──
+
+  insertText(text) {
+    if (this.hasSelection()) this.deleteSelection();
+    const parts = text.split("\n");
+    for (let i = 0; i < parts[0].length; i++) {
+      const ch = parts[0][i];
+      this.lines[this.cursorLine] =
+        this.lines[this.cursorLine].slice(0, this.cursorCol) + ch +
+        this.lines[this.cursorLine].slice(this.cursorCol);
+      this.cursorCol++;
+    }
+    for (let p = 1; p < parts.length; p++) {
+      const tail = this.lines[this.cursorLine].slice(this.cursorCol);
+      this.lines[this.cursorLine] = this.lines[this.cursorLine].slice(0, this.cursorCol);
+      this.cursorLine++;
+      this.lines.splice(this.cursorLine, 0, tail);
+      this.lineOrigins.splice(this.cursorLine, 0, this.lineOrigins[this.cursorLine - 1]);
+      this.cursorCol = 0;
+      for (let i = 0; i < parts[p].length; i++) {
+        const ch = parts[p][i];
+        this.lines[this.cursorLine] =
+          this.lines[this.cursorLine].slice(0, this.cursorCol) + ch +
+          this.lines[this.cursorLine].slice(this.cursorCol);
+        this.cursorCol++;
+      }
+    }
+    this.selAnchor = null;
+    this.scrollToCursor();
+  }
+
+  insertNewline() {
+    if (this.hasSelection()) this.deleteSelection();
+    const tail = this.lines[this.cursorLine].slice(this.cursorCol);
+    this.lines[this.cursorLine] = this.lines[this.cursorLine].slice(0, this.cursorCol);
+    this.cursorLine++;
+    this.lines.splice(this.cursorLine, 0, tail);
+    this.lineOrigins.splice(this.cursorLine, 0, this.lineOrigins[this.cursorLine - 1]);
+    this.cursorCol = 0;
+    this.selAnchor = null;
+    this.scrollToCursor();
+  }
+
+  deleteBackward() {
+    if (this.hasSelection()) { this.deleteSelection(); return; }
+    if (this.cursorCol > 0) {
+      this.lines[this.cursorLine] =
+        this.lines[this.cursorLine].slice(0, this.cursorCol - 1) +
+        this.lines[this.cursorLine].slice(this.cursorCol);
+      this.cursorCol--;
+    } else if (this.cursorLine > 0) {
+      this.lineOrigins.splice(this.cursorLine, 1);
+      const current = this.lines.splice(this.cursorLine, 1)[0];
+      this.cursorLine--;
+      this.cursorCol = this.lines[this.cursorLine].length;
+      this.lines[this.cursorLine] += current;
+    }
+    this.selAnchor = null;
+    this.scrollToCursor();
+  }
+
+  deleteForward() {
+    if (this.hasSelection()) { this.deleteSelection(); return; }
+    const lineLen = this.lines[this.cursorLine].length;
+    if (this.cursorCol < lineLen) {
+      this.lines[this.cursorLine] =
+        this.lines[this.cursorLine].slice(0, this.cursorCol) +
+        this.lines[this.cursorLine].slice(this.cursorCol + 1);
+    } else if (this.cursorLine + 1 < this.lines.length) {
+      this.lineOrigins.splice(this.cursorLine + 1, 1);
+      const next = this.lines.splice(this.cursorLine + 1, 1)[0];
+      this.lines[this.cursorLine] += next;
+    }
+    this.selAnchor = null;
+  }
+
+  insertTab() {
+    if (this.hasSelection()) this.deleteSelection();
+    this.insertText("  ");
+  }
+
+  // ── Navigation ──
+
+  moveLeft(extend) {
+    if (extend && !this.selAnchor) {
+      this.selAnchor = { line: this.cursorLine, col: this.cursorCol };
+    }
+    if (!extend && this.hasSelection()) {
+      const r = this.selectionRange();
+      this.cursorLine = r.sl; this.cursorCol = r.sc;
+      this.selAnchor = null; return;
+    }
+    if (this.cursorCol > 0) {
+      this.cursorCol--;
+    } else if (this.cursorLine > 0) {
+      this.cursorLine--;
+      this.cursorCol = this.lines[this.cursorLine].length;
+    }
+    if (!extend) this.selAnchor = null;
+  }
+
+  moveRight(extend) {
+    if (extend && !this.selAnchor) {
+      this.selAnchor = { line: this.cursorLine, col: this.cursorCol };
+    }
+    if (!extend && this.hasSelection()) {
+      const r = this.selectionRange();
+      this.cursorLine = r.el; this.cursorCol = r.ec;
+      this.selAnchor = null; return;
+    }
+    const lineLen = this.lines[this.cursorLine].length;
+    if (this.cursorCol < lineLen) {
+      this.cursorCol++;
+    } else if (this.cursorLine + 1 < this.lines.length) {
+      this.cursorLine++;
+      this.cursorCol = 0;
+    }
+    if (!extend) this.selAnchor = null;
+  }
+
+  moveUp(extend) {
+    if (extend && !this.selAnchor) {
+      this.selAnchor = { line: this.cursorLine, col: this.cursorCol };
+    }
+    if (!extend && this.hasSelection()) {
+      const r = this.selectionRange();
+      this.cursorLine = r.sl; this.cursorCol = r.sc;
+      this.selAnchor = null;
+    }
+    if (this.cursorLine > 0) {
+      this.cursorLine--;
+      this.clampCursor();
+    }
+    if (!extend) this.selAnchor = null;
+    this.scrollToCursor();
+  }
+
+  moveDown(extend) {
+    if (extend && !this.selAnchor) {
+      this.selAnchor = { line: this.cursorLine, col: this.cursorCol };
+    }
+    if (!extend && this.hasSelection()) {
+      const r = this.selectionRange();
+      this.cursorLine = r.el; this.cursorCol = r.ec;
+      this.selAnchor = null;
+    }
+    if (this.cursorLine + 1 < this.lines.length) {
+      this.cursorLine++;
+      this.clampCursor();
+    }
+    if (!extend) this.selAnchor = null;
+    this.scrollToCursor();
+  }
+
+  moveToBeginningOfLine(extend) {
+    if (extend && !this.selAnchor) {
+      this.selAnchor = { line: this.cursorLine, col: this.cursorCol };
+    }
+    this.cursorCol = 0;
+    if (!extend) this.selAnchor = null;
+  }
+
+  moveToEndOfLine(extend) {
+    if (extend && !this.selAnchor) {
+      this.selAnchor = { line: this.cursorLine, col: this.cursorCol };
+    }
+    this.cursorCol = this.lines[this.cursorLine].length;
+    if (!extend) this.selAnchor = null;
+  }
+
+  // ── Mouse/touch ──
+
+  tapToCursor(x, y) {
+    const gutterW = this.gutterWidth();
+    const line = Math.min(
+      Math.floor((y + this.scrollY) / this.lineHeight),
+      Math.max(0, this.lines.length - 1)
+    );
+    const textX = x - gutterW;
+    const col = textX <= 0 ? 0 : Math.min(
+      Math.round(textX / this.charWidth),
+      this.lines[line].length
+    );
+    this.cursorLine = line;
+    this.cursorCol = col;
+    this.selAnchor = null;
+  }
+
+  // ── Rendering ──
+
+  render() {
+    const ctx = this.ctx;
+    const w = this.width;
+    const h = this.height;
+    const gutterW = this.gutterWidth();
+
+    // Background
+    ctx.fillStyle = "#1e1e1e";
+    ctx.fillRect(0, 0, w, h);
+
+    // Gutter background
+    ctx.fillStyle = "#252526";
+    ctx.fillRect(0, 0, gutterW, h);
+
+    ctx.font = `${this.fontSize}px ${this.fontFamily}`;
+    ctx.textBaseline = "middle";
+
+    const firstVisible = Math.floor(this.scrollY / this.lineHeight);
+    const visibleCount = Math.ceil(h / this.lineHeight) + 2;
+    const lastVisible = Math.min(firstVisible + visibleCount, this.lines.length);
+
+    // Selection highlight
+    if (this.hasSelection()) {
+      const range = this.selectionRange();
+      ctx.fillStyle = "rgba(38, 79, 120, 0.7)";
+      for (let i = range.sl; i <= range.el; i++) {
+        if (i < firstVisible || i >= lastVisible) continue;
+        const colStart = i === range.sl ? range.sc : 0;
+        const colEnd = i === range.el ? range.ec : this.lines[i].length;
+        const xStart = gutterW + colStart * this.charWidth;
+        const xEnd = gutterW + colEnd * this.charWidth;
+        const yy = i * this.lineHeight - this.scrollY;
+        const selW = xEnd - xStart;
+        if (selW > 0) {
+          ctx.fillRect(xStart, yy, selW, this.lineHeight);
+        }
+      }
+    }
+
+    // Lines
+    for (let i = firstVisible; i < lastVisible; i++) {
+      const y = i * this.lineHeight - this.scrollY;
+      const textY = y + this.lineHeight / 2;
+
+      // Line number
+      const lineNum = String(i + 1);
+      ctx.fillStyle = i === this.cursorLine ? "#c6c6c6" : "#858585";
+      ctx.textAlign = "right";
+      ctx.fillText(lineNum, gutterW - 18, textY);
+      ctx.textAlign = "left";
+
+      // Tokens
+      const tokens = this.tokensForLine(i);
+      const text = this.lines[i];
+      if (tokens.length === 0) {
+        ctx.fillStyle = "#d4d4d4";
+        ctx.fillText(text, gutterW, textY);
+      } else {
+        // Draw full text in default color first (fills gaps in token data)
+        ctx.fillStyle = "#d4d4d4";
+        ctx.fillText(text, gutterW, textY);
+        // Overlay non-default colored tokens
+        for (const tok of tokens) {
+          if (tok.c === "#d4d4d4" && tok.st !== "italic") continue;
+          const s = Math.min(tok.s, text.length);
+          const e = Math.min(tok.e, text.length);
+          const span = text.slice(s, e);
+          if (!span) continue;
+          const xOff = gutterW + s * this.charWidth;
+          ctx.fillStyle = tok.c;
+          if (tok.st === "italic") {
+            ctx.font = `italic ${this.fontSize}px ${this.fontFamily}`;
+          }
+          ctx.fillText(span, xOff, textY);
+          if (tok.st === "italic") {
+            ctx.font = `${this.fontSize}px ${this.fontFamily}`;
+          }
+        }
+      }
+    }
+
+    // Cursor
+    if (this.cursorVisible) {
+      const cursorX = gutterW + this.cursorCol * this.charWidth;
+      const cursorY = this.cursorLine * this.lineHeight - this.scrollY;
+      ctx.fillStyle = "#aeafad";
+      ctx.fillRect(cursorX, cursorY, 2, this.lineHeight);
+    }
+
+    // Gutter separator
+    ctx.strokeStyle = "#3c3c3c";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(gutterW - 0.5, 0);
+    ctx.lineTo(gutterW - 0.5, h);
+    ctx.stroke();
+  }
+
+  // ── Event binding ──
+
+  _bindEvents() {
+    // Keyboard
+    this.canvas.addEventListener("keydown", (e) => this._onKeyDown(e));
+
+    // Mouse
+    this.canvas.addEventListener("mousedown", (e) => this._onMouseDown(e));
+    this.canvas.addEventListener("mousemove", (e) => this._onMouseMove(e));
+    this.canvas.addEventListener("mouseup", () => this._onMouseUp());
+
+    // Scroll
+    this.canvas.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      this.scrollY += e.deltaY;
+      this.clampScroll();
+      this.render();
+    }, { passive: false });
+
+    // Resize
+    window.addEventListener("resize", () => {
+      this._resize();
+      this.clampScroll();
+      this.render();
+    });
+
+    // Focus
+    this.canvas.focus();
+  }
+
+  _onKeyDown(e) {
+    const shift = e.shiftKey;
+    const meta = e.metaKey || e.ctrlKey;
+    let handled = true;
+
+    if (meta && e.key === "c") {
+      if (this.hasSelection()) {
+        navigator.clipboard.writeText(this.selectedText());
+      }
+    } else if (meta && e.key === "x") {
+      if (this.hasSelection()) {
+        navigator.clipboard.writeText(this.selectedText());
+        this.deleteSelection();
+      }
+    } else if (meta && e.key === "v") {
+      navigator.clipboard.readText().then((text) => {
+        if (text) {
+          this.insertText(text);
+          this._resetBlink();
+          this.render();
+        }
+      });
+    } else if (meta && e.key === "a") {
+      this.selectAll();
+    } else if (e.key === "ArrowLeft") {
+      this.moveLeft(shift);
+    } else if (e.key === "ArrowRight") {
+      this.moveRight(shift);
+    } else if (e.key === "ArrowUp") {
+      this.moveUp(shift);
+    } else if (e.key === "ArrowDown") {
+      this.moveDown(shift);
+    } else if (e.key === "Home" || (meta && e.key === "ArrowLeft")) {
+      this.moveToBeginningOfLine(shift);
+    } else if (e.key === "End" || (meta && e.key === "ArrowRight")) {
+      this.moveToEndOfLine(shift);
+    } else if (e.key === "Backspace") {
+      this.deleteBackward();
+    } else if (e.key === "Delete") {
+      this.deleteForward();
+    } else if (e.key === "Enter") {
+      this.insertNewline();
+    } else if (e.key === "Tab") {
+      this.insertTab();
+    } else if (e.key === "Escape") {
+      this.selAnchor = null;
+    } else if (e.key.length === 1 && !meta) {
+      this.insertText(e.key);
+    } else {
+      handled = false;
+    }
+
+    if (handled) {
+      e.preventDefault();
+      this._resetBlink();
+      this.render();
+    }
+  }
+
+  _mouseDown = false;
+
+  _onMouseDown(e) {
+    const rect = this.canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    if (e.shiftKey) {
+      // Extend selection
+      if (!this.selAnchor) {
+        this.selAnchor = { line: this.cursorLine, col: this.cursorCol };
+      }
+      this.tapToCursor(x, y);
+      // Keep selAnchor, just move cursor
+      const gutterW = this.gutterWidth();
+      const line = Math.min(
+        Math.floor((y + this.scrollY) / this.lineHeight),
+        Math.max(0, this.lines.length - 1)
+      );
+      const textX = x - gutterW;
+      const col = textX <= 0 ? 0 : Math.min(
+        Math.round(textX / this.charWidth),
+        this.lines[line].length
+      );
+      this.cursorLine = line;
+      this.cursorCol = col;
+    } else {
+      this.tapToCursor(x, y);
+    }
+
+    this._mouseDown = true;
+    this._resetBlink();
+    this.render();
+    this.canvas.focus();
+  }
+
+  _onMouseMove(e) {
+    if (!this._mouseDown) return;
+    const rect = this.canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    if (!this.selAnchor) {
+      this.selAnchor = { line: this.cursorLine, col: this.cursorCol };
+    }
+
+    const gutterW = this.gutterWidth();
+    const line = Math.min(
+      Math.floor((y + this.scrollY) / this.lineHeight),
+      Math.max(0, this.lines.length - 1)
+    );
+    const textX = x - gutterW;
+    const col = textX <= 0 ? 0 : Math.min(
+      Math.round(textX / this.charWidth),
+      this.lines[line].length
+    );
+    this.cursorLine = line;
+    this.cursorCol = col;
+
+    this._resetBlink();
+    this.render();
+  }
+
+  _onMouseUp() {
+    this._mouseDown = false;
+  }
+}
+
+// ── Init ──
+
+const canvas = document.getElementById("editor");
+const editor = new DemoEditor(canvas);
+</script>
+</body>
+</html>

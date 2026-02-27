@@ -25,11 +25,11 @@ All editor logic is written in TypeScript and shared across every platform. Nati
 | Platform | Text Rendering | Status |
 |----------|---------------|--------|
 | macOS | Core Text + Core Animation | Working (interactive demo) |
-| iOS | Core Text + UIKit | Scaffolded |
+| iOS | Core Text + UIKit | Working (interactive demo) |
 | Windows | DirectWrite + Direct2D | Working (interactive demo) |
 | Linux | Pango + Cairo | Scaffolded |
-| Android | Canvas + Skia (JNI) | Scaffolded |
-| Web | DOM + CSS + WASM | Scaffolded |
+| Android | Canvas + Skia (JNI) | Working (interactive demo) |
+| Web | Canvas + DOM | Working (interactive demo) |
 
 ## Architecture
 
@@ -98,6 +98,33 @@ cargo run --example demo_editor
 ```
 
 Opens a window with a fully interactive editor — type, navigate with arrow keys, select with Shift+arrows, copy/paste with Ctrl+C/V, scroll, right-click context menu.
+
+### Run the Web Demo
+
+```bash
+cd native/web
+bash run-demo.sh
+```
+
+Opens a browser with a fully interactive Canvas-based editor — type, navigate with arrow keys, select with Shift+arrows, copy/paste with Cmd/Ctrl+C/V, mouse click to position cursor, scroll.
+
+### Run the Android Demo
+
+```bash
+cd native/android
+bash run-demo.sh
+```
+
+Builds the Rust JNI library, installs the Kotlin demo app on an Android emulator, and launches a fully interactive editor.
+
+### Run the iOS Demo
+
+```bash
+cd native/ios
+cargo run --example demo_editor_ios
+```
+
+Launches a fully interactive editor in the iOS Simulator with touch input, soft keyboard, and syntax highlighting.
 
 ## Design Decisions
 

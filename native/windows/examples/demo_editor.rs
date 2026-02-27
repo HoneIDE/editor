@@ -35,6 +35,7 @@ struct DemoEditor {
     lines: Vec<String>,
     /// Per-line token JSON — maps original line content → token data.
     original_lines: Vec<(String, String)>,
+    line_origins: Vec<usize>,
     cursor_line: usize,
     cursor_col: usize,
     sel_anchor: Option<(usize, usize)>,
@@ -102,6 +103,100 @@ fn initial_content() -> Vec<(String, String)> {
     ]
 }
 
+// ── Token validation helpers ────────────────────────────────────
+
+fn extract_json_int(s: &str, key: &str) -> Option<usize> {
+    let idx = s.find(key)? + key.len();
+    let rest = &s[idx..];
+    let end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+    if end == 0 { return None; }
+    rest[..end].parse().ok()
+}
+
+fn extract_json_str<'a>(s: &'a str, key: &str) -> &'a str {
+    if let Some(idx) = s.find(key) {
+        let rest = &s[idx + key.len()..];
+        if let Some(end) = rest.find('"') {
+            return &rest[..end];
+        }
+    }
+    ""
+}
+
+fn validate_tokens_json(tokens_json: &str, orig_text: &str, curr_text: &str) -> String {
+    if tokens_json == "[]" || curr_text.is_empty() {
+        return "[]".to_string();
+    }
+    let orig_bytes = orig_text.as_bytes();
+    let curr_bytes = curr_text.as_bytes();
+    let orig_len = orig_bytes.len();
+    let curr_len = curr_bytes.len();
+    let mut prefix_len = 0;
+    while prefix_len < orig_len && prefix_len < curr_len
+        && orig_bytes[prefix_len] == curr_bytes[prefix_len] { prefix_len += 1; }
+    let mut suffix_len = 0;
+    while suffix_len < (orig_len - prefix_len) && suffix_len < (curr_len - prefix_len)
+        && orig_bytes[orig_len - 1 - suffix_len] == curr_bytes[curr_len - 1 - suffix_len] { suffix_len += 1; }
+
+    // Expand changed region to word boundaries so entire affected words go gray
+    fn is_word_byte(b: u8) -> bool { b.is_ascii_alphanumeric() || b == b'_' }
+    while prefix_len > 0 && is_word_byte(orig_bytes[prefix_len - 1]) { prefix_len -= 1; }
+    while suffix_len > 0 && is_word_byte(orig_bytes[orig_len - suffix_len]) { suffix_len -= 1; }
+
+    let delta = curr_len as isize - orig_len as isize;
+    let orig_change_end = orig_len - suffix_len;
+    let default_c = "#d4d4d4";
+    let default_st = "normal";
+    let mut colors: Vec<&str> = vec![default_c; curr_len];
+    let mut styles: Vec<&str> = vec![default_st; curr_len];
+    let json_bytes = tokens_json.as_bytes();
+    let json_len = json_bytes.len();
+    let mut i = 0;
+    while i < json_len {
+        if json_bytes[i] == b'{' {
+            let start = i;
+            let mut depth = 1u32;
+            i += 1;
+            while i < json_len && depth > 0 {
+                if json_bytes[i] == b'{' { depth += 1; }
+                if json_bytes[i] == b'}' { depth -= 1; }
+                i += 1;
+            }
+            let obj_str = &tokens_json[start..i];
+            if let (Some(s), Some(e)) = (
+                extract_json_int(obj_str, "\"s\":"),
+                extract_json_int(obj_str, "\"e\":"),
+            ) {
+                let c = extract_json_str(obj_str, "\"c\":\"");
+                let st = extract_json_str(obj_str, "\"st\":\"");
+                let c = if c.is_empty() { default_c } else { c };
+                let st = if st.is_empty() { default_st } else { st };
+                for p in s..e.min(orig_len) {
+                    let cp = if p < prefix_len { p as isize }
+                        else if p >= orig_change_end { p as isize + delta }
+                        else { continue };
+                    if cp >= 0 && (cp as usize) < curr_len {
+                        colors[cp as usize] = c;
+                        styles[cp as usize] = st;
+                    }
+                }
+            }
+        } else { i += 1; }
+    }
+    let mut result = Vec::new();
+    let mut span_start = 0;
+    for j in 1..=curr_len {
+        if j == curr_len || colors[j] != colors[span_start] || styles[j] != styles[span_start] {
+            result.push(format!(
+                r#"{{"s":{},"e":{},"c":"{}","st":"{}"}}"#,
+                span_start, j, colors[span_start], styles[span_start]
+            ));
+            span_start = j;
+        }
+    }
+    format!("[{}]", result.join(","))
+}
+
 /// Global mutable state — required because extern "C" callbacks can't capture.
 static mut DEMO: Option<DemoEditor> = None;
 
@@ -109,9 +204,11 @@ impl DemoEditor {
     fn new(editor_ptr: *mut u8, char_width: f64, line_height: f64, view_height: f64) -> Self {
         let content = initial_content();
         let lines: Vec<String> = content.iter().map(|(t, _)| t.clone()).collect();
+        let line_origins = (0..lines.len()).collect();
         DemoEditor {
             lines,
             original_lines: content,
+            line_origins,
             cursor_line: 0,
             cursor_col: 0,
             sel_anchor: None,
@@ -123,16 +220,15 @@ impl DemoEditor {
         }
     }
 
-    /// Get token JSON for a line. If the line text matches an original line,
-    /// use the original tokens (syntax highlighting is restored on undo).
-    fn tokens_for_line(&self, idx: usize) -> &str {
-        let text = &self.lines[idx];
-        for (orig_text, orig_tokens) in &self.original_lines {
-            if text == orig_text {
-                return orig_tokens;
-            }
+    /// Get token JSON for a line, validating individual token spans.
+    fn tokens_for_line(&self, idx: usize) -> String {
+        let origin = self.line_origins[idx];
+        let (orig_text, orig_tokens) = &self.original_lines[origin];
+        let current_text = &self.lines[idx];
+        if current_text == orig_text {
+            return orig_tokens.clone();
         }
-        "[]"
+        validate_tokens_json(orig_tokens, orig_text, current_text)
     }
 
     /// Position cursor from a click at (x, y) in view coordinates.
@@ -275,6 +371,7 @@ impl DemoEditor {
             }
             self.cursor_line = sl;
             self.cursor_col = sc;
+            self.line_origins.drain((sl + 1)..=el);
         }
         self.sel_anchor = None;
     }
@@ -295,6 +392,7 @@ impl DemoEditor {
                 self.lines[self.cursor_line].truncate(self.cursor_col);
                 self.cursor_line += 1;
                 self.lines.insert(self.cursor_line, tail);
+                self.line_origins.insert(self.cursor_line, self.line_origins[self.cursor_line - 1]);
                 self.cursor_col = 0;
                 for ch in part.chars() {
                     self.lines[self.cursor_line].insert(self.cursor_col, ch);
@@ -314,6 +412,7 @@ impl DemoEditor {
         self.lines[self.cursor_line].truncate(self.cursor_col);
         self.cursor_line += 1;
         self.lines.insert(self.cursor_line, tail);
+        self.line_origins.insert(self.cursor_line, self.line_origins[self.cursor_line - 1]);
         self.cursor_col = 0;
         self.sel_anchor = None;
         self.scroll_to_cursor();
@@ -334,6 +433,7 @@ impl DemoEditor {
             self.lines[self.cursor_line].replace_range(prev_char_start..self.cursor_col, "");
             self.cursor_col = prev_char_start;
         } else if self.cursor_line > 0 {
+            self.line_origins.remove(self.cursor_line);
             let current_line = self.lines.remove(self.cursor_line);
             self.cursor_line -= 1;
             self.cursor_col = self.lines[self.cursor_line].len();
@@ -358,6 +458,7 @@ impl DemoEditor {
                 .unwrap_or(line_len);
             self.lines[self.cursor_line].replace_range(self.cursor_col..next_char_end, "");
         } else if self.cursor_line + 1 < self.lines.len() {
+            self.line_origins.remove(self.cursor_line + 1);
             let next_line = self.lines.remove(self.cursor_line + 1);
             self.lines[self.cursor_line].push_str(&next_line);
         }

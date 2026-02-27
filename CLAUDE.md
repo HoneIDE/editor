@@ -81,6 +81,9 @@ Build macOS crate: `cd native/macos && cargo build`
 Run macOS interactive demo: `cd native/macos && cargo run --example demo_editor`
 Build Windows crate: `cd native/windows && cargo build`
 Run Windows interactive demo: `cd native/windows && cargo run --example demo_editor`
+Run iOS interactive demo: `cd native/ios && cargo run --example demo_editor_ios`
+Run Android interactive demo: `cd native/android && bash run-demo.sh`
+Run Web interactive demo: `cd native/web && bash run-demo.sh`
 
 ## Development Phases (from PROJECT_PLAN.md)
 
@@ -125,11 +128,11 @@ Native FFI bridge, render coordinator, touch input, word wrap, all 6 platform Ru
 - [x] Touch input handler: single/double/triple tap, long press, pan scroll with momentum, pinch zoom
 - [x] Word wrap engine: none/word/bounded modes, WrapCache with binary-search break finding, CJK support
 - [x] macOS Rust FFI crate: Core Text text renderer, NSView input handling (keyboard/mouse/scroll/context menu), EditorView with callbacks, interactive demo
-- [x] iOS Rust FFI crate: Core Text rendering (shared with macOS), UIKit integration, touch handler
+- [x] iOS Rust FFI crate: Core Text rendering (shared with macOS), UIKit integration, touch handler, interactive demo
 - [x] Windows Rust FFI crate: DirectWrite + Direct2D rendering, Win32 input handling, interactive demo
 - [x] Linux Rust FFI crate: Pango + Cairo scaffolding
-- [x] Android Rust FFI crate: Canvas/Skia via JNI scaffolding
-- [x] Web Rust FFI crate: DOM rendering + WASM (wasm-bindgen), CSS generation
+- [x] Android Rust FFI crate: Canvas/Skia via JNI, Kotlin demo app, interactive demo
+- [x] Web Rust FFI crate: Canvas-based rendering, pure HTML/JS interactive demo
 - [x] 293 tests passing across 12 test files
 
 ### Post-Phase: Polish & Packaging — COMPLETE
