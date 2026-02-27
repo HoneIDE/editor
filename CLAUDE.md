@@ -74,7 +74,9 @@ tests/          Unit and integration tests
 ## Commands
 Run tests: `bun test`
 Run single test file: `bun test tests/buffer.test.ts`
+Run benchmarks: `bun run tests/benchmarks/keystroke-latency.ts`
 Install deps: `bun install`
+Build (Perry): `perry compile core/index.ts --target macos --bundle-ffi native/macos/`
 
 ## Development Phases (from PROJECT_PLAN.md)
 
@@ -125,3 +127,15 @@ Native FFI bridge, render coordinator, touch input, word wrap, all 6 platform Ru
 - [x] Android Rust FFI crate: Canvas/Skia via JNI scaffolding
 - [x] Web Rust FFI crate: DOM rendering + WASM (wasm-bindgen), CSS generation
 - [x] 293 tests passing across 12 test files
+
+### Post-Phase: Polish & Packaging — COMPLETE
+Examples, benchmarks, Perry config, package v0.2.0.
+- [x] Perry configuration (`perry.config.ts`): all 6 targets with FFI crate paths, arch, frameworks
+- [x] Example: minimal editor (`examples/minimal/`)
+- [x] Example: markdown editor with preview (`examples/markdown-editor/`)
+- [x] Example: side-by-side diff viewer (`examples/diff-viewer/`)
+- [x] Benchmark: keystroke-to-render latency (`tests/benchmarks/keystroke-latency.ts`)
+- [x] Benchmark: large file open — 10K/50K/100K lines (`tests/benchmarks/large-file-open.ts`)
+- [x] Benchmark: scroll throughput FPS (`tests/benchmarks/scroll-perf.ts`)
+- [x] Missing Rust modules: metal_blitter.rs (macOS), compositor.rs (Windows/Linux), input_handler.rs (Android), selection_overlay.rs (Web)
+- [x] Package version bumped to v0.2.0

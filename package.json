@@ -1,6 +1,6 @@
 {
   "name": "@honeide/editor",
-  "version": "0.0.1",
+  "version": "0.2.0",
   "description": "High-performance, cross-platform code editor surface",
   "main": "core/index.ts",
   "types": "core/index.ts",
