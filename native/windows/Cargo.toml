@@ -1,0 +1,20 @@
+[package]
+name = "hone-editor-windows"
+version = "0.1.0"
+edition = "2021"
+description = "Windows native rendering for Hone Editor (DirectWrite + Direct2D)"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+windows = { version = "0.52", features = [
+    "Win32_Graphics_DirectWrite",
+    "Win32_Graphics_Direct2D",
+    "Win32_Graphics_Direct2D_Common",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Graphics_DirectComposition",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libc = "0.2"
