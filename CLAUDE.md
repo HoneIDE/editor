@@ -27,8 +27,8 @@ core/           Platform-independent TypeScript
   search/       Literal + regex search/replace, incremental search
   folding/      Indent-based + syntax-based code folding
   diff/         Myers diff algorithm, inline char-level diff, hunk operations
-  lsp-client/   LSP protocol client (Phase 2)
-  dap-client/   DAP protocol client (Phase 2)
+  lsp-client/   LSP client: JSON-RPC transport, protocol types, capability negotiation
+  dap-client/   DAP client: debug session lifecycle, breakpoints, stepping, variables
 view-model/     Reactive state bridging core → rendering
   editor-view-model.ts   Central orchestrator, key bindings, mouse handling
   theme.ts               Dark + light themes, token color mappings
@@ -99,9 +99,15 @@ Full-featured editor, syntax highlighting, search, folding, diff.
 - [ ] macOS native FFI crate (`native/macos/`)
 - [ ] Windows + Linux FFI crates
 
-### Phase 2: Language Intelligence
-- [ ] LSP client (`core/lsp-client/`)
-- [ ] DAP client (`core/dap-client/`)
+### Phase 2: Language Intelligence — COMPLETE
+LSP and DAP integration for smart editor features.
+- [x] JSON-RPC transport layer with Content-Length framing, request correlation, cancellation
+- [x] LSP protocol types (positions, ranges, completion, hover, diagnostics, signature help, code actions, formatting)
+- [x] LSP client with initialize lifecycle, document sync, completion, hover, definition, references, signature help, code actions, formatting
+- [x] Capability negotiation and feature detection
+- [x] DAP protocol types (breakpoints, stack frames, scopes, variables, threads)
+- [x] DAP client with launch/attach, breakpoint management, execution control, stack inspection, variable inspection, evaluate
+- [x] 249 tests passing across 11 test files
 
 ### Phase 3: All Platforms
 - [ ] iOS, Android, Web FFI crates

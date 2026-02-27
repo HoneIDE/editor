@@ -58,3 +58,11 @@ export { type DiffResult, type DiffHunk, type InlineDiffSegment } from './diff/d
 export { computeDiff, computeLineDiff } from './diff/diff-compute';
 export { mergeAdjacentHunks, splitHunk, navigateHunks } from './diff/hunk';
 export { computeInlineDiff } from './diff/inline-diff';
+
+// LSP Client
+export { LSPClient, type DiagnosticsHandler, type LspState } from './lsp-client/client';
+export { JsonRpcTransport, type WriteCallback } from './lsp-client/transport';
+export { ServerCapabilityChecker, getDefaultClientCapabilities } from './lsp-client/capabilities';
+
+// DAP Client
+export { DAPClient, type DapState, type DebugEventHandlers } from './dap-client/client';
