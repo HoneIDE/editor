@@ -5,7 +5,10 @@ edition = "2021"
 description = "iOS native rendering for Hone Editor (Core Text + UIKit)"
 
 [lib]
-crate-type = ["staticlib"]
+crate-type = ["staticlib", "rlib"]
+
+[[example]]
+name = "demo_editor_ios"
 
 [dependencies]
 core-foundation = "0.9"
