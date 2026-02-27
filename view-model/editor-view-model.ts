@@ -19,9 +19,17 @@ import { registerNavigationCommands } from '../core/commands/navigation';
 import { registerSelectionCommands } from '../core/commands/selection-cmds';
 import { registerClipboardCommands } from '../core/commands/clipboard';
 import { registerMulticursorCommands } from '../core/commands/multicursor';
+import { SyntaxEngine } from '../core/tokenizer/syntax-engine';
+import { IncrementalTokenCache } from '../core/tokenizer/incremental';
+import { FoldState } from '../core/folding/fold-state';
 import { CursorBlinkController, CursorRenderState } from './cursor-state';
 import { GutterRenderer } from './gutter';
+import { FindWidgetController } from './find-widget';
+import { GhostTextController } from './ghost-text';
+import { OverlayManager } from './overlays';
+import { DiffViewModel } from './diff-view-model';
 import { RenderedLine, computeRenderedLines, LineToken, LineDecoration } from './line-layout';
+import { searchDecorations } from './decorations';
 import { EditorTheme, DARK_THEME } from './theme';
 
 export interface ScrollState {
@@ -68,6 +76,15 @@ export class EditorViewModel {
   readonly undoManager: UndoManager;
   readonly commandRegistry: CommandRegistry;
 
+  // Phase 1 subsystems
+  readonly syntaxEngine: SyntaxEngine;
+  readonly tokenCache: IncrementalTokenCache;
+  readonly foldState: FoldState;
+  readonly findWidget: FindWidgetController;
+  readonly ghostText: GhostTextController;
+  readonly overlays: OverlayManager;
+  readonly diffView: DiffViewModel;
+
   // Rendering state
   private _cursorBlink: CursorBlinkController;
   private _gutter: GutterRenderer;
@@ -89,6 +106,15 @@ export class EditorViewModel {
     this.undoManager = new UndoManager(doc.buffer);
     this.commandRegistry = new CommandRegistry();
 
+    // Phase 1 subsystems
+    this.syntaxEngine = new SyntaxEngine();
+    this.tokenCache = new IncrementalTokenCache(this.syntaxEngine);
+    this.foldState = new FoldState();
+    this.findWidget = new FindWidgetController();
+    this.ghostText = new GhostTextController();
+    this.overlays = new OverlayManager();
+    this.diffView = new DiffViewModel();
+
     this._cursorBlink = new CursorBlinkController();
     this._gutter = new GutterRenderer();
 
@@ -108,6 +134,26 @@ export class EditorViewModel {
 
     // Set page size for cursor
     this.cursorManager.setPageSize(this.viewport.getLinesPerPage());
+
+    // Wire syntax engine to document language
+    if (doc.languageId && this.syntaxEngine.hasLanguage(doc.languageId)) {
+      this.syntaxEngine.setLanguage(doc.languageId);
+      this.syntaxEngine.parse(doc.buffer);
+      this.updateFoldRanges();
+    }
+
+    // Wire token provider from syntax engine
+    this._tokenProvider = (lineNumber: number) => {
+      return this.tokenCache.getLineTokens(doc.buffer, lineNumber, this._theme);
+    };
+
+    // Wire fold state provider
+    this._foldStateProvider = (lineNumber: number) => {
+      return this.foldState.getFoldState(lineNumber);
+    };
+
+    // Wire hidden lines from fold state into viewport
+    this.viewport.setHiddenLines(this.foldState.getHiddenLines());
   }
 
   get theme(): EditorTheme {
@@ -196,6 +242,56 @@ export class EditorViewModel {
 
   /** Execute a command by ID. */
   executeCommand(commandId: string, args?: any): boolean {
+    // Handle Phase 1 commands directly
+    switch (commandId) {
+      case 'editor.action.find':
+        this.findWidget.open(this.document.buffer);
+        this.notifyChange();
+        return true;
+      case 'editor.action.replace':
+        this.findWidget.open(this.document.buffer);
+        this.findWidget.toggleReplace();
+        this.notifyChange();
+        return true;
+      case 'editor.action.findNext':
+        this.findWidget.nextMatch();
+        this.notifyChange();
+        return true;
+      case 'editor.action.findPrev':
+        this.findWidget.prevMatch();
+        this.notifyChange();
+        return true;
+      case 'editor.action.escape':
+        if (this.findWidget.state.isOpen) {
+          this.findWidget.close();
+        }
+        this.overlays.hideAll();
+        this.ghostText.dismiss();
+        this.notifyChange();
+        return true;
+      case 'editor.action.fold': {
+        const primary = this.cursorManager.primary;
+        this.foldState.fold(primary.line);
+        this.viewport.setHiddenLines(this.foldState.getHiddenLines());
+        this.notifyChange();
+        return true;
+      }
+      case 'editor.action.unfold': {
+        const primary = this.cursorManager.primary;
+        this.foldState.unfold(primary.line);
+        this.viewport.setHiddenLines(this.foldState.getHiddenLines());
+        this.notifyChange();
+        return true;
+      }
+      case 'editor.action.acceptGhostText': {
+        const text = this.ghostText.accept();
+        if (text) {
+          this.executeCommand('editor.action.type', { text });
+        }
+        return true;
+      }
+    }
+
     const ctx: CommandContext = { editor: this };
     const result = this.commandRegistry.execute(commandId, ctx, args);
     if (result) {
@@ -313,11 +409,29 @@ export class EditorViewModel {
   /** Called after any edit or cursor change. */
   private afterEdit(): void {
     this.viewport.setTotalLines(this.document.buffer.getLineCount());
+
+    // Re-parse for syntax highlighting
+    if (this.syntaxEngine.getTree()) {
+      this.syntaxEngine.parse(this.document.buffer);
+      this.tokenCache.invalidateAll();
+      this.updateFoldRanges();
+    }
+
+    // Dismiss ghost text on edit
+    this.ghostText.markStale();
+
     // Ensure cursor is visible
     const primary = this.cursorManager.primary;
     this.viewport.ensureLineVisible(primary.line);
     this._cursorBlink.resetBlink();
     this.notifyChange();
+  }
+
+  /** Update fold ranges from syntax engine. */
+  private updateFoldRanges(): void {
+    const ranges = this.syntaxEngine.getFoldRanges(this.document.buffer);
+    this.foldState.setAvailableRanges(ranges);
+    this.viewport.setHiddenLines(this.foldState.getHiddenLines());
   }
 
   /** Convert pixel coordinates to buffer position. */
@@ -416,6 +530,22 @@ export class EditorViewModel {
     if (meta && event.key === 'c') return 'editor.action.copy';
     if (meta && event.key === 'x') return 'editor.action.cut';
     if (meta && event.key === 'v') return 'editor.action.paste';
+
+    // Find/Replace
+    if (meta && event.key === 'f') return 'editor.action.find';
+    if (meta && event.key === 'h') return 'editor.action.replace';
+    if (event.key === 'Escape') return 'editor.action.escape';
+    if (meta && event.key === 'g') {
+      if (shift) return 'editor.action.findPrev';
+      return 'editor.action.findNext';
+    }
+
+    // Folding
+    if (meta && shift && event.key === '[') return 'editor.action.fold';
+    if (meta && shift && event.key === ']') return 'editor.action.unfold';
+
+    // Ghost text
+    if (event.key === 'Tab' && !shift && this.ghostText.state) return 'editor.action.acceptGhostText';
 
     return null;
   }

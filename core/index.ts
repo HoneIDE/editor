@@ -38,3 +38,23 @@ export { type Operation, computeInverseEdits } from './history/operation';
 export { ViewportManager, type VisibleRange } from './viewport/viewport-manager';
 export { ScrollController, type ScrollPosition } from './viewport/scroll';
 export { LineHeightCache } from './viewport/line-height';
+
+// Tokenizer / Syntax
+export { SyntaxEngine, type FoldRange } from './tokenizer/syntax-engine';
+export { IncrementalTokenCache } from './tokenizer/incremental';
+export { resolveTagColor, resolveTagStyle } from './tokenizer/token-theme';
+
+// Search
+export { searchAll, searchNext, searchPrev, type SearchMatch, type SearchOptions } from './search/search-engine';
+export { expandReplacement, replaceNext, replaceAll } from './search/replace';
+export { IncrementalSearch } from './search/incremental';
+
+// Folding
+export { computeIndentFoldRanges, computeFoldRanges } from './folding/fold-provider';
+export { FoldState } from './folding/fold-state';
+
+// Diff
+export { type DiffResult, type DiffHunk, type InlineDiffSegment } from './diff/diff-model';
+export { computeDiff, computeLineDiff } from './diff/diff-compute';
+export { mergeAdjacentHunks, splitHunk, navigateHunks } from './diff/hunk';
+export { computeInlineDiff } from './diff/inline-diff';
