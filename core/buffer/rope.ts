@@ -32,7 +32,7 @@ function createLeaf(pieces: PieceDescriptor[]): LeafNode {
   let charCount = 0;
   let lineBreakCount = 0;
   for (const p of pieces) {
-    charCount += p.length;
+    charCount += p.len;
     lineBreakCount += p.lineBreakCount;
   }
   return { kind: 'leaf', pieces, charCount, lineBreakCount };
@@ -52,7 +52,7 @@ function updateNodeStats(node: RopeNode): void {
   if (node.kind === 'leaf') {
     let cc = 0, lbc = 0;
     for (const p of node.pieces) {
-      cc += p.length;
+      cc += p.len;
       lbc += p.lineBreakCount;
     }
     node.charCount = cc;
@@ -176,15 +176,15 @@ export class Rope {
     const leaf = node;
     for (let i = 0; i < leaf.pieces.length; i++) {
       const piece = leaf.pieces[i];
-      if (remaining < piece.length) {
+      if (remaining < piece.len) {
         return { pieceIndex: i, offsetInPiece: remaining, leaf, path };
       }
-      remaining -= piece.length;
+      remaining -= piece.len;
     }
     // Offset is exactly at the end of the last piece
     if (leaf.pieces.length > 0) {
       const lastIdx = leaf.pieces.length - 1;
-      return { pieceIndex: lastIdx, offsetInPiece: leaf.pieces[lastIdx].length, leaf, path };
+      return { pieceIndex: lastIdx, offsetInPiece: leaf.pieces[lastIdx].len, leaf, path };
     }
     return null;
   }
@@ -204,7 +204,7 @@ export class Rope {
       return { pieceIndex: 0, offsetInPiece: 0, leaf, path };
     }
     const lastIdx = leaf.pieces.length - 1;
-    return { pieceIndex: lastIdx, offsetInPiece: leaf.pieces[lastIdx].length, leaf, path };
+    return { pieceIndex: lastIdx, offsetInPiece: leaf.pieces[lastIdx].len, leaf, path };
   }
 
   /**
@@ -225,7 +225,7 @@ export class Rope {
       if (piece.lineBreakCount < targetBreak) {
         // This piece doesn't contain our target break
         targetBreak -= piece.lineBreakCount;
-        charOffset += piece.length;
+        charOffset += piece.len;
         return true; // continue
       }
 
@@ -234,7 +234,7 @@ export class Rope {
         ? this.pieceTable.originalBuffer
         : this.pieceTable.addBuffer;
       let pos = piece.start;
-      const end = piece.start + piece.length;
+      const end = piece.start + piece.len;
       while (pos < end && targetBreak > 0) {
         if (buffer.charCodeAt(pos) === 10) {
           targetBreak--;
@@ -245,7 +245,7 @@ export class Rope {
         }
         pos++;
       }
-      charOffset += piece.length;
+      charOffset += piece.len;
       return true;
     });
 
@@ -263,9 +263,9 @@ export class Rope {
     let charsSoFar = 0;
 
     this.walkPieces((piece) => {
-      if (charsSoFar + piece.length <= offset) {
+      if (charsSoFar + piece.len <= offset) {
         lineCount += piece.lineBreakCount;
-        charsSoFar += piece.length;
+        charsSoFar += piece.len;
         return true;
       }
 
@@ -293,7 +293,7 @@ export class Rope {
     const newPiece: PieceDescriptor = {
       bufferType: 'add',
       start: addStart,
-      length: text.length,
+      len: text.length,
       lineBreakCount: countLineBreaks(text, 0, text.length),
     };
 
@@ -330,7 +330,7 @@ export class Rope {
     if (offsetInPiece === 0) {
       // Insert before this piece
       leaf.pieces.splice(pieceIndex, 0, newPiece);
-    } else if (offsetInPiece === targetPiece.length) {
+    } else if (offsetInPiece === targetPiece.len) {
       // Insert after this piece
       leaf.pieces.splice(pieceIndex + 1, 0, newPiece);
     } else {
@@ -342,14 +342,14 @@ export class Rope {
       const leftPiece: PieceDescriptor = {
         bufferType: targetPiece.bufferType,
         start: targetPiece.start,
-        length: offsetInPiece,
+        len: offsetInPiece,
         lineBreakCount: countLineBreaks(buffer, targetPiece.start, offsetInPiece),
       };
       const rightPiece: PieceDescriptor = {
         bufferType: targetPiece.bufferType,
         start: targetPiece.start + offsetInPiece,
-        length: targetPiece.length - offsetInPiece,
-        lineBreakCount: countLineBreaks(buffer, targetPiece.start + offsetInPiece, targetPiece.length - offsetInPiece),
+        len: targetPiece.len - offsetInPiece,
+        lineBreakCount: countLineBreaks(buffer, targetPiece.start + offsetInPiece, targetPiece.len - offsetInPiece),
       };
 
       leaf.pieces.splice(pieceIndex, 1, leftPiece, newPiece, rightPiece);
@@ -398,7 +398,7 @@ export class Rope {
 
     for (const piece of pieces) {
       const pieceStart = charsSoFar;
-      const pieceEnd = charsSoFar + piece.length;
+      const pieceEnd = charsSoFar + piece.len;
 
       if (pieceEnd <= offset || pieceStart >= deleteEnd) {
         // Piece is entirely outside the delete range
@@ -417,24 +417,24 @@ export class Rope {
           result.push({
             bufferType: piece.bufferType,
             start: piece.start,
-            length: keepLength,
+            len: keepLength,
             lineBreakCount: countLineBreaks(buffer, piece.start, keepLength),
           });
         }
         if (pieceEnd > deleteEnd) {
           // Keep the right part
           const skipInPiece = deleteEnd - pieceStart;
-          const keepLength = piece.length - skipInPiece;
+          const keepLength = piece.len - skipInPiece;
           result.push({
             bufferType: piece.bufferType,
             start: piece.start + skipInPiece,
-            length: keepLength,
+            len: keepLength,
             lineBreakCount: countLineBreaks(buffer, piece.start + skipInPiece, keepLength),
           });
         }
       }
 
-      charsSoFar += piece.length;
+      charsSoFar += piece.len;
     }
 
     return result;
@@ -452,8 +452,8 @@ export class Rope {
 
     this.walkPieces((piece) => {
       const pieceStart = charsSoFar;
-      const pieceEnd = charsSoFar + piece.length;
-      charsSoFar += piece.length;
+      const pieceEnd = charsSoFar + piece.len;
+      charsSoFar += piece.len;
 
       if (pieceEnd <= start) return true; // before range, continue
       if (pieceStart >= end) return false; // past range, stop
@@ -463,7 +463,7 @@ export class Rope {
         : this.pieceTable.addBuffer;
 
       const readStart = Math.max(start - pieceStart, 0);
-      const readEnd = Math.min(end - pieceStart, piece.length);
+      const readEnd = Math.min(end - pieceStart, piece.len);
       parts.push(buffer.substring(piece.start + readStart, piece.start + readEnd));
 
       return pieceEnd < end;

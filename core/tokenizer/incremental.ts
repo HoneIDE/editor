@@ -8,7 +8,7 @@
  */
 
 import type { LineToken } from '../../view-model/line-layout';
-import { SyntaxEngine } from './syntax-engine';
+import type { ISyntaxEngine } from './tokenizer-interface';
 import { TextBuffer } from '../buffer/text-buffer';
 import type { EditorTheme } from '../../view-model/theme';
 
@@ -16,9 +16,9 @@ export class IncrementalTokenCache {
   private cache: (LineToken[] | null)[] = [];
   private dirtyFrom: number = 0;
   private dirtyTo: number = Infinity;
-  private syntaxEngine: SyntaxEngine;
+  private syntaxEngine: ISyntaxEngine;
 
-  constructor(syntaxEngine: SyntaxEngine) {
+  constructor(syntaxEngine: ISyntaxEngine) {
     this.syntaxEngine = syntaxEngine;
   }
 

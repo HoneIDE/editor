@@ -4,7 +4,7 @@
  * When a fold is collapsed, the viewport skips hidden lines.
  */
 
-import type { FoldRange } from '../tokenizer/syntax-engine';
+import type { FoldRange } from '../tokenizer/tokenizer-interface';
 
 export class FoldState {
   /** Map from start line number to fold range. */

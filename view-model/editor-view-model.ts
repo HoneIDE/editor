@@ -19,7 +19,7 @@ import { registerNavigationCommands } from '../core/commands/navigation';
 import { registerSelectionCommands } from '../core/commands/selection-cmds';
 import { registerClipboardCommands } from '../core/commands/clipboard';
 import { registerMulticursorCommands } from '../core/commands/multicursor';
-import { SyntaxEngine } from '../core/tokenizer/syntax-engine';
+import type { ISyntaxEngine } from '../core/tokenizer/tokenizer-interface';
 import { IncrementalTokenCache } from '../core/tokenizer/incremental';
 import { FoldState } from '../core/folding/fold-state';
 import { CursorBlinkController, CursorRenderState } from './cursor-state';
@@ -31,6 +31,17 @@ import { DiffViewModel } from './diff-view-model';
 import { RenderedLine, computeRenderedLines, LineToken, LineDecoration } from './line-layout';
 import { searchDecorations } from './decorations';
 import { EditorTheme, DARK_THEME } from './theme';
+
+/** No-op syntax engine for backward compatibility when none is provided. */
+const NO_OP_SYNTAX_ENGINE: ISyntaxEngine = {
+  setLanguage() {},
+  parse() { return null; },
+  getLineTokens() { return []; },
+  getFoldRanges() { return []; },
+  findMatchingBracket() { return null; },
+  getSupportedLanguages() { return []; },
+  hasLanguage() { return false; },
+};
 
 export interface ScrollState {
   scrollTop: number;
@@ -77,7 +88,7 @@ export class EditorViewModel {
   readonly commandRegistry: CommandRegistry;
 
   // Phase 1 subsystems
-  readonly syntaxEngine: SyntaxEngine;
+  readonly syntaxEngine: ISyntaxEngine;
   readonly tokenCache: IncrementalTokenCache;
   readonly foldState: FoldState;
   readonly findWidget: FindWidgetController;
@@ -97,7 +108,7 @@ export class EditorViewModel {
   private _decorationProvider: ((lineNumber: number) => LineDecoration[]) | null = null;
   private _foldStateProvider: ((lineNumber: number) => 'expanded' | 'collapsed' | 'none') | null = null;
 
-  constructor(doc: EditorDocument, theme?: EditorTheme) {
+  constructor(doc: EditorDocument, theme?: EditorTheme, syntaxEngine?: ISyntaxEngine) {
     this.document = doc;
     this._theme = theme ?? DARK_THEME;
 
@@ -106,8 +117,8 @@ export class EditorViewModel {
     this.undoManager = new UndoManager(doc.buffer);
     this.commandRegistry = new CommandRegistry();
 
-    // Phase 1 subsystems
-    this.syntaxEngine = new SyntaxEngine();
+    // Phase 1 subsystems — use provided engine or a no-op stub
+    this.syntaxEngine = syntaxEngine ?? NO_OP_SYNTAX_ENGINE;
     this.tokenCache = new IncrementalTokenCache(this.syntaxEngine);
     this.foldState = new FoldState();
     this.findWidget = new FindWidgetController();
@@ -205,9 +216,6 @@ export class EditorViewModel {
       this.document.buffer,
       lineNumbers,
       this._gutter,
-      this._tokenProvider ?? undefined,
-      this._decorationProvider ?? undefined,
-      this._foldStateProvider ?? undefined,
     );
   }
 
@@ -411,7 +419,7 @@ export class EditorViewModel {
     this.viewport.setTotalLines(this.document.buffer.getLineCount());
 
     // Re-parse for syntax highlighting
-    if (this.syntaxEngine.getTree()) {
+    if (this.syntaxEngine.hasLanguage(this.document.languageId ?? '')) {
       this.syntaxEngine.parse(this.document.buffer);
       this.tokenCache.invalidateAll();
       this.updateFoldRanges();

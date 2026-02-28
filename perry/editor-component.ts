@@ -155,13 +155,25 @@ export class Editor {
 
   /** Replace all content. */
   set content(text: string) {
+    this.setContent(text);
+  }
+
+  /** Replace all content (regular method — Perry may not support property setters). */
+  setContent(text: string): void {
     const doc = this._doc;
     const buf = doc.buffer;
+    // Delete existing content first
     const len = buf.getLength();
-    buf.applyEdits([{ offset: 0, deleteCount: len, insertText: text }]);
-    // Sync viewport totalLines so visible range covers all new lines
+    if (len > 0) {
+      buf.delete(0, len);
+    }
+    buf.insert(0, text);
+    let lineCount = 1;
+    for (let i = 0; i < text.length; i++) {
+      if (text.charCodeAt(i) === 10) lineCount++;
+    }
     const vm = this._vm;
-    vm.viewport.setTotalLines(buf.getLineCount());
+    vm.viewport.setTotalLines(lineCount);
     const coordinator = this._coordinator;
     coordinator.invalidate();
   }

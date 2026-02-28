@@ -7,7 +7,7 @@
  */
 
 import { TextBuffer } from '../buffer/text-buffer';
-import type { SyntaxEngine, FoldRange } from '../tokenizer/syntax-engine';
+import type { ISyntaxEngine, FoldRange } from '../tokenizer/tokenizer-interface';
 
 /**
  * Compute fold ranges using indent-based folding.
@@ -52,7 +52,7 @@ export function computeIndentFoldRanges(buffer: TextBuffer): FoldRange[] {
  */
 export function computeFoldRanges(
   buffer: TextBuffer,
-  syntaxEngine?: SyntaxEngine,
+  syntaxEngine?: ISyntaxEngine,
 ): FoldRange[] {
   if (syntaxEngine) {
     const syntaxRanges = syntaxEngine.getFoldRanges(buffer);

@@ -59,7 +59,7 @@ pub extern "C" fn hone_editor_set_font(
 #[no_mangle]
 pub extern "C" fn hone_editor_render_line(
     view: *mut EditorView,
-    line_number: i64,
+    line_number: f64,
     text: *const u8,
     tokens_json: *const u8,
     y_offset: f64,
@@ -77,7 +77,7 @@ pub extern "C" fn hone_editor_set_cursor(
     view: *mut EditorView,
     x: f64,
     y: f64,
-    style: i64,
+    style: f64,
 ) {
     let view = unsafe { &mut *view };
     view.set_cursor(x, y, style as i32);

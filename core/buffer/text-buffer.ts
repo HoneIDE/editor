@@ -48,11 +48,9 @@ export class TextBuffer {
    */
   insert(offset: number, text: string): number {
     if (text.length === 0) return 0;
-    // Normalize line endings
-    const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-    this.rope.insert(offset, normalized);
-    this.lineIndex.update(offset, '', normalized);
-    return normalized.length;
+    this.rope.insert(offset, text);
+    this.lineIndex.rebuild(this.rope);
+    return text.length;
   }
 
   /**
@@ -63,7 +61,7 @@ export class TextBuffer {
     if (length <= 0) return '';
     const deletedText = this.rope.getText(offset, offset + length);
     this.rope.delete(offset, length);
-    this.lineIndex.update(offset, deletedText, '');
+    this.lineIndex.rebuild(this.rope);
     return deletedText;
   }
 
@@ -79,14 +77,24 @@ export class TextBuffer {
 
   /** Get the content of a single line (without line ending). */
   getLine(lineNumber: number): string {
-    if (lineNumber < 0 || lineNumber >= this.getLineCount()) return '';
-
-    const lineStart = this.lineIndex.getLineStart(lineNumber);
-    const lineEnd = lineNumber + 1 < this.getLineCount()
-      ? this.lineIndex.getLineStart(lineNumber + 1) - 1 // exclude \n
-      : this.getLength(); // last line goes to end
-
-    return this.rope.getText(lineStart, lineEnd);
+    // Scan full text for line boundaries (Perry's LineIndex has dispatch issues)
+    const fullText = this.rope.getFullText();
+    let currentLine = 0;
+    let lineStart = 0;
+    for (let i = 0; i < fullText.length; i++) {
+      if (fullText.charCodeAt(i) === 10) {
+        if (currentLine === lineNumber) {
+          return fullText.substring(lineStart, i);
+        }
+        currentLine++;
+        lineStart = i + 1;
+      }
+    }
+    // Last line (no trailing newline) or the requested line
+    if (currentLine === lineNumber) {
+      return fullText.substring(lineStart, fullText.length);
+    }
+    return '';
   }
 
   /** Total number of lines in the buffer. */
@@ -149,7 +157,7 @@ export class TextBuffer {
         const parts: string[] = [];
         for (const piece of ropeSnap.pieces) {
           const buffer = piece.bufferType === 'original' ? pt.originalBuffer : pt.addBuffer;
-          parts.push(buffer.substring(piece.start, piece.start + piece.length));
+          parts.push(buffer.substring(piece.start, piece.start + piece.len));
         }
         return parts.join('');
       },

@@ -32,38 +32,37 @@ export interface RenderedLine {
 
 /**
  * Compute rendered lines for a set of visible line numbers.
+ * Uses a for loop instead of .map() for Perry compatibility.
  */
 export function computeRenderedLines(
   buffer: TextBuffer,
   lineNumbers: number[],
   gutterRenderer: GutterRenderer,
-  getTokens?: (lineNumber: number) => LineToken[],
-  getDecorations?: (lineNumber: number) => LineDecoration[],
-  getFoldState?: (lineNumber: number) => 'expanded' | 'collapsed' | 'none',
 ): RenderedLine[] {
-  return lineNumbers.map(lineNumber => {
+  const result: RenderedLine[] = [];
+  for (let i = 0; i < lineNumbers.length; i++) {
+    const lineNumber = lineNumbers[i];
     const content = buffer.getLine(lineNumber);
-    const tokens = getTokens ? getTokens(lineNumber) : defaultTokens(content);
-    const decorations = getDecorations ? getDecorations(lineNumber) : [];
-    const foldState = getFoldState ? getFoldState(lineNumber) : 'none';
-
+    const tokens = defaultTokens(content);
+    const decorations: LineDecoration[] = [];
     const gutterItems = gutterRenderer.getGutterItems(
       lineNumber,
-      foldState,
-      false, // hasBreakpoint
-      null,  // diffState
-      null,  // diagnosticSeverity
+      'none',
+      false,
+      null,
+      null,
     );
-
-    return {
-      lineNumber,
-      content,
-      tokens,
-      decorations,
-      foldState,
-      gutterItems,
+    const line: RenderedLine = {
+      lineNumber: lineNumber,
+      content: content,
+      tokens: tokens,
+      decorations: decorations,
+      foldState: 'none',
+      gutterItems: gutterItems,
     };
-  });
+    result.push(line);
+  }
+  return result;
 }
 
 /**

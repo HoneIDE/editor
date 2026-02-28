@@ -116,8 +116,11 @@ export class LineIndex {
     }
 
     // Insert new line entries for inserted line breaks
+    // Note: avoid splice(...spread) — Perry doesn't support spread in function args
     if (insertedBreaks > 0) {
-      this.lineStarts.splice(editLine + 1, 0, ...insertedBreakPositions);
+      for (let j = insertedBreakPositions.length - 1; j >= 0; j--) {
+        this.lineStarts.splice(editLine + 1, 0, insertedBreakPositions[j]);
+      }
     }
 
     // Shift all subsequent line starts by the delta
@@ -132,7 +135,7 @@ export class LineIndex {
   /** Clone the line index. */
   clone(): LineIndex {
     const li = new LineIndex();
-    li.lineStarts = [...this.lineStarts];
+    li.lineStarts = this.lineStarts.slice();
     return li;
   }
 

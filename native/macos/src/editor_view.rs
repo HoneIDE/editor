@@ -244,6 +244,10 @@ impl EditorView {
 
     // ── Frame buffer API ─────────────────────────────────────────
 
+    pub fn frame_lines_count(&self) -> usize {
+        self.frame_lines.len()
+    }
+
     pub fn begin_frame(&mut self) {
         self.frame_lines.clear();
         self.cursor = None;

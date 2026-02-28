@@ -40,7 +40,9 @@ export { ScrollController, type ScrollPosition } from './viewport/scroll';
 export { LineHeightCache } from './viewport/line-height';
 
 // Tokenizer / Syntax
-export { SyntaxEngine, type FoldRange } from './tokenizer/syntax-engine';
+export { SyntaxEngine } from './tokenizer/syntax-engine';
+export type { ISyntaxEngine, FoldRange } from './tokenizer/tokenizer-interface';
+export { KeywordSyntaxEngine } from './tokenizer/keyword-syntax-engine';
 export { IncrementalTokenCache } from './tokenizer/incremental';
 export { resolveTagColor, resolveTagStyle } from './tokenizer/token-theme';
 

@@ -34,8 +34,6 @@ export class NativeRenderCoordinator {
   private _viewModel: EditorViewModel | null = null;
   private _unsubscribe: (() => void) | null = null;
 
-  // Dirty tracking: line number → content hash
-  private _renderedLines: Map<number, string> = new Map();
   private _lastScrollTop: number = -1;
   private _lastCursorKey: string = '';
   private _lastSelectionKey: string = '';
@@ -79,7 +77,6 @@ export class NativeRenderCoordinator {
       this.detach();
       this._ffi.destroy(this._handle);
       this._handle = null;
-      this._renderedLines.clear();
       this._lastScrollTop = -1;
       this._lastCursorKey = '';
       this._lastSelectionKey = '';
@@ -123,52 +120,32 @@ export class NativeRenderCoordinator {
     if (!this._handle || !this._viewModel) return;
     const handle = this._handle;
     const vm = this._viewModel;
+    const ffi = this._ffi;
 
     // Begin frame batch
-    this._ffi.beginFrame?.(handle);
+    ffi.beginFrame(handle);
 
     // 1. Update scroll
     const scroll = vm.scrollState;
     if (scroll.scrollTop !== this._lastScrollTop) {
-      this._ffi.scroll(handle, scroll.scrollTop);
+      ffi.scroll(handle, scroll.scrollTop);
       this._lastScrollTop = scroll.scrollTop;
     }
 
-    // 2. Render visible lines (with dirty tracking)
+    // 2. Render visible lines
     const visibleLines = vm.visibleLines;
-    const currentLineNumbers = new Set<number>();
+    for (let li = 0; li < visibleLines.length; li++) {
+      const line = visibleLines[li];
+      const tokensJson = this.serializeTokens(line.tokens);
+      const yOffset = this.computeYOffset(line.lineNumber, scroll.scrollTop);
 
-    for (const line of visibleLines) {
-      currentLineNumbers.add(line.lineNumber);
-      const hash = this.hashLine(line);
-
-      if (this._renderedLines.get(line.lineNumber) !== hash) {
-        const tokensJson = this.serializeTokens(line.tokens);
-        const yOffset = this.computeYOffset(line.lineNumber, scroll.scrollTop);
-
-        this._ffi.renderLine(
-          handle,
-          line.lineNumber + 1, // 1-based display
-          line.content,
-          tokensJson,
-          yOffset,
-        );
-
-        // Render decorations if supported
-        if (this._ffi.renderDecorations && line.decorations.length > 0) {
-          const decorationsJson = this.serializeDecorations(line.decorations, line.lineNumber, scroll.scrollTop);
-          this._ffi.renderDecorations(handle, decorationsJson);
-        }
-
-        this._renderedLines.set(line.lineNumber, hash);
-      }
-    }
-
-    // Clean up stale line entries
-    for (const lineNum of this._renderedLines.keys()) {
-      if (!currentLineNumbers.has(lineNum)) {
-        this._renderedLines.delete(lineNum);
-      }
+      ffi.renderLine(
+        handle,
+        line.lineNumber + 1, // 1-based display
+        line.content,
+        tokensJson,
+        yOffset,
+      );
     }
 
     // 3. Update cursor(s)
@@ -181,14 +158,13 @@ export class NativeRenderCoordinator {
     this.renderGhostText(handle, vm);
 
     // End frame batch
-    this._ffi.endFrame?.(handle);
+    ffi.endFrame(handle);
   }
 
   /**
    * Force a full re-render (clears dirty cache).
    */
   invalidate(): void {
-    this._renderedLines.clear();
     this._lastCursorKey = '';
     this._lastSelectionKey = '';
     if (this._handle) {

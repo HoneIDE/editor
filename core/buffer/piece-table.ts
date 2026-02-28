@@ -16,8 +16,8 @@ export interface PieceDescriptor {
   bufferType: BufferType;
   /** Start offset within that buffer. */
   start: number;
-  /** Length of the piece in characters. */
-  length: number;
+  /** Length of the piece in characters. Named 'len' to avoid Perry's .length interception. */
+  len: number;
   /** Number of line breaks (\n) in this piece. */
   lineBreakCount: number;
 }
@@ -68,7 +68,7 @@ export class PieceTable {
       this._pieces = [{
         bufferType: 'original',
         start: 0,
-        length: originalContent.length,
+        len: originalContent.length,
         lineBreakCount: countLineBreaks(originalContent, 0, originalContent.length),
       }];
     } else {
@@ -94,7 +94,7 @@ export class PieceTable {
   /** Get the text content of a piece. */
   getPieceText(piece: PieceDescriptor): string {
     const buffer = piece.bufferType === 'original' ? this.originalBuffer : this._addBuffer;
-    return buffer.substring(piece.start, piece.start + piece.length);
+    return buffer.substring(piece.start, piece.start + piece.len);
   }
 
   /** Replace the pieces array (used by the rope for tree-level operations). */
