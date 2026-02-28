@@ -4,7 +4,7 @@
 
 export class LineHeightCache {
   private _baseLineHeight: number;
-  private overrides: Map<number, number> = new Map(); // lineNumber -> pixelHeight
+  private overrides: Map<number, number> = new Map();
   private totalLines: number = 0;
 
   constructor(baseLineHeight: number = 20) {
@@ -24,7 +24,9 @@ export class LineHeightCache {
   }
 
   getLineHeight(lineNumber: number): number {
-    return this.overrides.get(lineNumber) ?? this._baseLineHeight;
+    const ov = this.overrides.get(lineNumber);
+    if (ov === undefined) return this._baseLineHeight;
+    return ov;
   }
 
   /**
@@ -36,7 +38,12 @@ export class LineHeightCache {
     }
     let top = 0;
     for (let i = 0; i < lineNumber; i++) {
-      top += this.overrides.get(i) ?? this._baseLineHeight;
+      const ov = this.overrides.get(i);
+      if (ov === undefined) {
+        top += this._baseLineHeight;
+      } else {
+        top += ov;
+      }
     }
     return top;
   }
@@ -50,7 +57,12 @@ export class LineHeightCache {
     }
     let total = 0;
     for (let i = 0; i < this.totalLines; i++) {
-      total += this.overrides.get(i) ?? this._baseLineHeight;
+      const ov = this.overrides.get(i);
+      if (ov === undefined) {
+        total += this._baseLineHeight;
+      } else {
+        total += ov;
+      }
     }
     return total;
   }
@@ -70,7 +82,13 @@ export class LineHeightCache {
 
     let top = 0;
     for (let i = 0; i < this.totalLines; i++) {
-      const h = this.overrides.get(i) ?? this._baseLineHeight;
+      const ov = this.overrides.get(i);
+      let h: number;
+      if (ov === undefined) {
+        h = this._baseLineHeight;
+      } else {
+        h = ov;
+      }
       if (top + h > y) return i;
       top += h;
     }

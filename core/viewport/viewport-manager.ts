@@ -24,7 +24,7 @@ export class ViewportManager {
   readonly lineHeightCache: LineHeightCache;
   readonly scroll: ScrollController;
 
-  /** Lines hidden due to folding. Map from line number -> true if hidden. */
+  /** Lines hidden due to folding. */
   private hiddenLines: Set<number> = new Set();
 
   constructor() {
@@ -58,7 +58,6 @@ export class ViewportManager {
    */
   getVisibleRange(): VisibleRange {
     const scrollTop = this.scroll.scrollTop;
-    const baseHeight = this.lineHeightCache.baseLineHeight;
 
     // Approximate start line
     let startLine = this.lineHeightCache.getLineAtY(scrollTop);
