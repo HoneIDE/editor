@@ -50,7 +50,7 @@ export default {
     linux: {
       ffi: 'native/linux/',
       arch: ['x86_64', 'aarch64'],
-      pkgConfig: ['pango', 'pangocairo', 'cairo'],
+      pkgConfig: ['gtk4', 'pango', 'pangocairo', 'cairo'],
     },
     android: {
       ffi: 'native/android/',
