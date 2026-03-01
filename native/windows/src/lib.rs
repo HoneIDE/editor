@@ -243,3 +243,98 @@ pub extern "C" fn hone_editor_end_frame(view: *mut EditorView) {
     let view = unsafe { &mut *view };
     view.end_frame();
 }
+
+// === Perry Event Polling API ===
+// Perry's AOT runtime polls these from a RAF loop instead of using callbacks.
+
+/// Set the event callback (stored but not called in Perry mode).
+#[no_mangle]
+pub extern "C" fn hone_editor_set_event_callback(
+    view: *mut EditorView,
+    callback: extern "C" fn(),
+) {
+    let view = unsafe { &mut *view };
+    view.event_callback = Some(callback);
+}
+
+/// Return the number of pending input events.
+#[no_mangle]
+pub extern "C" fn hone_editor_pending_event_count(view: *mut EditorView) -> f64 {
+    let view = unsafe { &*view };
+    view.pending_events.len() as f64
+}
+
+/// Get the event type at index (TEXT=1, ACTION=2, SCROLL=3, MOUSE_DOWN=4).
+#[no_mangle]
+pub extern "C" fn hone_editor_get_event_type(view: *mut EditorView, index: f64) -> f64 {
+    let view = unsafe { &*view };
+    let i = index as usize;
+    if i < view.pending_events.len() {
+        view.pending_events[i].event_type as f64
+    } else {
+        0.0
+    }
+}
+
+/// Get the character code for a TEXT event at index.
+#[no_mangle]
+pub extern "C" fn hone_editor_get_event_char(view: *mut EditorView, index: f64) -> f64 {
+    let view = unsafe { &*view };
+    let i = index as usize;
+    if i < view.pending_events.len() {
+        view.pending_events[i].char_code as f64
+    } else {
+        0.0
+    }
+}
+
+/// Get the action ID for an ACTION event at index.
+#[no_mangle]
+pub extern "C" fn hone_editor_get_event_action(view: *mut EditorView, index: f64) -> f64 {
+    let view = unsafe { &*view };
+    let i = index as usize;
+    if i < view.pending_events.len() {
+        view.pending_events[i].action_id as f64
+    } else {
+        0.0
+    }
+}
+
+/// Get the x coordinate for MOUSE_DOWN/SCROLL events at index.
+#[no_mangle]
+pub extern "C" fn hone_editor_get_event_x(view: *mut EditorView, index: f64) -> f64 {
+    let view = unsafe { &*view };
+    let i = index as usize;
+    if i < view.pending_events.len() {
+        view.pending_events[i].x
+    } else {
+        0.0
+    }
+}
+
+/// Get the y coordinate for MOUSE_DOWN/SCROLL events at index.
+#[no_mangle]
+pub extern "C" fn hone_editor_get_event_y(view: *mut EditorView, index: f64) -> f64 {
+    let view = unsafe { &*view };
+    let i = index as usize;
+    if i < view.pending_events.len() {
+        view.pending_events[i].y
+    } else {
+        0.0
+    }
+}
+
+/// Clear all pending events after processing.
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_events(view: *mut EditorView) {
+    let view = unsafe { &mut *view };
+    view.pending_events.clear();
+}
+
+/// Perry uses `hone_editor_nsview` as the platform-agnostic name for the native view handle.
+/// On Windows this returns the HWND (same as `hone_editor_hwnd`).
+#[no_mangle]
+pub extern "C" fn hone_editor_nsview(view: *mut EditorView) -> i64 {
+    let view = unsafe { &*view };
+    view.hwnd().0 as i64
+}

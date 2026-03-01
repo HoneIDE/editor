@@ -7,6 +7,7 @@
 
 use serde::Deserialize;
 use std::ffi::{c_char, CString};
+use std::sync::OnceLock;
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Direct2D::Common::{
@@ -20,6 +21,91 @@ use windows::Win32::Graphics::Direct2D::{
 use windows::Win32::Graphics::Gdi::InvalidateRect;
 
 use crate::text_renderer::{self, FontSet, RenderToken};
+
+// ── Event queue (for Perry polling) ──────────────────────────────
+
+pub mod event_type {
+    pub const TEXT: i32 = 1;
+    pub const ACTION: i32 = 2;
+    pub const SCROLL: i32 = 3;
+    pub const MOUSE_DOWN: i32 = 4;
+}
+
+pub mod action_id {
+    pub const MOVE_LEFT: i32 = 1;
+    pub const MOVE_RIGHT: i32 = 2;
+    pub const MOVE_UP: i32 = 3;
+    pub const MOVE_DOWN: i32 = 4;
+    pub const MOVE_BOL: i32 = 5;
+    pub const MOVE_EOL: i32 = 6;
+    pub const MOVE_BOD: i32 = 7;
+    pub const MOVE_EOD: i32 = 8;
+    pub const INSERT_NEWLINE: i32 = 9;
+    pub const DELETE_BACKWARD: i32 = 10;
+    pub const DELETE_FORWARD: i32 = 11;
+    pub const INSERT_TAB: i32 = 12;
+    pub const MOVE_WORD_LEFT: i32 = 13;
+    pub const MOVE_WORD_RIGHT: i32 = 14;
+    pub const MOVE_LEFT_SEL: i32 = 15;
+    pub const MOVE_RIGHT_SEL: i32 = 16;
+    pub const MOVE_UP_SEL: i32 = 17;
+    pub const MOVE_DOWN_SEL: i32 = 18;
+    pub const MOVE_BOL_SEL: i32 = 19;
+    pub const MOVE_EOL_SEL: i32 = 20;
+    pub const SELECT_ALL: i32 = 21;
+    pub const CUT: i32 = 22;
+    pub const COPY: i32 = 23;
+    pub const PASTE: i32 = 24;
+    pub const UNDO: i32 = 25;
+    pub const REDO: i32 = 26;
+    pub const DELETE_WORD_BACKWARD: i32 = 27;
+    pub const PAGE_UP: i32 = 28;
+    pub const PAGE_DOWN: i32 = 29;
+}
+
+pub struct PendingEvent {
+    pub event_type: i32,
+    pub char_code: u32,
+    pub action_id: i32,
+    pub x: f64,
+    pub y: f64,
+}
+
+/// Map a macOS-style selector string to an action ID constant.
+pub fn selector_to_action_id(selector: &str) -> i32 {
+    match selector {
+        "moveLeft:" => action_id::MOVE_LEFT,
+        "moveRight:" => action_id::MOVE_RIGHT,
+        "moveUp:" => action_id::MOVE_UP,
+        "moveDown:" => action_id::MOVE_DOWN,
+        "moveToBeginningOfLine:" => action_id::MOVE_BOL,
+        "moveToEndOfLine:" => action_id::MOVE_EOL,
+        "moveToBeginningOfDocument:" => action_id::MOVE_BOD,
+        "moveToEndOfDocument:" => action_id::MOVE_EOD,
+        "insertNewline:" => action_id::INSERT_NEWLINE,
+        "deleteBackward:" => action_id::DELETE_BACKWARD,
+        "deleteForward:" => action_id::DELETE_FORWARD,
+        "insertTab:" => action_id::INSERT_TAB,
+        "moveWordLeft:" => action_id::MOVE_WORD_LEFT,
+        "moveWordRight:" => action_id::MOVE_WORD_RIGHT,
+        "moveLeftAndModifySelection:" => action_id::MOVE_LEFT_SEL,
+        "moveRightAndModifySelection:" => action_id::MOVE_RIGHT_SEL,
+        "moveUpAndModifySelection:" => action_id::MOVE_UP_SEL,
+        "moveDownAndModifySelection:" => action_id::MOVE_DOWN_SEL,
+        "moveToBeginningOfLineAndModifySelection:" => action_id::MOVE_BOL_SEL,
+        "moveToEndOfLineAndModifySelection:" => action_id::MOVE_EOL_SEL,
+        "selectAll:" => action_id::SELECT_ALL,
+        "cut:" => action_id::CUT,
+        "copy:" => action_id::COPY,
+        "paste:" => action_id::PASTE,
+        "undo:" => action_id::UNDO,
+        "redo:" => action_id::REDO,
+        "deleteWordBackward:" => action_id::DELETE_WORD_BACKWARD,
+        "pageUp:" => action_id::PAGE_UP,
+        "pageDown:" => action_id::PAGE_DOWN,
+        _ => 0,
+    }
+}
 
 // ── Callback types ──────────────────────────────────────────────
 
@@ -115,6 +201,10 @@ pub struct EditorView {
     mouse_down_callback: Option<MouseDownCallback>,
     scroll_callback: Option<ScrollCallback>,
 
+    // Event queue (for Perry polling)
+    pub pending_events: Vec<PendingEvent>,
+    pub event_callback: Option<extern "C" fn()>,
+
     // Context menu
     context_menu_items: Vec<ContextMenuItem>,
 
@@ -129,6 +219,34 @@ pub struct EditorView {
 
 fn is_null_hwnd(hwnd: HWND) -> bool {
     hwnd.0 == 0
+}
+
+static PARKING_HWND: OnceLock<isize> = OnceLock::new();
+
+/// Get or create a message-only parking window for temporary HWND parentage.
+/// Uses OnceLock<isize> for thread-safe, Send-safe storage.
+fn get_or_create_parking_hwnd() -> HWND {
+    let raw = PARKING_HWND.get_or_init(|| unsafe {
+        let hinstance =
+            windows::Win32::System::LibraryLoader::GetModuleHandleW(None).unwrap_or_default();
+        let class: Vec<u16> = "STATIC".encode_utf16().chain(std::iter::once(0)).collect();
+        let hwnd = windows::Win32::UI::WindowsAndMessaging::CreateWindowExW(
+            windows::Win32::UI::WindowsAndMessaging::WINDOW_EX_STYLE::default(),
+            windows::core::PCWSTR(class.as_ptr()),
+            windows::core::PCWSTR(std::ptr::null()),
+            windows::Win32::UI::WindowsAndMessaging::WINDOW_STYLE::default(),
+            0,
+            0,
+            0,
+            0,
+            HWND(-3), // HWND_MESSAGE
+            None,
+            hinstance,
+            None,
+        );
+        hwnd.0
+    });
+    HWND(*raw)
 }
 
 impl EditorView {
@@ -160,6 +278,8 @@ impl EditorView {
             action_callback: None,
             mouse_down_callback: None,
             scroll_callback: None,
+            pending_events: Vec::new(),
+            event_callback: None,
             context_menu_items: Vec::new(),
             // VS Code dark theme defaults
             background_color: D2D1_COLOR_F {
@@ -201,10 +321,17 @@ impl EditorView {
         }
     }
 
-    /// No-op during construction. HWND is created in attach_to_parent()
-    /// because Win32 child windows require a valid parent at creation time.
+    /// Create the editor HWND using a message-only parking window as temporary parent.
+    /// When `attach_to_parent()` is later called, the HWND is reparented to the real parent.
     pub fn init_hwnd(&mut self) {
-        // HWND creation deferred to attach_to_parent
+        let parking = get_or_create_parking_hwnd();
+        let self_ptr = self as *mut EditorView;
+        self.hwnd = crate::input_handler::create_editor_hwnd(
+            parking,
+            self.width as i32,
+            self.height as i32,
+            self_ptr,
+        );
     }
 
     /// Get the underlying HWND handle.
@@ -222,6 +349,17 @@ impl EditorView {
 
     /// Called from the WndProc's WM_CHAR handler.
     pub fn on_text_input(&mut self, text: &str) {
+        // Queue events for Perry polling
+        for ch in text.chars() {
+            self.pending_events.push(PendingEvent {
+                event_type: event_type::TEXT,
+                char_code: ch as u32,
+                action_id: 0,
+                x: 0.0,
+                y: 0.0,
+            });
+        }
+        // Also fire callback for non-Perry paths
         if let Some(cb) = self.text_input_callback {
             if let Ok(c_text) = CString::new(text) {
                 let self_ptr = self as *mut EditorView;
@@ -232,6 +370,18 @@ impl EditorView {
 
     /// Called from the WndProc's WM_KEYDOWN handler.
     pub fn on_action(&mut self, selector: &str) {
+        // Queue event for Perry polling
+        let aid = selector_to_action_id(selector);
+        if aid != 0 {
+            self.pending_events.push(PendingEvent {
+                event_type: event_type::ACTION,
+                char_code: 0,
+                action_id: aid,
+                x: 0.0,
+                y: 0.0,
+            });
+        }
+        // Also fire callback for non-Perry paths
         if let Some(cb) = self.action_callback {
             if let Ok(c_sel) = CString::new(selector) {
                 let self_ptr = self as *mut EditorView;
@@ -246,6 +396,15 @@ impl EditorView {
 
     /// Called from the WndProc's WM_LBUTTONDOWN handler.
     pub fn on_mouse_down(&mut self, x: f64, y: f64) {
+        // Queue event for Perry polling
+        self.pending_events.push(PendingEvent {
+            event_type: event_type::MOUSE_DOWN,
+            char_code: 0,
+            action_id: 0,
+            x,
+            y,
+        });
+        // Also fire callback for non-Perry paths
         if let Some(cb) = self.mouse_down_callback {
             let self_ptr = self as *mut EditorView;
             cb(self_ptr, x, y);
@@ -258,6 +417,15 @@ impl EditorView {
 
     /// Called from the WndProc's WM_MOUSEWHEEL handler.
     pub fn on_scroll(&mut self, dx: f64, dy: f64) {
+        // Queue event for Perry polling
+        self.pending_events.push(PendingEvent {
+            event_type: event_type::SCROLL,
+            char_code: 0,
+            action_id: 0,
+            x: dx,
+            y: dy,
+        });
+        // Also fire callback for non-Perry paths
         if let Some(cb) = self.scroll_callback {
             let self_ptr = self as *mut EditorView;
             cb(self_ptr, dx, dy);
