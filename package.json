@@ -51,7 +51,15 @@
         { "name": "hone_editor_render_decorations", "params": ["i64", "i64"], "returns": "void" },
         { "name": "hone_editor_set_cursors", "params": ["i64", "i64"], "returns": "void" },
         { "name": "hone_editor_attach_to_view", "params": ["i64", "i64"], "returns": "void" },
-        { "name": "hone_editor_nsview", "params": ["i64"], "returns": "i64" }
+        { "name": "hone_editor_nsview", "params": ["i64"], "returns": "i64" },
+        { "name": "hone_editor_set_event_callback", "params": ["i64", "i64"], "returns": "void" },
+        { "name": "hone_editor_pending_event_count", "params": ["i64"], "returns": "f64" },
+        { "name": "hone_editor_get_event_type", "params": ["i64", "f64"], "returns": "f64" },
+        { "name": "hone_editor_get_event_char", "params": ["i64", "f64"], "returns": "f64" },
+        { "name": "hone_editor_get_event_action", "params": ["i64", "f64"], "returns": "f64" },
+        { "name": "hone_editor_get_event_x", "params": ["i64", "f64"], "returns": "f64" },
+        { "name": "hone_editor_get_event_y", "params": ["i64", "f64"], "returns": "f64" },
+        { "name": "hone_editor_clear_events", "params": ["i64"], "returns": "void" }
       ],
       "targets": {
         "macos": {

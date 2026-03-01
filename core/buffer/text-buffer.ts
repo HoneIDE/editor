@@ -99,7 +99,15 @@ export class TextBuffer {
 
   /** Total number of lines in the buffer. */
   getLineCount(): number {
-    return this.lineIndex.lineCount;
+    // Scan directly — mirrors getLine() workaround for Perry's LineIndex dispatch issues.
+    const fullText = this.rope.getFullText();
+    let count = 1;
+    for (let i = 0; i < fullText.length; i++) {
+      if (fullText.charCodeAt(i) === 10) {
+        count++;
+      }
+    }
+    return count;
   }
 
   /** Get the character offset of the start of a line. */

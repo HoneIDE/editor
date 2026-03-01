@@ -6,4 +6,5 @@
  */
 
 export { Editor, type EditorOptions } from './editor-component';
+export { HoneCodeEditorWidget } from './widget';
 export { type NativeEditorFFI, NoOpFFI } from '../native/ffi-bridge';

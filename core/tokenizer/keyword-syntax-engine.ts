@@ -79,12 +79,21 @@ const SUPPORTED_LANGUAGES = Object.keys(LANGUAGE_KEYWORDS);
 // Token classification helpers
 // ---------------------------------------------------------------------------
 
+// Use indexOf instead of character range comparisons (c >= 'a' && c <= 'z').
+// Perry AOT native codegen does NOT support range-based string comparisons;
+// indexOf on a module-level constant string is the safe equivalent.
+const WORD_CHARS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$';
+const UPPER_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const DECIMAL_CHARS = '0123456789';
+const HEX_CHARS = '0123456789abcdefABCDEF';
+const OCTAL_CHARS = '01234567';
+
 function isWordChar(c: string): boolean {
-  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c === '_' || c === '$';
+  return WORD_CHARS.indexOf(c) >= 0;
 }
 
 function isUpperCase(c: string): boolean {
-  return c >= 'A' && c <= 'Z';
+  return UPPER_CHARS.indexOf(c) >= 0;
 }
 
 const OPERATORS = '=+-*/<>!&|?:%~^';
@@ -101,8 +110,36 @@ export class KeywordSyntaxEngine implements ISyntaxEngine {
 
   setLanguage(languageId: string): void {
     this.languageId = languageId;
-    this.keywords = LANGUAGE_KEYWORDS[languageId] ?? [];
-    this.lineComment = LANGUAGE_LINE_COMMENTS[languageId] ?? '//';
+    // Explicit if-else instead of Record[variable] lookup — Perry doesn't support
+    // dynamic key access on module-level Record constants in AOT native codegen.
+    if (languageId === 'typescript' || languageId === 'javascript') {
+      this.keywords = TYPESCRIPT_KEYWORDS;
+      this.lineComment = '//';
+    } else if (languageId === 'python') {
+      this.keywords = PYTHON_KEYWORDS;
+      this.lineComment = '#';
+    } else if (languageId === 'rust') {
+      this.keywords = RUST_KEYWORDS;
+      this.lineComment = '//';
+    } else if (languageId === 'html') {
+      this.keywords = HTML_KEYWORDS;
+      this.lineComment = '';
+    } else if (languageId === 'css') {
+      this.keywords = CSS_KEYWORDS;
+      this.lineComment = '';
+    } else if (languageId === 'json') {
+      this.keywords = JSON_KEYWORDS;
+      this.lineComment = '';
+    } else if (languageId === 'markdown') {
+      this.keywords = MARKDOWN_KEYWORDS;
+      this.lineComment = '';
+    } else if (languageId === 'c' || languageId === 'cpp') {
+      this.keywords = RUST_KEYWORDS;
+      this.lineComment = '//';
+    } else {
+      this.keywords = [];
+      this.lineComment = '//';
+    }
     this.parsed = false;
   }
 
@@ -194,49 +231,68 @@ export class KeywordSyntaxEngine implements ISyntaxEngine {
         return tokens;
       }
 
-      // Strings (single, double, backtick)
-      if (c === "'" || c === '"' || c === '`') {
-        const quote = c;
+      // Strings (single, double, backtick).
+      // Perry codegen can't compare charAt result to a variable (only literals),
+      // so each quote type is handled separately with literal comparisons.
+      if (c === "'") {
         let j = i + 1;
         while (j < lineText.length) {
           if (lineText.charAt(j) === '\\') { j += 2; continue; }
-          if (lineText.charAt(j) === quote) { j++; break; }
+          if (lineText.charAt(j) === "'") { j++; break; }
           j++;
         }
-        tokens.push({
-          startColumn: i,
-          endColumn: j,
-          color: theme.tokens.string,
-          fontStyle: 'normal',
-        });
+        tokens.push({ startColumn: i, endColumn: j, color: theme.tokens.string, fontStyle: 'normal' });
+        i = j;
+        continue;
+      }
+      if (c === '"') {
+        let j = i + 1;
+        while (j < lineText.length) {
+          if (lineText.charAt(j) === '\\') { j += 2; continue; }
+          if (lineText.charAt(j) === '"') { j++; break; }
+          j++;
+        }
+        tokens.push({ startColumn: i, endColumn: j, color: theme.tokens.string, fontStyle: 'normal' });
+        i = j;
+        continue;
+      }
+      if (c === '`') {
+        let j = i + 1;
+        while (j < lineText.length) {
+          if (lineText.charAt(j) === '`') { j++; break; }
+          j++;
+        }
+        tokens.push({ startColumn: i, endColumn: j, color: theme.tokens.string, fontStyle: 'normal' });
         i = j;
         continue;
       }
 
-      // Numbers (decimal, hex, binary, octal, floats)
-      if ((c >= '0' && c <= '9') || (c === '.' && i + 1 < lineText.length && lineText.charAt(i + 1) >= '0' && lineText.charAt(i + 1) <= '9')) {
+      // Numbers (decimal, hex, binary, octal, floats).
+      // Use indexOf instead of range comparisons — Perry AOT does not support
+      // c >= '0' && c <= '9' style checks. indexOf on a constant string is safe.
+      if (DECIMAL_CHARS.indexOf(c) >= 0 || (c === '.' && i + 1 < lineText.length && DECIMAL_CHARS.indexOf(lineText.charAt(i + 1)) >= 0)) {
         let j = i;
         if (c === '0' && j + 1 < lineText.length) {
           const next = lineText.charAt(j + 1);
           if (next === 'x' || next === 'X') {
             j += 2;
-            while (j < lineText.length && /[0-9a-fA-F_]/.test(lineText.charAt(j))) j++;
+            while (j < lineText.length && (HEX_CHARS.indexOf(lineText.charAt(j)) >= 0 || lineText.charAt(j) === '_')) j++;
           } else if (next === 'b' || next === 'B') {
             j += 2;
             while (j < lineText.length && (lineText.charAt(j) === '0' || lineText.charAt(j) === '1' || lineText.charAt(j) === '_')) j++;
           } else if (next === 'o' || next === 'O') {
             j += 2;
-            while (j < lineText.length && lineText.charAt(j) >= '0' && lineText.charAt(j) <= '7') j++;
+            while (j < lineText.length && (OCTAL_CHARS.indexOf(lineText.charAt(j)) >= 0 || lineText.charAt(j) === '_')) j++;
           } else {
-            while (j < lineText.length && ((lineText.charAt(j) >= '0' && lineText.charAt(j) <= '9') || lineText.charAt(j) === '.' || lineText.charAt(j) === 'e' || lineText.charAt(j) === 'E' || lineText.charAt(j) === '_')) j++;
+            while (j < lineText.length && (DECIMAL_CHARS.indexOf(lineText.charAt(j)) >= 0 || lineText.charAt(j) === '.' || lineText.charAt(j) === 'e' || lineText.charAt(j) === 'E' || lineText.charAt(j) === '_')) j++;
           }
         } else {
-          while (j < lineText.length && ((lineText.charAt(j) >= '0' && lineText.charAt(j) <= '9') || lineText.charAt(j) === '.' || lineText.charAt(j) === 'e' || lineText.charAt(j) === 'E' || lineText.charAt(j) === '_')) j++;
+          while (j < lineText.length && (DECIMAL_CHARS.indexOf(lineText.charAt(j)) >= 0 || lineText.charAt(j) === '.' || lineText.charAt(j) === 'e' || lineText.charAt(j) === 'E' || lineText.charAt(j) === '_')) j++;
         }
         // Numeric suffix (Rust: u32, i64, f64, etc.)
         if (this.languageId === 'rust' && j < lineText.length && (lineText.charAt(j) === 'u' || lineText.charAt(j) === 'i' || lineText.charAt(j) === 'f')) {
           j++;
-          while (j < lineText.length && lineText.charAt(j) >= '0' && lineText.charAt(j) <= '9') j++;
+          while (j < lineText.length && DECIMAL_CHARS.indexOf(lineText.charAt(j)) >= 0) j++;
         }
         tokens.push({
           startColumn: i,
@@ -263,7 +319,14 @@ export class KeywordSyntaxEngine implements ISyntaxEngine {
         while (afterWord < lineText.length && lineText.charAt(afterWord) === ' ') afterWord++;
         const isFunction = afterWord < lineText.length && lineText.charAt(afterWord) === '(';
 
-        if (this.keywords.indexOf(word) >= 0) {
+        // Explicit loop instead of this.keywords.indexOf — Perry doesn't dispatch
+        // Array methods correctly on class-field arrays in AOT native codegen.
+        let isKeyword = false;
+        const kws = this.keywords;
+        for (let ki = 0; ki < kws.length; ki++) {
+          if (kws[ki] === word) { isKeyword = true; break; }
+        }
+        if (isKeyword) {
           color = theme.tokens.keyword;
           // Boolean/null literals
           if (word === 'true' || word === 'false' || word === 'True' || word === 'False') {
@@ -290,11 +353,13 @@ export class KeywordSyntaxEngine implements ISyntaxEngine {
           }
         }
 
+        // Use explicit key:value — Perry doesn't support ES6 shorthand {color, fontStyle}
+        // which captures the initial variable value instead of the reassigned one.
         tokens.push({
           startColumn: i,
           endColumn: j,
-          color,
-          fontStyle,
+          color: color,
+          fontStyle: fontStyle,
         });
         i = j;
         continue;

@@ -223,6 +223,99 @@ pub extern "C" fn hone_editor_clear_context_menu_items(view: *mut EditorView) {
     view.clear_context_menu_items();
 }
 
+/// Register a zero-argument callback that Rust calls synchronously when it
+/// queues a new input event.  Perry compiles the TypeScript closure to a
+/// C-callable function pointer, which satisfies `extern "C" fn()`.
+#[no_mangle]
+pub extern "C" fn hone_editor_set_event_callback(
+    view: *mut EditorView,
+    callback: extern "C" fn(),
+) {
+    let view = unsafe { &mut *view };
+    view.event_callback = Some(callback);
+}
+
+// === TypeScript event polling API ===
+// Exposes the pending_events queue via simple numeric FFI.
+// TypeScript calls hone_editor_pending_event_count(), iterates, reads fields,
+// then calls hone_editor_clear_events(). All values are f64 for Perry compat.
+
+/// Returns the number of pending input events.
+#[no_mangle]
+pub extern "C" fn hone_editor_pending_event_count(view: *mut EditorView) -> f64 {
+    let view = unsafe { &*view };
+    let n = view.pending_events.len();
+    eprintln!("[HONE] pending_event_count called n={}", n);
+    n as f64
+}
+
+/// Returns the event_type for the event at `index` (1=text, 2=action, 3=scroll, 4=mouse_down).
+#[no_mangle]
+pub extern "C" fn hone_editor_get_event_type(view: *mut EditorView, index: f64) -> f64 {
+    let view = unsafe { &*view };
+    let i = index as usize;
+    if i < view.pending_events.len() {
+        view.pending_events[i].event_type as f64
+    } else {
+        0.0
+    }
+}
+
+/// Returns the Unicode codepoint for TEXT events.
+#[no_mangle]
+pub extern "C" fn hone_editor_get_event_char(view: *mut EditorView, index: f64) -> f64 {
+    let view = unsafe { &*view };
+    let i = index as usize;
+    if i < view.pending_events.len() {
+        view.pending_events[i].char_code as f64
+    } else {
+        0.0
+    }
+}
+
+/// Returns the action ID for ACTION events.
+#[no_mangle]
+pub extern "C" fn hone_editor_get_event_action(view: *mut EditorView, index: f64) -> f64 {
+    let view = unsafe { &*view };
+    let i = index as usize;
+    if i < view.pending_events.len() {
+        view.pending_events[i].action_id as f64
+    } else {
+        0.0
+    }
+}
+
+/// Returns the x field (view-x for MOUSE_DOWN, dx for SCROLL).
+#[no_mangle]
+pub extern "C" fn hone_editor_get_event_x(view: *mut EditorView, index: f64) -> f64 {
+    let view = unsafe { &*view };
+    let i = index as usize;
+    if i < view.pending_events.len() {
+        view.pending_events[i].x
+    } else {
+        0.0
+    }
+}
+
+/// Returns the y field (view-y for MOUSE_DOWN, dy for SCROLL).
+#[no_mangle]
+pub extern "C" fn hone_editor_get_event_y(view: *mut EditorView, index: f64) -> f64 {
+    let view = unsafe { &*view };
+    let i = index as usize;
+    if i < view.pending_events.len() {
+        view.pending_events[i].y
+    } else {
+        0.0
+    }
+}
+
+/// Clear all pending events after processing.
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_events(view: *mut EditorView) {
+    let view = unsafe { &mut *view };
+    view.pending_events.clear();
+}
+
 /// Get the NSView handle for the editor view (as a raw pointer).
 #[no_mangle]
 pub extern "C" fn hone_editor_nsview(view: *mut EditorView) -> *mut std::ffi::c_void {

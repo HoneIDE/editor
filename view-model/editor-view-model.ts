@@ -110,7 +110,7 @@ export class EditorViewModel {
 
   constructor(doc: EditorDocument, theme?: EditorTheme, syntaxEngine?: ISyntaxEngine) {
     this.document = doc;
-    this._theme = theme ?? DARK_THEME;
+    this._theme = theme !== undefined ? theme : DARK_THEME;
 
     this.cursorManager = new CursorManager(doc.buffer);
     this.viewport = new ViewportManager();
@@ -118,7 +118,7 @@ export class EditorViewModel {
     this.commandRegistry = new CommandRegistry();
 
     // Phase 1 subsystems — use provided engine or a no-op stub
-    this.syntaxEngine = syntaxEngine ?? NO_OP_SYNTAX_ENGINE;
+    this.syntaxEngine = syntaxEngine !== undefined ? syntaxEngine : NO_OP_SYNTAX_ENGINE;
     this.tokenCache = new IncrementalTokenCache(this.syntaxEngine);
     this.foldState = new FoldState();
     this.findWidget = new FindWidgetController();
@@ -153,9 +153,12 @@ export class EditorViewModel {
       this.updateFoldRanges();
     }
 
-    // Wire token provider from syntax engine
+    // Wire token provider from syntax engine.
+    // NOTE: bypasses IncrementalTokenCache — Perry's class-field Array.push
+    // dispatch is broken (same issue as LineIndex), causing an infinite loop
+    // in the cache-growth while loop. Call the syntax engine directly instead.
     this._tokenProvider = (lineNumber: number) => {
-      return this.tokenCache.getLineTokens(doc.buffer, lineNumber, this._theme);
+      return this.syntaxEngine.getLineTokens(doc.buffer, lineNumber, this._theme);
     };
 
     // Wire fold state provider
@@ -208,14 +211,33 @@ export class EditorViewModel {
     for (const listener of this._listeners) listener();
   }
 
+  /**
+   * Notify all change listeners without modifying any state.
+   * Call this after external buffer modifications (e.g. setContent) to ensure
+   * onChange subscribers and the render coordinator are updated.
+   */
+  touch(): void {
+    this.notifyChange();
+  }
+
   // === Computed State ===
 
   get visibleLines(): RenderedLine[] {
-    const lineNumbers = this.viewport.getVisibleLineNumbers();
+    // Render ALL lines so Rust has the full content available for scrolling.
+    // Virtual scrolling is handled by Rust (y_offset shifting in frame_lines).
+    // NOTE: Use push() not index assignment — Perry codegen handles push on local arrays.
+    const lineCount = this.document.buffer.getLineCount();
+    const lineNumbers: number[] = [];
+    let i = 0;
+    while (i < lineCount) {
+      lineNumbers.push(i);
+      i = i + 1;
+    }
     return computeRenderedLines(
       this.document.buffer,
       lineNumbers,
       this._gutter,
+      this._tokenProvider,
     );
   }
 
@@ -419,9 +441,9 @@ export class EditorViewModel {
     this.viewport.setTotalLines(this.document.buffer.getLineCount());
 
     // Re-parse for syntax highlighting
-    if (this.syntaxEngine.hasLanguage(this.document.languageId ?? '')) {
+    const langId = this.document.languageId;
+    if (langId !== null && langId !== undefined && this.syntaxEngine.hasLanguage(langId)) {
       this.syntaxEngine.parse(this.document.buffer);
-      this.tokenCache.invalidateAll();
       this.updateFoldRanges();
     }
 

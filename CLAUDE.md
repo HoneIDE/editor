@@ -71,6 +71,51 @@ tests/          Unit and integration tests
 - Only `native/` Rust FFI crates are platform-specific
 - FFI contract is identical across all platforms (same function signatures)
 
+## Perry AOT Codegen Constraints
+Perry compiles TypeScript to native AOT binaries. Its codegen has several limitations that affect
+any code running through it (including `core/`, `view-model/`, `perry/`, and `native/`). These were
+discovered during macOS demo development and apply to **all platforms**:
+
+### Language Patterns That Are Broken in Perry
+| Pattern | Broken | Working Alternative |
+|---|---|---|
+| `obj[variable]` on Record/object | ❌ dynamic key access fails | explicit `if/else if` per key |
+| `array.indexOf(x)` on class fields | ❌ method dispatch broken | `for` loop with `=== x` |
+| `array.push(x)` on class fields | ❌ method dispatch broken | redesign to avoid (see TextBuffer) |
+| `{ color, fontStyle }` shorthand | ❌ captures initial value, not reassigned | `{ color: color, fontStyle: fontStyle }` |
+| `str.charAt(j) === variable` | ❌ comparison to variable fails | compare to string **literal** only |
+| `c >= 'a' && c <= 'z'` range compare | ❌ character range comparisons fail | `ALPHA_STR.indexOf(c) >= 0` where ALPHA_STR is a module-level const |
+| `/regex/.test(str)` | ❌ regex literals fail | replace with indexOf or explicit char checks |
+| `??` nullish coalescing | ❌ not compiled | explicit `if (x !== undefined)` |
+| `?.` optional chaining | ❌ not compiled | explicit null checks |
+| `for...of` on arrays | ⚠️ may not work | `for (let i = 0; i < arr.length; i++)` |
+| `arr.map(fn)` | ⚠️ may not work | explicit `for` loop with `push` |
+
+### Perry-Safe Patterns to Use
+- **Array iteration**: `for (let i = 0; i < arr.length; i++)` with `arr[i]`
+- **Keyword lookup**: explicit `if/else if` chain comparing to string literals
+- **Object property push**: prefer local arrays; redesign class-field arrays to avoid mutation methods
+- **Object literals**: always use explicit `key: value` syntax, never ES6 shorthand `{ key }`
+- **String scanning**: compare `str.charAt(j)` only to string literals, never to a variable holding the quote character
+- **Record lookups**: replace `RECORD[variable]` with an explicit `if/else if` chain
+- **Character classification**: use `CONST_STR.indexOf(c) >= 0` where `CONST_STR` is a module-level string constant (e.g., `const DIGITS = '0123456789'`). NEVER use `c >= '0' && c <= '9'` — range comparisons on characters fail in Perry AOT.
+
+### Input Event Architecture (Perry mode)
+Perry's AOT runtime does NOT fire `setInterval` before the app event loop starts, and C function
+pointer callbacks into Perry-compiled closures crash on ARM64 (closures live in non-executable
+heap memory). Instead:
+- Rust NSView buffers all input events in `EditorView.pending_events`
+- TypeScript polls via `requestAnimationFrame` (→ `setTimeout` fallback) calling `_pollEvents()`
+- All new FFI polling functions must be listed in `package.json` `perry.nativeLibrary.functions`
+
+### Rust-Side Rendering (Perry mode)
+Because Perry only triggers 2 TypeScript renders at startup (from `coordinator.attach()` and
+`vm.onResize()`), the Rust FFI layer handles ALL subsequent interaction directly:
+- **Cursor positioning**: `on_mouse_down` scans text with `measure_text()` per-char (not `char_width` division)
+- **Scroll clamping**: `on_scroll` uses `initial_top_y` (set on first `end_frame`) to bound `frame_lines[0].y_offset`
+- **Line height**: TypeScript sends `lineHeightPx = fontSize * 1.5`; Rust's CTFont `line_height` ≠ this — infer TS line height from `frame_lines[1].y_offset - frame_lines[0].y_offset`
+- **`user_has_clicked` flag**: prevents TypeScript re-renders from overriding Rust cursor state after a click
+
 ## Commands
 Run tests: `bun test`
 Run single test file: `bun test tests/buffer.test.ts`

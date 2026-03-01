@@ -38,12 +38,21 @@ export function computeRenderedLines(
   buffer: TextBuffer,
   lineNumbers: number[],
   gutterRenderer: GutterRenderer,
+  tokenProvider: ((lineNumber: number) => LineToken[]) | null,
 ): RenderedLine[] {
   const result: RenderedLine[] = [];
   for (let i = 0; i < lineNumbers.length; i++) {
     const lineNumber = lineNumbers[i];
     const content = buffer.getLine(lineNumber);
-    const tokens = defaultTokens(content);
+    let tokens: LineToken[];
+    if (tokenProvider !== null) {
+      tokens = tokenProvider(lineNumber);
+      if (tokens.length === 0) {
+        tokens = defaultTokens(content);
+      }
+    } else {
+      tokens = defaultTokens(content);
+    }
     const decorations: LineDecoration[] = [];
     const gutterItems = gutterRenderer.getGutterItems(
       lineNumber,
