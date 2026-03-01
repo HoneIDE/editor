@@ -306,6 +306,18 @@ impl EditorView {
             self.sync_cursor_x();
             view::invalidate_view(self.nsview);
         }
+        // Queue events for TypeScript so it updates its buffer and re-renders with syntax tokens.
+        // TypeScript's rafTick polls pending_events every ~16ms; processing TEXT events triggers
+        // vm.onTextInput → notifyChange → coordinator.render → fresh tokens replace the gray line.
+        for ch in text.chars() {
+            self.pending_events.push(PendingEvent {
+                event_type: event_type::TEXT,
+                char_code: ch as u32,
+                action_id: 0,
+                x: 0.0,
+                y: 0.0,
+            });
+        }
     }
 
     /// Called from the NSView's doCommandBySelector: handler.
@@ -382,19 +394,21 @@ impl EditorView {
                     dirty = true;
                 }
             }
-            _ => {
-                // Push unknown actions to the queue for future TypeScript handling.
-                let aid = selector_to_action_id(selector);
-                if aid != 0 {
-                    self.pending_events.push(PendingEvent {
-                        event_type: event_type::ACTION,
-                        char_code: 0,
-                        action_id: aid,
-                        x: 0.0,
-                        y: 0.0,
-                    });
-                }
-            }
+            _ => {}
+        }
+        // Queue all recognized actions for TypeScript so it stays in sync with buffer and cursor.
+        // This includes editing (deleteBackward) and navigation (moveLeft, etc.).
+        // TypeScript's _pollEvents processes them via _dispatchAction → vm.onKeyDown → notifyChange
+        // → coordinator.render, which rebuilds frame_lines with fresh syntax tokens.
+        let aid = selector_to_action_id(selector);
+        if aid != 0 {
+            self.pending_events.push(PendingEvent {
+                event_type: event_type::ACTION,
+                char_code: 0,
+                action_id: aid,
+                x: 0.0,
+                y: 0.0,
+            });
         }
         if dirty {
             self.sync_cursor_x();
@@ -452,6 +466,16 @@ impl EditorView {
             self.cursor = Some(CursorData { x: cursor_x, y: cursor_y, style: 0 });
             eprintln!("[HONE] click: raw_x={:.1} gutter={:.1} byte_col={} cursor_x={:.1} line={} y={:.1}",
                 x, gutter_w, self.rust_col, cursor_x, line_number, cursor_y);
+            // Queue for TypeScript so it syncs its cursor position before processing text events.
+            // This ensures subsequent TEXT events are inserted at the clicked position in
+            // TypeScript's buffer, keeping it in sync with the Rust-side frame_lines.
+            self.pending_events.push(PendingEvent {
+                event_type: event_type::MOUSE_DOWN,
+                char_code: 0,
+                action_id: 0,
+                x,
+                y,
+            });
             view::invalidate_view(self.nsview);
         }
     }
