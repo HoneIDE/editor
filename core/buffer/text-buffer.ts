@@ -77,8 +77,9 @@ export class TextBuffer {
     } else {
       this._text = this._text.substring(0, clampedOffset) + text + this._text.substring(clampedOffset);
     }
-    // Update lineIndex incrementally — avoids O(n) rope traversal in rebuild().
-    this.lineIndex.update(clampedOffset, '', text);
+    // NOTE: lineIndex.update() intentionally skipped. lineIndex uses splice() on
+    // class-field arrays which Perry AOT does not dispatch correctly. All offset
+    // queries (getLineOffset, getOffsetLine, getLineLength) now scan _text directly.
     // NOTE: rope.insert() is intentionally skipped. _text is the source of truth
     // for all reads. Snapshots capture _text directly (see snapshot()).
     return text.length;
@@ -93,9 +94,7 @@ export class TextBuffer {
     const deletedText = this._text.substring(offset, offset + length);
     // Update shadow text
     this._text = this._text.substring(0, offset) + this._text.substring(offset + length);
-    // Update lineIndex incrementally.
-    this.lineIndex.update(offset, deletedText, '');
-    // NOTE: rope.delete() is intentionally skipped. See insert() comment.
+    // NOTE: lineIndex.update() and rope.delete() intentionally skipped. See insert().
     return deletedText;
   }
 
@@ -146,12 +145,33 @@ export class TextBuffer {
 
   /** Get the character offset of the start of a line. */
   getLineOffset(lineNumber: number): number {
-    return this.lineIndex.getLineStart(lineNumber);
+    // Scan _text directly — lineIndex.splice() is broken in Perry AOT.
+    if (lineNumber <= 0) return 0;
+    const fullText = this._text;
+    let currentLine = 0;
+    for (let i = 0; i < fullText.length; i++) {
+      if (fullText.charCodeAt(i) === 10) {
+        currentLine++;
+        if (currentLine === lineNumber) {
+          return i + 1;
+        }
+      }
+    }
+    return fullText.length;
   }
 
   /** Get the line number for a given character offset. */
   getOffsetLine(offset: number): number {
-    return this.lineIndex.getLineForOffset(offset);
+    // Scan _text directly — lineIndex.splice() is broken in Perry AOT.
+    const fullText = this._text;
+    let count = 0;
+    const limit = offset < fullText.length ? offset : fullText.length;
+    for (let i = 0; i < limit; i++) {
+      if (fullText.charCodeAt(i) === 10) {
+        count++;
+      }
+    }
+    return count;
   }
 
   /** Total number of characters in the buffer. */
@@ -187,7 +207,7 @@ export class TextBuffer {
   snapshot(): BufferSnapshot {
     const id = ++snapshotIdCounter;
     const capturedText = this._text;
-    const capturedLineCount = this.lineIndex.lineCount;
+    const capturedLineCount = this.getLineCount();
 
     return {
       id,
@@ -233,11 +253,7 @@ export class TextBuffer {
    * Get the line length (excluding newline character).
    */
   getLineLength(lineNumber: number): number {
-    if (lineNumber < 0 || lineNumber >= this.getLineCount()) return 0;
-    const lineStart = this.lineIndex.getLineStart(lineNumber);
-    const lineEnd = lineNumber + 1 < this.getLineCount()
-      ? this.lineIndex.getLineStart(lineNumber + 1) - 1
-      : this.getLength();
-    return lineEnd - lineStart;
+    // Use getLine() which already scans _text directly (Perry-safe).
+    return this.getLine(lineNumber).length;
   }
 }
