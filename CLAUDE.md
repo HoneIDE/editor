@@ -128,18 +128,39 @@ ALL interaction directly by mutating `frame_lines` in place and calling `setNeed
 
 2. **Cursor positioning** — `on_mouse_down` must use `measure_text()` per-char prefix scan
    (not `char_width` division) to find the closest byte column to the click x position.
+   After positioning, set `rust_sel_anchor = Some((line, col))` so drag immediately extends
+   the selection. A plain click with no drag produces anchor == cursor (no visible selection).
 
-3. **Scroll clamping** — `on_scroll` uses `initial_top_y` (set on first `end_frame`) to bound
+3. **Mouse drag selection** — Register `mouseDragged:` (or platform equivalent) and call
+   `on_mouse_drag(x, y)`. It repeats the hit-test logic from `on_mouse_down`, updates
+   `rust_cursor_line`/`rust_col`/`cursor`, then calls `sync_selection_rects()`.
+   `sync_selection_rects()` builds one `SelectionRegion` rect per visible line in the selection
+   range, measured with `measure_text()` for pixel-accurate start/end x.
+
+4. **Scroll clamping** — `on_scroll` uses `initial_top_y` (set on first `end_frame`) to bound
    `frame_lines[0].y_offset`. Without clamping, content drifts off-screen permanently.
 
-4. **Line height inference** — TypeScript sends `lineHeightPx = fontSize * 1.5`. Rust's native
+5. **Line height inference** — TypeScript sends `lineHeightPx = fontSize * 1.5`. Rust's native
    font metrics (`CTFont.line_height`, `Pango.line_height`, etc.) differ. Infer the TypeScript
    line height from `frame_lines[1].y_offset - frame_lines[0].y_offset` after the first frame.
+   Store this in a helper `ts_line_height()` — it's used by newline insert, backspace line-join,
+   and multi-line selection delete.
 
-5. **`user_has_clicked` flag** — After a user click, set this flag to prevent TypeScript's two
+6. **`sync_cursor_x` must also sync Y** — After any action that changes `rust_cursor_line`
+   (newline, backspace line-join, up/down movement), the cursor's pixel y must be updated to
+   `frame_lines[cursor_line_idx].y_offset`. Syncing only X leaves the cursor visually stuck on
+   the wrong line. The macOS implementation handles this in `sync_cursor_x()`.
+
+7. **Newline / backspace / selection delete** — `on_action` handles `insertNewline:`,
+   `deleteBackward:`, `copy:`, `cut:`, `paste:`, `selectAll:`, and all movement selectors
+   (including `moveXxxAndModifySelection:` variants). See `editor_view.rs` for the full
+   reference implementation with `delete_selection_if_any()`, `get_selected_text()`,
+   `write_to_clipboard()`, `read_from_clipboard()`, and `sync_selection_rects()`.
+
+8. **`user_has_clicked` flag** — After a user click, set this flag to prevent TypeScript's two
    startup re-renders from overriding the Rust-managed cursor position.
 
-6. **Event queue** — Implement `pending_events: Vec<PendingEvent>` with the same event type
+9. **Event queue** — Implement `pending_events: Vec<PendingEvent>` with the same event type
    constants (TEXT=1, ACTION=2, SCROLL=3, MOUSE_DOWN=4) and FFI polling functions
    (`hone_editor_pending_event_count`, `hone_editor_get_event_*`, `hone_editor_clear_events`).
    These are polled by TypeScript's RAF loop on platforms where it does fire (web, potentially iOS).

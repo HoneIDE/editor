@@ -61,6 +61,10 @@ fn ensure_class_registered() {
                 mouse_down as extern "C" fn(&Object, Sel, id),
             );
             decl.add_method(
+                objc::sel!(mouseDragged:),
+                mouse_dragged as extern "C" fn(&Object, Sel, id),
+            );
+            decl.add_method(
                 objc::sel!(resetCursorRects),
                 reset_cursor_rects as extern "C" fn(&Object, Sel),
             );
@@ -207,6 +211,22 @@ extern "C" fn mouse_down(this: &Object, _sel: Sel, event: id) {
             msg_send![this, convertPoint: window_point fromView: nil];
 
         editor_view.on_mouse_down(view_point.x, view_point.y);
+    }
+}
+
+extern "C" fn mouse_dragged(this: &Object, _sel: Sel, event: id) {
+    unsafe {
+        let state_ptr: *mut c_void = *this.get_ivar(EDITOR_STATE_IVAR);
+        if state_ptr.is_null() {
+            return;
+        }
+        let editor_view = &mut *(state_ptr as *mut EditorView);
+
+        let window_point: cocoa::foundation::NSPoint = msg_send![event, locationInWindow];
+        let view_point: cocoa::foundation::NSPoint =
+            msg_send![this, convertPoint: window_point fromView: nil];
+
+        editor_view.on_mouse_drag(view_point.x, view_point.y);
     }
 }
 
