@@ -257,6 +257,7 @@ export class Editor {
 
     const handle = coordinator.create(width, height);
     this.nativeHandle = handle;
+
     coordinator.attach(vm);
 
     vm.onResize(width, height);
@@ -403,6 +404,7 @@ export class Editor {
   setFont(family: string, size: number): void {
     const coordinator = this._coordinator;
     coordinator.setFont(family, size);
+    coordinator.render();
   }
 
   /** Subscribe to editor state changes. Returns an unsubscribe function. */

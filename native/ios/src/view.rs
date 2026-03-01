@@ -183,6 +183,7 @@ extern "C" fn draw_rect(this: &Object, _sel: Sel, dirty_rect: ObjCRect) {
     unsafe {
         let state_ptr: *mut c_void = *this.get_ivar(EDITOR_STATE_IVAR);
         if state_ptr.is_null() {
+            eprintln!("[hone-ios] draw_rect: state_ptr is null!");
             return;
         }
         let editor_view = &*(state_ptr as *const EditorView);
@@ -191,6 +192,7 @@ extern "C" fn draw_rect(this: &Object, _sel: Sel, dirty_rect: ObjCRect) {
         // CGContext set up by UIKit for the current drawRect: call.
         let cg_ctx = UIGraphicsGetCurrentContext();
         if cg_ctx.is_null() {
+            eprintln!("[hone-ios] draw_rect: cg_ctx is null!");
             return;
         }
 

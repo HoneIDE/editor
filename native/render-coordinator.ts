@@ -174,6 +174,18 @@ export class NativeRenderCoordinator {
   }
 
   /**
+   * Explicitly set the computed line height in pixels.
+   *
+   * NOTE: computeYOffset now derives line height from config.fontSize directly
+   * (Perry-safe: avoids _lineHeightPx class field which Perry AOT may mis-read).
+   * This method updates _lineHeightPx for callers that read the field directly,
+   * but has no effect on rendering layout.
+   */
+  setLineHeightPx(px: number): void {
+    this._lineHeightPx = px;
+  }
+
+  /**
    * Update font configuration.
    */
   setFont(family: string, size: number): void {
@@ -265,7 +277,8 @@ export class NativeRenderCoordinator {
         const w = this.measureTextWidth(handle, lineContent.substring(startCol, endCol));
         const y = this.computeYOffset(line, scroll.scrollTop);
 
-        regions.push({ x, y, w, h: this._lineHeightPx });
+        const sz2 = this._config.fontSize;
+        regions.push({ x, y, w, h: sz2 + sz2 / 2 });
       }
     }
 
@@ -289,7 +302,12 @@ export class NativeRenderCoordinator {
   }
 
   private computeYOffset(lineNumber: number, scrollTop: number): number {
-    return lineNumber * this._lineHeightPx - scrollTop;
+    // Perry-safe: read fontSize from config object (not _lineHeightPx class field,
+    // which Perry's AOT codegen may read from the wrong memory offset).
+    // Use integer arithmetic for 1.5x: sz + sz/2.
+    const sz = this._config.fontSize;
+    const lh = sz + sz / 2;
+    return lineNumber * lh - scrollTop;
   }
 
   private computeCursorX(handle: NativeViewHandle, cursor: CursorState, vm: EditorViewModel): number {
@@ -319,11 +337,12 @@ export class NativeRenderCoordinator {
     scrollTop: number,
   ): string {
     const y = this.computeYOffset(lineNumber, scrollTop);
+    const sz3 = this._config.fontSize;
     const overlays: DecorationOverlay[] = decorations.map(d => ({
       x: d.startColumn * this._charWidth,
       y,
       w: (d.endColumn - d.startColumn) * this._charWidth,
-      h: this._lineHeightPx,
+      h: sz3 + sz3 / 2,
       color: d.color,
       type: d.type.startsWith('underline') ? (
         d.type === 'underline-error' ? 'underline-wavy' : 'underline'

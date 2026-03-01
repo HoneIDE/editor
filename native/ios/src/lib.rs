@@ -3,6 +3,12 @@
 //! Implements the FFI contract using Core Text for text rendering
 //! and a drawRect:-based UIView for compositing. Shares the Core Text
 //! rendering pipeline with the macOS crate.
+//!
+//! IMPORTANT: All numeric parameters that Perry passes as TypeScript `number`
+//! must be `f64` here (Perry's AOT codegen puts TS numbers in ARM64 float
+//! registers v0, v1, v2...). Using `i32` causes an ABI mismatch where Rust
+//! reads from the wrong register. Similarly, string parameters must use
+//! `*const u8` + `str_from_header` (Perry's StringHeader format), not CStr.
 
 #[macro_use]
 extern crate objc;
@@ -11,11 +17,12 @@ mod text_renderer;
 mod view;
 mod editor_view;
 pub mod tokenizer;
+pub mod string_header;
 
 pub use editor_view::EditorView;
 
 use editor_view::{ActionCallback, MouseDownCallback, ScrollCallback, TextInputCallback};
-use std::ffi::{c_char, CStr};
+use string_header::str_from_header;
 
 // === FFI Contract Implementation ===
 
@@ -46,27 +53,33 @@ pub extern "C" fn hone_editor_destroy(view: *mut EditorView) {
 #[no_mangle]
 pub extern "C" fn hone_editor_set_font(
     view: *mut EditorView,
-    family: *const c_char,
+    family: *const u8,
     size: f64,
 ) {
     let view = unsafe { &mut *view };
-    let family_str = unsafe { CStr::from_ptr(family) }.to_str().unwrap_or("Menlo");
+    let family_str = str_from_header(family);
+    if family_str.is_empty() { return; }
     view.set_font(family_str, size);
 }
 
 /// Render a single line of text with syntax coloring.
+///
+/// `line_number` is f64 because Perry passes TypeScript numbers in ARM64 float
+/// registers (v0, v1…). Using i32 would cause Rust to read from the wrong
+/// register and receive a garbage value.
 #[no_mangle]
 pub extern "C" fn hone_editor_render_line(
     view: *mut EditorView,
-    line_number: i32,
-    text: *const c_char,
-    tokens_json: *const c_char,
+    line_number: f64,
+    text: *const u8,
+    tokens_json: *const u8,
     y_offset: f64,
 ) {
     let view = unsafe { &mut *view };
-    let text_str = unsafe { CStr::from_ptr(text) }.to_str().unwrap_or("");
-    let tokens_str = unsafe { CStr::from_ptr(tokens_json) }.to_str().unwrap_or("[]");
-    view.render_line(line_number, text_str, tokens_str, y_offset);
+    let text_str = str_from_header(text);
+    let tokens_str = str_from_header(tokens_json);
+    let tokens_str = if tokens_str.is_empty() { "[]" } else { tokens_str };
+    view.render_line(line_number as i32, text_str, tokens_str, y_offset);
 }
 
 /// Set the cursor position and style.
@@ -75,20 +88,21 @@ pub extern "C" fn hone_editor_set_cursor(
     view: *mut EditorView,
     x: f64,
     y: f64,
-    style: i32,
+    style: f64,
 ) {
     let view = unsafe { &mut *view };
-    view.set_cursor(x, y, style);
+    view.set_cursor(x, y, style as i32);
 }
 
 /// Set selection highlight regions.
 #[no_mangle]
 pub extern "C" fn hone_editor_set_selection(
     view: *mut EditorView,
-    regions_json: *const c_char,
+    regions_json: *const u8,
 ) {
     let view = unsafe { &mut *view };
-    let json_str = unsafe { CStr::from_ptr(regions_json) }.to_str().unwrap_or("[]");
+    let json_str = str_from_header(regions_json);
+    let json_str = if json_str.is_empty() { "[]" } else { json_str };
     view.set_selection(json_str);
 }
 
@@ -103,10 +117,10 @@ pub extern "C" fn hone_editor_scroll(view: *mut EditorView, offset_y: f64) {
 #[no_mangle]
 pub extern "C" fn hone_editor_measure_text(
     view: *mut EditorView,
-    text: *const c_char,
+    text: *const u8,
 ) -> f64 {
     let view = unsafe { &*view };
-    let text_str = unsafe { CStr::from_ptr(text) }.to_str().unwrap_or("");
+    let text_str = str_from_header(text);
     view.measure_text(text_str)
 }
 
@@ -123,10 +137,11 @@ pub extern "C" fn hone_editor_invalidate(view: *mut EditorView) {
 #[no_mangle]
 pub extern "C" fn hone_editor_render_decorations(
     view: *mut EditorView,
-    decorations_json: *const c_char,
+    decorations_json: *const u8,
 ) {
     let view = unsafe { &mut *view };
-    let json_str = unsafe { CStr::from_ptr(decorations_json) }.to_str().unwrap_or("[]");
+    let json_str = str_from_header(decorations_json);
+    let json_str = if json_str.is_empty() { "[]" } else { json_str };
     view.render_decorations(json_str);
 }
 
@@ -134,14 +149,15 @@ pub extern "C" fn hone_editor_render_decorations(
 #[no_mangle]
 pub extern "C" fn hone_editor_render_ghost_text(
     view: *mut EditorView,
-    text: *const c_char,
+    text: *const u8,
     x: f64,
     y: f64,
-    color: *const c_char,
+    color: *const u8,
 ) {
     let view = unsafe { &mut *view };
-    let text_str = unsafe { CStr::from_ptr(text) }.to_str().unwrap_or("");
-    let color_str = unsafe { CStr::from_ptr(color) }.to_str().unwrap_or("#808080");
+    let text_str = str_from_header(text);
+    let color_str = str_from_header(color);
+    let color_str = if color_str.is_empty() { "#808080" } else { color_str };
     view.render_ghost_text(text_str, x, y, color_str);
 }
 
@@ -149,10 +165,11 @@ pub extern "C" fn hone_editor_render_ghost_text(
 #[no_mangle]
 pub extern "C" fn hone_editor_set_cursors(
     view: *mut EditorView,
-    cursors_json: *const c_char,
+    cursors_json: *const u8,
 ) {
     let view = unsafe { &mut *view };
-    let json_str = unsafe { CStr::from_ptr(cursors_json) }.to_str().unwrap_or("[]");
+    let json_str = str_from_header(cursors_json);
+    let json_str = if json_str.is_empty() { "[]" } else { json_str };
     view.set_cursors(json_str);
 }
 
@@ -201,12 +218,12 @@ pub extern "C" fn hone_editor_set_scroll_callback(
 #[no_mangle]
 pub extern "C" fn hone_editor_add_context_menu_item(
     view: *mut EditorView,
-    title: *const c_char,
-    action_id: *const c_char,
+    title: *const u8,
+    action_id: *const u8,
 ) {
     let view = unsafe { &mut *view };
-    let title_str = unsafe { CStr::from_ptr(title) }.to_str().unwrap_or("");
-    let action_str = unsafe { CStr::from_ptr(action_id) }.to_str().unwrap_or("");
+    let title_str = str_from_header(title);
+    let action_str = str_from_header(action_id);
     view.add_context_menu_item(title_str, action_str);
 }
 
@@ -224,6 +241,14 @@ pub extern "C" fn hone_editor_uiview(view: *mut EditorView) -> *mut std::ffi::c_
     view.uiview() as *mut std::ffi::c_void
 }
 
+/// Alias so the cross-platform TypeScript (which calls hone_editor_nsview on all targets)
+/// resolves correctly on iOS without needing a platform branch in TS code.
+#[no_mangle]
+pub extern "C" fn hone_editor_nsview(view: *mut EditorView) -> *mut std::ffi::c_void {
+    let view = unsafe { &*view };
+    view.uiview() as *mut std::ffi::c_void
+}
+
 /// Begin a frame batch.
 #[no_mangle]
 pub extern "C" fn hone_editor_begin_frame(view: *mut EditorView) {
@@ -236,4 +261,63 @@ pub extern "C" fn hone_editor_begin_frame(view: *mut EditorView) {
 pub extern "C" fn hone_editor_end_frame(view: *mut EditorView) {
     let view = unsafe { &mut *view };
     view.end_frame();
+}
+
+// === TypeScript event polling API (Perry mode) ===
+// All values are f64 for Perry ABI compatibility.
+
+#[no_mangle]
+pub extern "C" fn hone_editor_set_event_callback(
+    view: *mut EditorView,
+    callback: extern "C" fn(),
+) {
+    let view = unsafe { &mut *view };
+    view.event_callback = Some(callback);
+}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_pending_event_count(view: *mut EditorView) -> f64 {
+    let view = unsafe { &*view };
+    view.pending_events.len() as f64
+}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_get_event_type(view: *mut EditorView, index: f64) -> f64 {
+    let view = unsafe { &*view };
+    let i = index as usize;
+    if i < view.pending_events.len() { view.pending_events[i].event_type as f64 } else { 0.0 }
+}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_get_event_char(view: *mut EditorView, index: f64) -> f64 {
+    let view = unsafe { &*view };
+    let i = index as usize;
+    if i < view.pending_events.len() { view.pending_events[i].char_code as f64 } else { 0.0 }
+}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_get_event_action(view: *mut EditorView, index: f64) -> f64 {
+    let view = unsafe { &*view };
+    let i = index as usize;
+    if i < view.pending_events.len() { view.pending_events[i].action_id as f64 } else { 0.0 }
+}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_get_event_x(view: *mut EditorView, index: f64) -> f64 {
+    let view = unsafe { &*view };
+    let i = index as usize;
+    if i < view.pending_events.len() { view.pending_events[i].x } else { 0.0 }
+}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_get_event_y(view: *mut EditorView, index: f64) -> f64 {
+    let view = unsafe { &*view };
+    let i = index as usize;
+    if i < view.pending_events.len() { view.pending_events[i].y } else { 0.0 }
+}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_events(view: *mut EditorView) {
+    let view = unsafe { &mut *view };
+    view.pending_events.clear();
 }

@@ -245,9 +245,7 @@ pub extern "C" fn hone_editor_set_event_callback(
 #[no_mangle]
 pub extern "C" fn hone_editor_pending_event_count(view: *mut EditorView) -> f64 {
     let view = unsafe { &*view };
-    let n = view.pending_events.len();
-    eprintln!("[HONE] pending_event_count called n={}", n);
-    n as f64
+    view.pending_events.len() as f64
 }
 
 /// Returns the event_type for the event at `index` (1=text, 2=action, 3=scroll, 4=mouse_down).
