@@ -101,20 +101,56 @@ discovered during macOS demo development and apply to **all platforms**:
 - **Character classification**: use `CONST_STR.indexOf(c) >= 0` where `CONST_STR` is a module-level string constant (e.g., `const DIGITS = '0123456789'`). NEVER use `c >= '0' && c <= '9'` — range comparisons on characters fail in Perry AOT.
 
 ### Input Event Architecture (Perry mode)
-Perry's AOT runtime does NOT fire `setInterval` before the app event loop starts, and C function
-pointer callbacks into Perry-compiled closures crash on ARM64 (closures live in non-executable
-heap memory). Instead:
+Perry's AOT runtime does NOT fire `setInterval` or `requestAnimationFrame` after startup. C function
+pointer callbacks into Perry-compiled code crash on ARM64 (W^X: Perry functions may be in
+non-executable heap memory). This means:
 - Rust NSView buffers all input events in `EditorView.pending_events`
-- TypeScript polls via `requestAnimationFrame` (→ `setTimeout` fallback) calling `_pollEvents()`
+- TypeScript's `_pollEvents()` RAF loop is registered but **never fires** after startup
+- **Do NOT** call Perry-compiled functions via `event_callback` from Rust — it crashes
+- The `hone_editor_set_event_callback` FFI exists but must remain unused in Perry mode
 - All new FFI polling functions must be listed in `package.json` `perry.nativeLibrary.functions`
 
-### Rust-Side Rendering (Perry mode)
-Because Perry only triggers 2 TypeScript renders at startup (from `coordinator.attach()` and
-`vm.onResize()`), the Rust FFI layer handles ALL subsequent interaction directly:
-- **Cursor positioning**: `on_mouse_down` scans text with `measure_text()` per-char (not `char_width` division)
-- **Scroll clamping**: `on_scroll` uses `initial_top_y` (set on first `end_frame`) to bound `frame_lines[0].y_offset`
-- **Line height**: TypeScript sends `lineHeightPx = fontSize * 1.5`; Rust's CTFont `line_height` ≠ this — infer TS line height from `frame_lines[1].y_offset - frame_lines[0].y_offset`
-- **`user_has_clicked` flag**: prevents TypeScript re-renders from overriding Rust cursor state after a click
+### Rust-Side Rendering (Perry mode) — macOS COMPLETE, other platforms TODO
+Because Perry's RAF/timer loop never fires, TypeScript only renders **twice** at startup
+(from `coordinator.attach()` and `vm.onResize()`). After that, the Rust FFI layer handles
+ALL interaction directly by mutating `frame_lines` in place and calling `setNeedsDisplay`.
+
+**What every platform's Rust crate must implement:**
+
+1. **Rust-side tokenizer** — `native/macos/src/tokenizer.rs` is the reference implementation.
+   After every `on_text_input` and `on_action deleteBackward`, call:
+   ```rust
+   self.frame_lines[idx].tokens = crate::tokenizer::tokenize_line(&self.frame_lines[idx].text);
+   ```
+   Do NOT call `tokens.clear()` without retokenizing — that causes the whole line to go gray
+   permanently (default color with no spans). The tokenizer ports `keyword-syntax-engine.ts`
+   logic to Rust: same keyword lists, same VS Code dark theme colors.
+
+2. **Cursor positioning** — `on_mouse_down` must use `measure_text()` per-char prefix scan
+   (not `char_width` division) to find the closest byte column to the click x position.
+
+3. **Scroll clamping** — `on_scroll` uses `initial_top_y` (set on first `end_frame`) to bound
+   `frame_lines[0].y_offset`. Without clamping, content drifts off-screen permanently.
+
+4. **Line height inference** — TypeScript sends `lineHeightPx = fontSize * 1.5`. Rust's native
+   font metrics (`CTFont.line_height`, `Pango.line_height`, etc.) differ. Infer the TypeScript
+   line height from `frame_lines[1].y_offset - frame_lines[0].y_offset` after the first frame.
+
+5. **`user_has_clicked` flag** — After a user click, set this flag to prevent TypeScript's two
+   startup re-renders from overriding the Rust-managed cursor position.
+
+6. **Event queue** — Implement `pending_events: Vec<PendingEvent>` with the same event type
+   constants (TEXT=1, ACTION=2, SCROLL=3, MOUSE_DOWN=4) and FFI polling functions
+   (`hone_editor_pending_event_count`, `hone_editor_get_event_*`, `hone_editor_clear_events`).
+   These are polled by TypeScript's RAF loop on platforms where it does fire (web, potentially iOS).
+
+**Platform status:**
+- macOS: ✅ Complete — `native/macos/src/editor_view.rs` + `tokenizer.rs`
+- iOS: ⬜ Shares Core Text with macOS — needs `tokenizer.rs` port + same EditorView patterns
+- Windows: ⬜ DirectWrite — needs `tokenizer.rs` port + same EditorView patterns
+- Linux: ⬜ Pango/Cairo — needs `tokenizer.rs` port + same EditorView patterns
+- Android: ⬜ Canvas/Skia JNI — needs `tokenizer.rs` port + same EditorView patterns
+- Web: ⬜ DOM spans — RAF likely fires here; TypeScript re-render may work without Rust tokenizer
 
 ## Commands
 Run tests: `bun test`

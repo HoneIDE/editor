@@ -10,6 +10,7 @@ mod text_renderer;
 mod view;
 mod editor_view;
 mod metal_blitter;
+pub mod tokenizer;
 pub mod string_header;
 
 pub use editor_view::EditorView;

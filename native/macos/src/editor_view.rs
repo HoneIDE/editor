@@ -300,15 +300,14 @@ impl EditorView {
             for ch in text.chars() {
                 let col = self.rust_col.min(self.frame_lines[idx].text.len());
                 self.frame_lines[idx].text.insert(col, ch);
-                self.rust_col = col + 1; // track actual insert position, not click offset
+                self.rust_col = col + ch.len_utf8();
             }
-            self.frame_lines[idx].tokens.clear(); // re-render with default color
+            // Retokenize the whole line so keyword colors are immediately correct.
+            self.frame_lines[idx].tokens = crate::tokenizer::tokenize_line(&self.frame_lines[idx].text);
             self.sync_cursor_x();
             view::invalidate_view(self.nsview);
         }
-        // Queue events for TypeScript so it updates its buffer and re-renders with syntax tokens.
-        // TypeScript's rafTick polls pending_events every ~16ms; processing TEXT events triggers
-        // vm.onTextInput → notifyChange → coordinator.render → fresh tokens replace the gray line.
+        // Queue events for TypeScript's polling loop.
         for ch in text.chars() {
             self.pending_events.push(PendingEvent {
                 event_type: event_type::TEXT,
@@ -338,9 +337,12 @@ impl EditorView {
                     if self.rust_col > 0 {
                         let col = self.rust_col - 1;
                         if col < self.frame_lines[idx].text.len() {
+                            let ch_len = self.frame_lines[idx].text[col..].chars().next()
+                                .map(|c| c.len_utf8()).unwrap_or(1);
                             self.frame_lines[idx].text.remove(col);
-                            self.rust_col -= 1;
-                            self.frame_lines[idx].tokens.clear();
+                            self.rust_col -= ch_len;
+                            // Retokenize so keyword colors are immediately correct.
+                            self.frame_lines[idx].tokens = crate::tokenizer::tokenize_line(&self.frame_lines[idx].text);
                             dirty = true;
                         }
                     }
@@ -396,10 +398,7 @@ impl EditorView {
             }
             _ => {}
         }
-        // Queue all recognized actions for TypeScript so it stays in sync with buffer and cursor.
-        // This includes editing (deleteBackward) and navigation (moveLeft, etc.).
-        // TypeScript's _pollEvents processes them via _dispatchAction → vm.onKeyDown → notifyChange
-        // → coordinator.render, which rebuilds frame_lines with fresh syntax tokens.
+        // Queue the action event for TypeScript's polling loop.
         let aid = selector_to_action_id(selector);
         if aid != 0 {
             self.pending_events.push(PendingEvent {

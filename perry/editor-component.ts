@@ -84,6 +84,18 @@ const EVENT_ACTION = 2;
 const EVENT_SCROLL = 3;
 const EVENT_MOUSE_DOWN = 4;
 
+// === Synchronous event callback ===
+// Perry closures can't be passed as C function pointers on ARM64 (non-executable heap memory).
+// Use a module-level singleton + a top-level (non-closure) function instead.
+// Top-level functions are in the executable text segment — safe to call from C.
+let _activeEditor: Editor | null = null;
+
+function _globalEventHandler(): void {
+  if (_activeEditor !== null && _activeEditor !== undefined) {
+    _activeEditor.flushEvents();
+  }
+}
+
 /**
  * FFI implementation that delegates to Perry's extern FFI functions.
  * String parameters use i64 pointers (Perry handles string allocation).
@@ -249,6 +261,9 @@ export class Editor {
 
     vm.onResize(width, height);
 
+    // Register global reference for the RAF polling loop.
+    _activeEditor = this;
+
     // Poll the Rust event queue on every animation frame.
     // Uses requestAnimationFrame (tied to Perry's display refresh, ~60fps).
     // Falls back to setTimeout if RAF is unavailable.
@@ -373,6 +388,15 @@ export class Editor {
   render(): void {
     const coordinator = this._coordinator;
     coordinator.render();
+  }
+
+  /**
+   * Drain the Rust event queue and re-render. Called by the synchronous Rust
+   * event_callback (_globalEventHandler) when Rust queues a new input event.
+   * Public so the module-level top-level function can reach it without a closure.
+   */
+  flushEvents(): void {
+    this._pollEvents();
   }
 
   /** Set the font. */

@@ -101,7 +101,8 @@ export class EditorViewModel {
   private _gutter: GutterRenderer;
   private _theme: EditorTheme;
   private _charWidth: number = 8; // default, updated by native renderer
-  private _listeners: ChangeListener[] = [];
+  // Single listener — Perry-safe (no array push/splice/for...of needed).
+  private _listener: ChangeListener | null = null;
 
   // Token/decoration providers (set by syntax engine)
   private _tokenProvider: ((lineNumber: number) => LineToken[]) | null = null;
@@ -200,15 +201,16 @@ export class EditorViewModel {
 
   /** Subscribe to state changes. */
   onChange(listener: ChangeListener): () => void {
-    this._listeners.push(listener);
-    return () => {
-      const idx = this._listeners.indexOf(listener);
-      if (idx !== -1) this._listeners.splice(idx, 1);
-    };
+    // Perry-safe: single nullable field — no array, no push, no for...of.
+    this._listener = listener;
+    return () => { this._listener = null; };
   }
 
   private notifyChange(): void {
-    for (const listener of this._listeners) listener();
+    // Perry-safe: plain null check on a single field.
+    if (this._listener !== null && this._listener !== undefined) {
+      this._listener();
+    }
   }
 
   /**
