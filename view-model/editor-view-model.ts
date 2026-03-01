@@ -326,8 +326,125 @@ export class EditorViewModel {
     const result = this.commandRegistry.execute(commandId, ctx, args);
     if (result) {
       this.afterEdit();
+      return true;
     }
-    return result;
+
+    // Perry-safe fallbacks: command registry uses Map internally which may fail
+    // in Perry AOT native codegen (class-field method dispatch broken for Map).
+    // These handle the most common commands without spread/sort/for...of/destructuring.
+    const cursors0 = this.cursorManager.cursors;
+    if (cursors0.length === 0) return false;
+    const cursor0 = cursors0[0];
+
+    if (commandId === 'editor.action.type') {
+      const text = args !== null && args !== undefined ? args.text : '';
+      if (text === null || text === undefined || text.length === 0) return false;
+      const lineOffset = this.document.buffer.getLineOffset(cursor0.line);
+      this.document.buffer.insert(lineOffset + cursor0.column, text);
+      cursor0.column = cursor0.column + text.length;
+      cursor0.desiredColumn = cursor0.column;
+      cursor0.selectionAnchor = null;
+      this.afterEdit();
+      return true;
+    }
+
+    if (commandId === 'editor.action.deleteLeft') {
+      if (cursor0.selectionAnchor !== null && cursor0.selectionAnchor !== undefined) {
+        cursor0.selectionAnchor = null;
+      }
+      if (cursor0.column > 0) {
+        const lineOff = this.document.buffer.getLineOffset(cursor0.line);
+        this.document.buffer.delete(lineOff + cursor0.column - 1, 1);
+        cursor0.column = cursor0.column - 1;
+        cursor0.desiredColumn = cursor0.column;
+        this.afterEdit();
+        return true;
+      } else if (cursor0.line > 0) {
+        const prevLineLen = this.document.buffer.getLineLength(cursor0.line - 1);
+        const joinOffset = this.document.buffer.getLineOffset(cursor0.line) - 1;
+        this.document.buffer.delete(joinOffset, 1);
+        cursor0.line = cursor0.line - 1;
+        cursor0.column = prevLineLen;
+        cursor0.desiredColumn = cursor0.column;
+        this.afterEdit();
+        return true;
+      }
+      return false;
+    }
+
+    if (commandId === 'editor.action.moveCursorLeft') {
+      if (cursor0.column > 0) {
+        cursor0.column = cursor0.column - 1;
+      } else if (cursor0.line > 0) {
+        cursor0.line = cursor0.line - 1;
+        cursor0.column = this.document.buffer.getLineLength(cursor0.line);
+      }
+      cursor0.selectionAnchor = null;
+      cursor0.desiredColumn = cursor0.column;
+      this.notifyChange();
+      return true;
+    }
+
+    if (commandId === 'editor.action.moveCursorRight') {
+      const lineLen0 = this.document.buffer.getLineLength(cursor0.line);
+      if (cursor0.column < lineLen0) {
+        cursor0.column = cursor0.column + 1;
+      } else if (cursor0.line < this.document.buffer.getLineCount() - 1) {
+        cursor0.line = cursor0.line + 1;
+        cursor0.column = 0;
+      }
+      cursor0.selectionAnchor = null;
+      cursor0.desiredColumn = cursor0.column;
+      this.notifyChange();
+      return true;
+    }
+
+    if (commandId === 'editor.action.moveCursorUp') {
+      if (cursor0.line > 0) {
+        cursor0.line = cursor0.line - 1;
+        const lineLen1 = this.document.buffer.getLineLength(cursor0.line);
+        if (cursor0.column > lineLen1) {
+          cursor0.column = lineLen1;
+        }
+      }
+      cursor0.selectionAnchor = null;
+      cursor0.desiredColumn = cursor0.column;
+      this.notifyChange();
+      return true;
+    }
+
+    if (commandId === 'editor.action.moveCursorDown') {
+      const totalLines = this.document.buffer.getLineCount();
+      if (cursor0.line < totalLines - 1) {
+        cursor0.line = cursor0.line + 1;
+        const lineLen2 = this.document.buffer.getLineLength(cursor0.line);
+        if (cursor0.column > lineLen2) {
+          cursor0.column = lineLen2;
+        }
+      }
+      cursor0.selectionAnchor = null;
+      cursor0.desiredColumn = cursor0.column;
+      this.notifyChange();
+      return true;
+    }
+
+    if (commandId === 'editor.action.moveCursorToLineStart') {
+      cursor0.column = 0;
+      cursor0.selectionAnchor = null;
+      cursor0.desiredColumn = 0;
+      this.notifyChange();
+      return true;
+    }
+
+    if (commandId === 'editor.action.moveCursorToLineEnd') {
+      cursor0.column = this.document.buffer.getLineLength(cursor0.line);
+      cursor0.selectionAnchor = null;
+      cursor0.desiredColumn = cursor0.column;
+      this.notifyChange();
+      return true;
+    }
+
+    return false;
   }
 
   /** Handle keyboard input. */
@@ -349,12 +466,16 @@ export class EditorViewModel {
 
   /** Handle text input (IME result). */
   onTextInput(text: string): void {
-    this.executeCommand('editor.action.type', { text });
+    // Use explicit form (not shorthand) — Perry AOT shorthand captures stale values.
+    this.executeCommand('editor.action.type', { text: text });
   }
 
   /** Handle mouse click. */
   onMouseDown(event: MouseEvent): void {
-    const { line, column } = this.pixelToPosition(event.x, event.y);
+    // Avoid destructuring — Perry AOT may not support it correctly.
+    const _clickPos = this.pixelToPosition(event.x, event.y);
+    const line = _clickPos.line;
+    const column = _clickPos.column;
 
     if (event.altKey) {
       // Alt+click: add cursor
@@ -384,8 +505,8 @@ export class EditorViewModel {
   /** Handle mouse drag (selection). */
   onMouseMove(event: MouseEvent): void {
     if (event.button === 0) {
-      const { line, column } = this.pixelToPosition(event.x, event.y);
-      this.cursorManager.moveToPosition(line, column, true);
+      const _movePos = this.pixelToPosition(event.x, event.y);
+      this.cursorManager.moveToPosition(_movePos.line, _movePos.column, true);
       this.notifyChange();
     }
   }
@@ -450,9 +571,11 @@ export class EditorViewModel {
     // Dismiss ghost text on edit
     this.ghostText.markStale();
 
-    // Ensure cursor is visible
-    const primary = this.cursorManager.primary;
-    this.viewport.ensureLineVisible(primary.line);
+    // Ensure cursor is visible — use cursors[0] directly (Perry-safe, avoids getter dispatch).
+    const _afterEditCursors = this.cursorManager.cursors;
+    if (_afterEditCursors.length > 0) {
+      this.viewport.ensureLineVisible(_afterEditCursors[0].line);
+    }
     this._cursorBlink.resetBlink();
     this.notifyChange();
   }
@@ -479,7 +602,7 @@ export class EditorViewModel {
     const column = Math.max(0, Math.round((x + scrollLeft - gutterW) / this._charWidth));
     const lineLen = this.document.buffer.getLineLength(line);
 
-    return { line, column: Math.min(column, lineLen) };
+    return { line: line, column: Math.min(column, lineLen) };
   }
 
   /** Map key events to command IDs. */
