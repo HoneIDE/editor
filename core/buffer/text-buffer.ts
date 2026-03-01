@@ -32,10 +32,30 @@ let snapshotIdCounter = 0;
 export class TextBuffer {
   private rope: Rope;
   private lineIndex: LineIndex;
+  // Perry-safe shadow copy of full text.
+  // Rope internals use splice/for-of patterns that may corrupt charCount in Perry
+  // AOT native codegen (affecting getFullText() after edits). By maintaining a
+  // plain string that's updated via substring + concatenation — operations Perry
+  // handles correctly — we bypass rope traversal for all text-read operations.
+  private _text: string;
 
   constructor(initialContent: string = '') {
-    // Normalize line endings to \n
-    const normalized = initialContent.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    // Normalize line endings to \n (avoid regex — Perry may not support it;
+    // use charCode scan instead)
+    let normalized = '';
+    for (let i = 0; i < initialContent.length; i++) {
+      const code = initialContent.charCodeAt(i);
+      if (code === 13) {
+        // CR: emit \n; skip next char if it's \n (CRLF)
+        normalized += '\n';
+        if (i + 1 < initialContent.length && initialContent.charCodeAt(i + 1) === 10) {
+          i++;
+        }
+      } else {
+        normalized += initialContent.charAt(i);
+      }
+    }
+    this._text = normalized;
     const pieceTable = new PieceTable(normalized);
     this.rope = new Rope(pieceTable);
     this.lineIndex = new LineIndex();
@@ -48,8 +68,19 @@ export class TextBuffer {
    */
   insert(offset: number, text: string): number {
     if (text.length === 0) return 0;
-    this.rope.insert(offset, text);
-    this.lineIndex.rebuild(this.rope);
+    // Update shadow text — fast-path for common end-of-buffer case avoids O(n²).
+    const clampedOffset = offset < 0 ? 0 : (offset > this._text.length ? this._text.length : offset);
+    if (clampedOffset === this._text.length) {
+      this._text = this._text + text;
+    } else if (clampedOffset === 0) {
+      this._text = text + this._text;
+    } else {
+      this._text = this._text.substring(0, clampedOffset) + text + this._text.substring(clampedOffset);
+    }
+    // Update lineIndex incrementally — avoids O(n) rope traversal in rebuild().
+    this.lineIndex.update(clampedOffset, '', text);
+    // NOTE: rope.insert() is intentionally skipped. _text is the source of truth
+    // for all reads. Snapshots capture _text directly (see snapshot()).
     return text.length;
   }
 
@@ -59,26 +90,29 @@ export class TextBuffer {
    */
   delete(offset: number, length: number): string {
     if (length <= 0) return '';
-    const deletedText = this.rope.getText(offset, offset + length);
-    this.rope.delete(offset, length);
-    this.lineIndex.rebuild(this.rope);
+    const deletedText = this._text.substring(offset, offset + length);
+    // Update shadow text
+    this._text = this._text.substring(0, offset) + this._text.substring(offset + length);
+    // Update lineIndex incrementally.
+    this.lineIndex.update(offset, deletedText, '');
+    // NOTE: rope.delete() is intentionally skipped. See insert() comment.
     return deletedText;
   }
 
   /** Get the full text content of the buffer. */
   getText(): string {
-    return this.rope.getFullText();
+    return this._text;
   }
 
   /** Get text within a character offset range [start, end). */
   getTextRange(start: number, end: number): string {
-    return this.rope.getText(start, end);
+    return this._text.substring(start, end < 0 ? 0 : end);
   }
 
   /** Get the content of a single line (without line ending). */
   getLine(lineNumber: number): string {
-    // Scan full text for line boundaries (Perry's LineIndex has dispatch issues)
-    const fullText = this.rope.getFullText();
+    // Scan _text (Perry-safe plain string) for line boundaries.
+    const fullText = this._text;
     let currentLine = 0;
     let lineStart = 0;
     for (let i = 0; i < fullText.length; i++) {
@@ -99,8 +133,8 @@ export class TextBuffer {
 
   /** Total number of lines in the buffer. */
   getLineCount(): number {
-    // Scan directly — mirrors getLine() workaround for Perry's LineIndex dispatch issues.
-    const fullText = this.rope.getFullText();
+    // Scan _text (Perry-safe plain string).
+    const fullText = this._text;
     let count = 1;
     for (let i = 0; i < fullText.length; i++) {
       if (fullText.charCodeAt(i) === 10) {
@@ -122,7 +156,7 @@ export class TextBuffer {
 
   /** Total number of characters in the buffer. */
   getLength(): number {
-    return this.rope.totalChars;
+    return this._text.length;
   }
 
   /**
@@ -148,32 +182,36 @@ export class TextBuffer {
 
   /**
    * Create an immutable snapshot of the current buffer state.
+   * Captures _text (plain string) — Perry-safe, no rope traversal needed.
    */
   snapshot(): BufferSnapshot {
     const id = ++snapshotIdCounter;
-    const ropeSnap = this.rope.snapshot();
-    const lineIndexSnap = this.lineIndex.clone();
-    const rope = this.rope;
+    const capturedText = this._text;
+    const capturedLineCount = this.lineIndex.lineCount;
 
     return {
       id,
-      length: ropeSnap.charCount,
-      lineCount: lineIndexSnap.lineCount,
+      length: capturedText.length,
+      lineCount: capturedLineCount,
       getText(): string {
-        // Reconstruct from snapshot pieces
-        const pt = rope.pieceTable;
-        const parts: string[] = [];
-        for (const piece of ropeSnap.pieces) {
-          const buffer = piece.bufferType === 'original' ? pt.originalBuffer : pt.addBuffer;
-          parts.push(buffer.substring(piece.start, piece.start + piece.len));
-        }
-        return parts.join('');
+        return capturedText;
       },
       getLine(lineNumber: number): string {
-        const text = this.getText();
-        const lines = text.split('\n');
-        if (lineNumber < 0 || lineNumber >= lines.length) return '';
-        return lines[lineNumber];
+        let currentLine = 0;
+        let lineStart = 0;
+        for (let i = 0; i < capturedText.length; i++) {
+          if (capturedText.charCodeAt(i) === 10) {
+            if (currentLine === lineNumber) {
+              return capturedText.substring(lineStart, i);
+            }
+            currentLine++;
+            lineStart = i + 1;
+          }
+        }
+        if (currentLine === lineNumber) {
+          return capturedText.substring(lineStart, capturedText.length);
+        }
+        return '';
       },
     };
   }
@@ -184,6 +222,7 @@ export class TextBuffer {
   restoreSnapshot(snapshot: BufferSnapshot): void {
     // Get the text from the snapshot and rebuild
     const text = snapshot.getText();
+    this._text = text;
     const pieceTable = new PieceTable(text);
     this.rope = new Rope(pieceTable);
     this.lineIndex = new LineIndex();
