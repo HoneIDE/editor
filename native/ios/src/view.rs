@@ -27,7 +27,7 @@ static REGISTER_CLASS: Once = Once::new();
 /// Ivar name for the pointer back to the Rust EditorView.
 const EDITOR_STATE_IVAR: &str = "honeEditorState";
 
-/// Ivar name for previous touch point (used for pan delta computation).
+/// Ivar name for initial tap point (anchor for drag-select delta).
 const PREV_TOUCH_X_IVAR: &str = "honePrevTouchX";
 const PREV_TOUCH_Y_IVAR: &str = "honePrevTouchY";
 
@@ -124,6 +124,12 @@ fn ensure_class_registered() {
             decl.add_method(
                 objc::sel!(touchesCancelled:withEvent:),
                 touches_cancelled as extern "C" fn(&Object, Sel, Id, Id),
+            );
+
+            // -- External keyboard action selectors (iPadOS) --
+            decl.add_method(
+                objc::sel!(doCommandBySelector:),
+                do_command_by_selector as extern "C" fn(&Object, Sel, Sel),
             );
 
             // -- UIKeyInput protocol --
@@ -237,7 +243,7 @@ extern "C" fn touches_began(this: &Object, _sel: Sel, touches: Id, _event: Id) {
     }
 }
 
-extern "C" fn touches_moved(this: &Object, _sel: Sel, touches: Id, _event: Id) {
+extern "C" fn touches_moved(this: &Object, _sel: Sel, touches: Id, event: Id) {
     unsafe {
         let state_ptr: *mut c_void = *this.get_ivar(EDITOR_STATE_IVAR);
         if state_ptr.is_null() {
@@ -245,19 +251,35 @@ extern "C" fn touches_moved(this: &Object, _sel: Sel, touches: Id, _event: Id) {
         }
         let editor_view = &mut *(state_ptr as *mut EditorView);
 
+        // Count all active touches to decide: 1-finger = drag-select, 2-finger = scroll.
+        let all_touches: Id = if event != NIL {
+            msg_send![event, allTouches]
+        } else {
+            touches
+        };
+        let touch_count: usize = if all_touches != NIL {
+            msg_send![all_touches, count]
+        } else {
+            1
+        };
+
         if let Some((x, y)) = first_touch_point(this, touches) {
             let prev_x: f64 = *this.get_ivar(PREV_TOUCH_X_IVAR);
             let prev_y: f64 = *this.get_ivar(PREV_TOUCH_Y_IVAR);
-            let dx = x - prev_x;
-            let dy = y - prev_y;
 
-            // Update previous touch position
             let this_mut = this as *const Object as *mut Object;
             (*this_mut).set_ivar::<f64>(PREV_TOUCH_X_IVAR, x);
             (*this_mut).set_ivar::<f64>(PREV_TOUCH_Y_IVAR, y);
 
-            // Report as scroll (pan to scroll, negate dy so dragging up scrolls down)
-            editor_view.on_scroll(-dx, -dy);
+            if touch_count >= 2 {
+                // Two-finger drag: scroll. Negate dy so finger-down = content-up.
+                let dx = x - prev_x;
+                let dy = y - prev_y;
+                editor_view.on_scroll(-dx, -dy);
+            } else {
+                // Single-finger drag: extend text selection.
+                editor_view.on_mouse_drag(x, y);
+            }
         }
     }
 }
@@ -268,6 +290,22 @@ extern "C" fn touches_ended(_this: &Object, _sel: Sel, _touches: Id, _event: Id)
 
 extern "C" fn touches_cancelled(_this: &Object, _sel: Sel, _touches: Id, _event: Id) {
     // No cleanup needed.
+}
+
+// -- External keyboard (iPadOS) action selectors -----------------------------
+
+/// Routes iPadOS hardware keyboard selectors (arrows, Home/End, Shift+arrows)
+/// to EditorView::on_action, mirroring macOS doCommandBySelector: behaviour.
+extern "C" fn do_command_by_selector(this: &Object, _sel: Sel, action: Sel) {
+    unsafe {
+        let state_ptr: *mut c_void = *this.get_ivar(EDITOR_STATE_IVAR);
+        if state_ptr.is_null() {
+            return;
+        }
+        let editor_view = &mut *(state_ptr as *mut EditorView);
+        let sel_name = action.name();
+        editor_view.on_action(sel_name);
+    }
 }
 
 // -- UIKeyInput protocol -----------------------------------------------------

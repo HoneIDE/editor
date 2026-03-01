@@ -10,6 +10,7 @@ extern crate objc;
 mod text_renderer;
 mod view;
 mod editor_view;
+pub mod tokenizer;
 
 pub use editor_view::EditorView;
 
