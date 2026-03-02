@@ -13,7 +13,7 @@ use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::{BeginPaint, EndPaint, HBRUSH, PAINTSTRUCT};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, SetFocus};
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, ReleaseCapture, SetCapture, SetFocus};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::editor_view::EditorView;
@@ -32,6 +32,9 @@ const VK_DOWN: u16 = 0x28;
 const VK_DELETE: u16 = 0x2E;
 const VK_HOME: u16 = 0x24;
 const VK_END: u16 = 0x23;
+
+/// Mouse key state flag: left button is down.
+const MK_LBUTTON: usize = 0x0001;
 
 static REGISTER_CLASS: Once = Once::new();
 
@@ -220,9 +223,28 @@ unsafe extern "system" fn wnd_proc(
             let x = (lparam.0 & 0xFFFF) as i16 as f64;
             let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f64;
             let _ = SetFocus(hwnd);
+            // Capture the mouse so we get WM_MOUSEMOVE outside the window during drag.
+            SetCapture(hwnd);
             if let Some(editor) = get_editor(hwnd) {
                 editor.on_mouse_down(x, y);
             }
+            LRESULT(0)
+        }
+
+        WM_MOUSEMOVE => {
+            // Only process if left button is held (drag)
+            if wparam.0 & MK_LBUTTON != 0 {
+                let x = (lparam.0 & 0xFFFF) as i16 as f64;
+                let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f64;
+                if let Some(editor) = get_editor(hwnd) {
+                    editor.on_mouse_drag(x, y);
+                }
+            }
+            LRESULT(0)
+        }
+
+        WM_LBUTTONUP => {
+            let _ = ReleaseCapture();
             LRESULT(0)
         }
 

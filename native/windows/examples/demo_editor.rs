@@ -5,7 +5,7 @@
 //! Supports typing, arrow key navigation, selection (Shift+arrows),
 //! backspace/delete, enter, home/end, tab, copy/paste/cut, and scrolling.
 
-use std::ffi::{c_char, CStr, CString};
+use std::ffi::{c_char, CStr};
 
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HANDLE, HGLOBAL, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
@@ -21,12 +21,10 @@ use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use hone_editor_windows::{
-    hone_editor_add_context_menu_item, hone_editor_begin_frame, hone_editor_create,
-    hone_editor_destroy, hone_editor_end_frame, hone_editor_attach_to_view,
-    hone_editor_hwnd, hone_editor_measure_text, hone_editor_render_line,
-    hone_editor_set_action_callback, hone_editor_set_cursor, hone_editor_set_font,
-    hone_editor_set_mouse_down_callback, hone_editor_set_scroll_callback,
-    hone_editor_set_selection, hone_editor_set_text_input_callback,
+    hone_editor_create, hone_editor_destroy, hone_editor_attach_to_view,
+    hone_editor_hwnd, hone_editor_set_text_input_callback,
+    hone_editor_set_action_callback, hone_editor_set_mouse_down_callback,
+    hone_editor_set_scroll_callback,
 };
 
 // ── DemoEditor state ────────────────────────────────────────────
@@ -251,8 +249,7 @@ impl DemoEditor {
             for (byte_idx, _) in line_str.char_indices() {
                 let end = byte_idx + line_str[byte_idx..].chars().next().unwrap().len_utf8();
                 let prefix = &line_str[..end];
-                let c_prefix = CString::new(prefix).unwrap_or_default();
-                let px = hone_editor_measure_text(editor, c_prefix.as_ptr());
+                let px = unsafe { (*editor).measure_text(prefix) };
                 let dist = (text_x - px).abs();
                 if dist < best_dist {
                     best_dist = dist;
@@ -671,7 +668,9 @@ impl DemoEditor {
         let editor = self.editor_ptr as *mut hone_editor_windows::EditorView;
         let gutter_w = self.gutter_width();
 
-        hone_editor_begin_frame(editor);
+        unsafe {
+            (*editor).begin_frame();
+        }
 
         // Only render lines visible in the viewport
         let first_visible = (self.scroll_y / self.line_height).floor() as usize;
@@ -681,16 +680,10 @@ impl DemoEditor {
         for i in first_visible..last_visible {
             let line_number = (i + 1) as i32;
             let y_offset = i as f64 * self.line_height - self.scroll_y;
-            let c_text = CString::new(self.lines[i].as_str()).unwrap_or_default();
             let tok_json = self.tokens_for_line(i);
-            let c_tokens = CString::new(tok_json).unwrap_or_default();
-            hone_editor_render_line(
-                editor,
-                line_number,
-                c_text.as_ptr(),
-                c_tokens.as_ptr(),
-                y_offset,
-            );
+            unsafe {
+                (*editor).render_line(line_number, &self.lines[i], &tok_json, y_offset);
+            }
         }
 
         // Cursor position
@@ -698,12 +691,13 @@ impl DemoEditor {
             gutter_w
         } else {
             let prefix = &self.lines[self.cursor_line][..self.cursor_col];
-            let c_prefix = CString::new(prefix).unwrap_or_default();
-            let text_w = hone_editor_measure_text(editor, c_prefix.as_ptr());
+            let text_w = unsafe { (*editor).measure_text(prefix) };
             gutter_w + text_w
         };
         let cursor_y = self.cursor_line as f64 * self.line_height - self.scroll_y;
-        hone_editor_set_cursor(editor, cursor_x, cursor_y, 0);
+        unsafe {
+            (*editor).set_cursor(cursor_x, cursor_y, 0);
+        }
 
         // Selection rects
         if self.has_selection() {
@@ -721,15 +715,13 @@ impl DemoEditor {
                         gutter_w
                     } else {
                         let prefix = &self.lines[line_idx][..col_start];
-                        let c_prefix = CString::new(prefix).unwrap_or_default();
-                        gutter_w + hone_editor_measure_text(editor, c_prefix.as_ptr())
+                        gutter_w + unsafe { (*editor).measure_text(prefix) }
                     };
                     let x_end = if col_end == 0 {
                         gutter_w
                     } else {
                         let prefix = &self.lines[line_idx][..col_end];
-                        let c_prefix = CString::new(prefix).unwrap_or_default();
-                        gutter_w + hone_editor_measure_text(editor, c_prefix.as_ptr())
+                        gutter_w + unsafe { (*editor).measure_text(prefix) }
                     };
 
                     let y = line_idx as f64 * self.line_height - self.scroll_y;
@@ -742,12 +734,15 @@ impl DemoEditor {
                     }
                 }
                 let sel_json = format!("[{}]", rects.join(","));
-                let c_sel = CString::new(sel_json).unwrap();
-                hone_editor_set_selection(editor, c_sel.as_ptr());
+                unsafe {
+                    (*editor).set_selection(&sel_json);
+                }
             }
         }
 
-        hone_editor_end_frame(editor);
+        unsafe {
+            (*editor).end_frame();
+        }
     }
 }
 
@@ -951,11 +946,9 @@ fn main() {
         let editor = hone_editor_create(view_width as f64, view_height as f64);
         EDITOR_PTR = editor;
 
-        let font_family = CString::new("Consolas").unwrap();
-        hone_editor_set_font(editor, font_family.as_ptr(), 14.0);
+        (*editor).set_font("Consolas", 14.0);
 
-        let m_char = CString::new("M").unwrap();
-        let char_width = hone_editor_measure_text(editor, m_char.as_ptr());
+        let char_width = (*editor).measure_text("M");
         let line_height = 21.0;
 
         // Attach editor as child of main window
@@ -980,9 +973,7 @@ fn main() {
         hone_editor_set_scroll_callback(editor, on_scroll);
 
         // Add a custom context menu item to demonstrate extensibility
-        let title = CString::new("Uppercase Selection").unwrap();
-        let action = CString::new("menu:uppercase").unwrap();
-        hone_editor_add_context_menu_item(editor, title.as_ptr(), action.as_ptr());
+        (*editor).add_context_menu_item("Uppercase Selection", "menu:uppercase");
 
         // Initial render
         if let Some(ref demo) = DEMO {

@@ -9,7 +9,7 @@ use serde::Deserialize;
 use std::ffi::{c_char, CString};
 use std::sync::OnceLock;
 
-use windows::Win32::Foundation::HWND;
+use windows::Win32::Foundation::{HANDLE, HGLOBAL, HWND};
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_COLOR_F, D2D_POINT_2F, D2D_RECT_F, D2D_SIZE_U,
 };
@@ -19,6 +19,11 @@ use windows::Win32::Graphics::Direct2D::{
     D2D1_PRESENT_OPTIONS_NONE, D2D1_RENDER_TARGET_PROPERTIES,
 };
 use windows::Win32::Graphics::Gdi::InvalidateRect;
+use windows::Win32::System::DataExchange::{
+    CloseClipboard, GetClipboardData, OpenClipboard, SetClipboardData,
+};
+use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+use windows::Win32::System::Ole::CF_UNICODETEXT;
 
 use crate::text_renderer::{self, FontSet, RenderToken};
 
@@ -205,6 +210,20 @@ pub struct EditorView {
     pub pending_events: Vec<PendingEvent>,
     pub event_callback: Option<extern "C" fn()>,
 
+    // Rust-side interactive state.
+    // Perry's AOT runtime doesn't fire setInterval/RAF after startup, so
+    // TypeScript can't poll events. Instead, Rust handles scroll and editing directly
+    // by modifying frame_lines in-place and calling invalidate().
+    rust_cursor_line: i32,   // 1-based line number of the cursor
+    rust_col: usize,         // byte offset within that line's text
+    // Selection anchor; None = no active selection.
+    rust_sel_anchor: Option<(i32, usize)>,  // (line_number, byte_col)
+    // Once the user manually clicks, don't let TypeScript re-renders override the cursor.
+    user_has_clicked: bool,
+    // y_offset of frame_lines[0] as received from the first TypeScript frame.
+    // Used as the upper scroll bound so content can't be dragged below its initial position.
+    initial_top_y: Option<f64>,
+
     // Context menu
     context_menu_items: Vec<ContextMenuItem>,
 
@@ -280,6 +299,11 @@ impl EditorView {
             scroll_callback: None,
             pending_events: Vec::new(),
             event_callback: None,
+            rust_cursor_line: 1,
+            rust_col: 0,
+            rust_sel_anchor: None,
+            user_has_clicked: false,
+            initial_top_y: None,
             context_menu_items: Vec::new(),
             // VS Code dark theme defaults
             background_color: D2D1_COLOR_F {
@@ -349,7 +373,30 @@ impl EditorView {
 
     /// Called from the WndProc's WM_CHAR handler.
     pub fn on_text_input(&mut self, text: &str) {
-        // Queue events for Perry polling
+        if let Some(cb) = self.text_input_callback {
+            if let Ok(c_text) = CString::new(text) {
+                let self_ptr = self as *mut EditorView;
+                cb(self_ptr, c_text.as_ptr());
+            }
+            return;
+        }
+        // Rust-side editing: insert into the cursor line in frame_lines directly.
+        if self.cursor_line_idx().is_some() {
+            self.delete_selection_if_any();
+            // Re-lookup idx after potential selection delete
+            if let Some(idx) = self.cursor_line_idx() {
+                for ch in text.chars() {
+                    let col = self.rust_col.min(self.frame_lines[idx].text.len());
+                    self.frame_lines[idx].text.insert(col, ch);
+                    self.rust_col = col + ch.len_utf8();
+                }
+                // Retokenize the whole line so keyword colors are immediately correct.
+                self.frame_lines[idx].tokens = crate::tokenizer::tokenize_line(&self.frame_lines[idx].text);
+                self.sync_cursor_x();
+                self.invalidate();
+            }
+        }
+        // Queue events for TypeScript's polling loop.
         for ch in text.chars() {
             self.pending_events.push(PendingEvent {
                 event_type: event_type::TEXT,
@@ -359,18 +406,343 @@ impl EditorView {
                 y: 0.0,
             });
         }
-        // Also fire callback for non-Perry paths
-        if let Some(cb) = self.text_input_callback {
-            if let Ok(c_text) = CString::new(text) {
-                let self_ptr = self as *mut EditorView;
-                cb(self_ptr, c_text.as_ptr());
-            }
-        }
     }
 
     /// Called from the WndProc's WM_KEYDOWN handler.
     pub fn on_action(&mut self, selector: &str) {
-        // Queue event for Perry polling
+        if let Some(cb) = self.action_callback {
+            if let Ok(c_sel) = CString::new(selector) {
+                let self_ptr = self as *mut EditorView;
+                cb(self_ptr, c_sel.as_ptr());
+            }
+            return;
+        }
+        // Rust-side action handling.
+        let mut dirty = false;
+        match selector {
+            // ── Editing ─────────────────────────────────────────────────────
+            "insertNewline:" => {
+                self.delete_selection_if_any();
+                if let Some(idx) = self.cursor_line_idx() {
+                    let ts_line_h = self.ts_line_height();
+                    let col = self.rust_col.min(self.frame_lines[idx].text.len());
+                    let right_text = self.frame_lines[idx].text[col..].to_string();
+                    self.frame_lines[idx].text.truncate(col);
+                    self.frame_lines[idx].tokens =
+                        crate::tokenizer::tokenize_line(&self.frame_lines[idx].text);
+
+                    let new_line_number = self.frame_lines[idx].line_number + 1;
+                    let new_y = self.frame_lines[idx].y_offset + ts_line_h;
+                    let new_tokens = crate::tokenizer::tokenize_line(&right_text);
+
+                    for j in (idx + 1)..self.frame_lines.len() {
+                        self.frame_lines[j].line_number += 1;
+                        self.frame_lines[j].y_offset += ts_line_h;
+                    }
+                    self.frame_lines.insert(idx + 1, LineRenderData {
+                        line_number: new_line_number,
+                        text: right_text,
+                        tokens: new_tokens,
+                        y_offset: new_y,
+                    });
+                    self.rust_cursor_line = new_line_number;
+                    self.rust_col = 0;
+                    self.max_line_number = self.frame_lines.last()
+                        .map(|l| l.line_number).unwrap_or(self.max_line_number);
+                    dirty = true;
+                }
+            }
+            "deleteBackward:" => {
+                if self.rust_sel_anchor.is_some() {
+                    self.delete_selection_if_any();
+                    dirty = true;
+                } else if let Some(idx) = self.cursor_line_idx() {
+                    if self.rust_col > 0 {
+                        let col = self.rust_col - 1;
+                        if col < self.frame_lines[idx].text.len() {
+                            let ch_len = self.frame_lines[idx].text[col..].chars().next()
+                                .map(|c| c.len_utf8()).unwrap_or(1);
+                            self.frame_lines[idx].text.remove(col);
+                            self.rust_col -= ch_len;
+                            self.frame_lines[idx].tokens =
+                                crate::tokenizer::tokenize_line(&self.frame_lines[idx].text);
+                            dirty = true;
+                        }
+                    } else if idx > 0 {
+                        // Backspace at start of line: join with previous line.
+                        let ts_line_h = self.ts_line_height();
+                        let current_text = self.frame_lines[idx].text.clone();
+                        let prev_len = self.frame_lines[idx - 1].text.len();
+                        self.frame_lines[idx - 1].text.push_str(&current_text);
+                        self.frame_lines[idx - 1].tokens =
+                            crate::tokenizer::tokenize_line(&self.frame_lines[idx - 1].text);
+                        self.frame_lines.remove(idx);
+                        for j in idx..self.frame_lines.len() {
+                            self.frame_lines[j].line_number -= 1;
+                            self.frame_lines[j].y_offset -= ts_line_h;
+                        }
+                        self.rust_cursor_line = self.frame_lines[idx - 1].line_number;
+                        self.rust_col = prev_len;
+                        dirty = true;
+                    }
+                }
+            }
+
+            // ── Plain movement (clears selection) ────────────────────────────
+            "moveLeft:" => {
+                self.clear_selection_keep_cursor_at_start();
+                if self.rust_col > 0 {
+                    if let Some(idx) = self.cursor_line_idx() {
+                        let col = self.rust_col;
+                        let ch_len = self.frame_lines[idx].text[..col]
+                            .chars().next_back().map(|c| c.len_utf8()).unwrap_or(1);
+                        self.rust_col -= ch_len;
+                    }
+                    dirty = true;
+                } else if let Some(idx) = self.cursor_line_idx() {
+                    if idx > 0 {
+                        let prev = &self.frame_lines[idx - 1];
+                        self.rust_cursor_line = prev.line_number;
+                        self.rust_col = prev.text.len();
+                        let new_y = prev.y_offset;
+                        if let Some(ref mut c) = self.cursor { c.y = new_y; }
+                        dirty = true;
+                    }
+                }
+            }
+            "moveRight:" => {
+                self.clear_selection_keep_cursor_at_end();
+                if let Some(idx) = self.cursor_line_idx() {
+                    if self.rust_col < self.frame_lines[idx].text.len() {
+                        let ch_len = self.frame_lines[idx].text[self.rust_col..]
+                            .chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+                        self.rust_col += ch_len;
+                        dirty = true;
+                    } else if idx + 1 < self.frame_lines.len() {
+                        let next = &self.frame_lines[idx + 1];
+                        self.rust_cursor_line = next.line_number;
+                        self.rust_col = 0;
+                        let new_y = next.y_offset;
+                        if let Some(ref mut c) = self.cursor { c.y = new_y; }
+                        dirty = true;
+                    }
+                }
+            }
+            "moveUp:" => {
+                self.rust_sel_anchor = None;
+                self.selections.clear();
+                if let Some(idx) = self.cursor_line_idx() {
+                    if idx > 0 {
+                        let prev = &self.frame_lines[idx - 1];
+                        self.rust_cursor_line = prev.line_number;
+                        self.rust_col = self.rust_col.min(prev.text.len());
+                        let new_y = prev.y_offset;
+                        if let Some(ref mut c) = self.cursor { c.y = new_y; }
+                        dirty = true;
+                    }
+                }
+            }
+            "moveDown:" => {
+                self.rust_sel_anchor = None;
+                self.selections.clear();
+                if let Some(idx) = self.cursor_line_idx() {
+                    if idx + 1 < self.frame_lines.len() {
+                        let next = &self.frame_lines[idx + 1];
+                        self.rust_cursor_line = next.line_number;
+                        self.rust_col = self.rust_col.min(next.text.len());
+                        let new_y = next.y_offset;
+                        if let Some(ref mut c) = self.cursor { c.y = new_y; }
+                        dirty = true;
+                    }
+                }
+            }
+            "moveToBeginningOfLine:" => {
+                self.rust_sel_anchor = None;
+                self.selections.clear();
+                self.rust_col = 0;
+                dirty = true;
+            }
+            "moveToEndOfLine:" => {
+                self.rust_sel_anchor = None;
+                self.selections.clear();
+                if let Some(idx) = self.cursor_line_idx() {
+                    self.rust_col = self.frame_lines[idx].text.len();
+                    dirty = true;
+                }
+            }
+
+            // ── Selection-extending movement ─────────────────────────────────
+            "moveLeftAndModifySelection:" => {
+                if self.rust_sel_anchor.is_none() {
+                    self.rust_sel_anchor = Some((self.rust_cursor_line, self.rust_col));
+                }
+                if self.rust_col > 0 {
+                    if let Some(idx) = self.cursor_line_idx() {
+                        let col = self.rust_col;
+                        let ch_len = self.frame_lines[idx].text[..col]
+                            .chars().next_back().map(|c| c.len_utf8()).unwrap_or(1);
+                        self.rust_col -= ch_len;
+                    }
+                    dirty = true;
+                } else if let Some(idx) = self.cursor_line_idx() {
+                    if idx > 0 {
+                        let prev = &self.frame_lines[idx - 1];
+                        self.rust_cursor_line = prev.line_number;
+                        self.rust_col = prev.text.len();
+                        let new_y = prev.y_offset;
+                        if let Some(ref mut c) = self.cursor { c.y = new_y; }
+                        dirty = true;
+                    }
+                }
+                if dirty { self.sync_selection_rects(); }
+            }
+            "moveRightAndModifySelection:" => {
+                if self.rust_sel_anchor.is_none() {
+                    self.rust_sel_anchor = Some((self.rust_cursor_line, self.rust_col));
+                }
+                if let Some(idx) = self.cursor_line_idx() {
+                    if self.rust_col < self.frame_lines[idx].text.len() {
+                        let ch_len = self.frame_lines[idx].text[self.rust_col..]
+                            .chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+                        self.rust_col += ch_len;
+                        dirty = true;
+                    } else if idx + 1 < self.frame_lines.len() {
+                        let next = &self.frame_lines[idx + 1];
+                        self.rust_cursor_line = next.line_number;
+                        self.rust_col = 0;
+                        let new_y = next.y_offset;
+                        if let Some(ref mut c) = self.cursor { c.y = new_y; }
+                        dirty = true;
+                    }
+                }
+                if dirty { self.sync_selection_rects(); }
+            }
+            "moveUpAndModifySelection:" => {
+                if self.rust_sel_anchor.is_none() {
+                    self.rust_sel_anchor = Some((self.rust_cursor_line, self.rust_col));
+                }
+                if let Some(idx) = self.cursor_line_idx() {
+                    if idx > 0 {
+                        let prev = &self.frame_lines[idx - 1];
+                        self.rust_cursor_line = prev.line_number;
+                        self.rust_col = self.rust_col.min(prev.text.len());
+                        let new_y = prev.y_offset;
+                        if let Some(ref mut c) = self.cursor { c.y = new_y; }
+                        dirty = true;
+                    }
+                }
+                if dirty { self.sync_selection_rects(); }
+            }
+            "moveDownAndModifySelection:" => {
+                if self.rust_sel_anchor.is_none() {
+                    self.rust_sel_anchor = Some((self.rust_cursor_line, self.rust_col));
+                }
+                if let Some(idx) = self.cursor_line_idx() {
+                    if idx + 1 < self.frame_lines.len() {
+                        let next = &self.frame_lines[idx + 1];
+                        self.rust_cursor_line = next.line_number;
+                        self.rust_col = self.rust_col.min(next.text.len());
+                        let new_y = next.y_offset;
+                        if let Some(ref mut c) = self.cursor { c.y = new_y; }
+                        dirty = true;
+                    }
+                }
+                if dirty { self.sync_selection_rects(); }
+            }
+            "moveToBeginningOfLineAndModifySelection:" => {
+                if self.rust_sel_anchor.is_none() {
+                    self.rust_sel_anchor = Some((self.rust_cursor_line, self.rust_col));
+                }
+                self.rust_col = 0;
+                self.sync_selection_rects();
+                dirty = true;
+            }
+            "moveToEndOfLineAndModifySelection:" => {
+                if self.rust_sel_anchor.is_none() {
+                    self.rust_sel_anchor = Some((self.rust_cursor_line, self.rust_col));
+                }
+                if let Some(idx) = self.cursor_line_idx() {
+                    self.rust_col = self.frame_lines[idx].text.len();
+                    self.sync_selection_rects();
+                    dirty = true;
+                }
+            }
+
+            // ── Select all ──────────────────────────────────────────────────
+            "selectAll:" => {
+                if !self.frame_lines.is_empty() {
+                    let first = &self.frame_lines[0];
+                    self.rust_sel_anchor = Some((first.line_number, 0));
+                    let last = &self.frame_lines[self.frame_lines.len() - 1];
+                    self.rust_cursor_line = last.line_number;
+                    self.rust_col = last.text.len();
+                    if let Some(ref mut c) = self.cursor { c.y = last.y_offset; }
+                    self.sync_selection_rects();
+                    dirty = true;
+                }
+            }
+
+            // ── Clipboard ───────────────────────────────────────────────────
+            "copy:" => {
+                if self.rust_sel_anchor.is_some() {
+                    let text = self.get_selected_text();
+                    self.write_to_clipboard(&text);
+                }
+            }
+            "cut:" => {
+                if self.rust_sel_anchor.is_some() {
+                    let text = self.get_selected_text();
+                    self.write_to_clipboard(&text);
+                    self.delete_selection_if_any();
+                    dirty = true;
+                }
+            }
+            "paste:" => {
+                let text = self.read_from_clipboard();
+                if !text.is_empty() {
+                    self.delete_selection_if_any();
+                    for ch in text.chars() {
+                        if ch == '\n' {
+                            if let Some(idx) = self.cursor_line_idx() {
+                                let ts_line_h = self.ts_line_height();
+                                let col = self.rust_col.min(self.frame_lines[idx].text.len());
+                                let right_text = self.frame_lines[idx].text[col..].to_string();
+                                self.frame_lines[idx].text.truncate(col);
+                                self.frame_lines[idx].tokens =
+                                    crate::tokenizer::tokenize_line(&self.frame_lines[idx].text);
+                                let new_line_number = self.frame_lines[idx].line_number + 1;
+                                let new_y = self.frame_lines[idx].y_offset + ts_line_h;
+                                let new_tokens = crate::tokenizer::tokenize_line(&right_text);
+                                for j in (idx + 1)..self.frame_lines.len() {
+                                    self.frame_lines[j].line_number += 1;
+                                    self.frame_lines[j].y_offset += ts_line_h;
+                                }
+                                self.frame_lines.insert(idx + 1, LineRenderData {
+                                    line_number: new_line_number,
+                                    text: right_text,
+                                    tokens: new_tokens,
+                                    y_offset: new_y,
+                                });
+                                self.rust_cursor_line = new_line_number;
+                                self.rust_col = 0;
+                            }
+                        } else if ch == '\r' {
+                            // skip \r (normalize \r\n to \n)
+                        } else if let Some(idx) = self.cursor_line_idx() {
+                            let col = self.rust_col.min(self.frame_lines[idx].text.len());
+                            self.frame_lines[idx].text.insert(col, ch);
+                            self.rust_col = col + ch.len_utf8();
+                            self.frame_lines[idx].tokens =
+                                crate::tokenizer::tokenize_line(&self.frame_lines[idx].text);
+                        }
+                    }
+                    dirty = true;
+                }
+            }
+
+            _ => {}
+        }
+        // Queue the action event for TypeScript's polling loop.
         let aid = selector_to_action_id(selector);
         if aid != 0 {
             self.pending_events.push(PendingEvent {
@@ -381,12 +753,9 @@ impl EditorView {
                 y: 0.0,
             });
         }
-        // Also fire callback for non-Perry paths
-        if let Some(cb) = self.action_callback {
-            if let Ok(c_sel) = CString::new(selector) {
-                let self_ptr = self as *mut EditorView;
-                cb(self_ptr, c_sel.as_ptr());
-            }
+        if dirty {
+            self.sync_cursor_x();
+            self.invalidate();
         }
     }
 
@@ -396,19 +765,108 @@ impl EditorView {
 
     /// Called from the WndProc's WM_LBUTTONDOWN handler.
     pub fn on_mouse_down(&mut self, x: f64, y: f64) {
-        // Queue event for Perry polling
-        self.pending_events.push(PendingEvent {
-            event_type: event_type::MOUSE_DOWN,
-            char_code: 0,
-            action_id: 0,
-            x,
-            y,
-        });
-        // Also fire callback for non-Perry paths
         if let Some(cb) = self.mouse_down_callback {
             let self_ptr = self as *mut EditorView;
             cb(self_ptr, x, y);
+            return;
         }
+        // Rust-side cursor positioning: find nearest line by y, compute col from x.
+        if let Some(line) = self.frame_lines.iter().min_by(|a, b| {
+            let da = (a.y_offset - y).abs();
+            let db = (b.y_offset - y).abs();
+            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+        }) {
+            let line_number = line.line_number;
+            self.rust_cursor_line = line_number;
+            self.user_has_clicked = true;
+            let gutter_w = self.gutter_width();
+            let text_x = (x - gutter_w).max(0.0);
+
+            // Find the byte offset whose measured prefix width is closest to text_x.
+            let mut best_byte_col = 0usize;
+            let mut best_dist = f64::MAX;
+            let mut byte_pos = 0usize;
+            loop {
+                let w = self.renderer.measure_text(&line.text[..byte_pos]);
+                let dist = (w - text_x).abs();
+                if dist < best_dist {
+                    best_dist = dist;
+                    best_byte_col = byte_pos;
+                }
+                if let Some(ch) = line.text[byte_pos..].chars().next() {
+                    byte_pos += ch.len_utf8();
+                } else {
+                    break;
+                }
+            }
+            self.rust_col = best_byte_col;
+            // Set the anchor to the click position — drag will extend the selection from here.
+            self.rust_sel_anchor = Some((line_number, best_byte_col));
+            self.selections.clear();
+
+            let text_before = &line.text[..self.rust_col];
+            let cursor_x = gutter_w + self.renderer.measure_text(text_before);
+            let cursor_y = line.y_offset;
+            self.cursor = Some(CursorData { x: cursor_x, y: cursor_y, style: 0 });
+            // Queue for TypeScript so it syncs its cursor position.
+            self.pending_events.push(PendingEvent {
+                event_type: event_type::MOUSE_DOWN,
+                char_code: 0,
+                action_id: 0,
+                x,
+                y,
+            });
+            self.invalidate();
+        }
+    }
+
+    /// Called from the WndProc's WM_MOUSEMOVE handler during drag.
+    /// Updates the cursor to the drag position and recomputes selection highlights.
+    pub fn on_mouse_drag(&mut self, x: f64, y: f64) {
+        if self.mouse_down_callback.is_some() {
+            return;
+        }
+        if self.frame_lines.is_empty() {
+            return;
+        }
+        // Find the nearest line by y.
+        let (line_number, line_y_offset, text_clone) = {
+            let line = self.frame_lines.iter().min_by(|a, b| {
+                let da = (a.y_offset - y).abs();
+                let db = (b.y_offset - y).abs();
+                da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+            }).unwrap();
+            (line.line_number, line.y_offset, line.text.clone())
+        };
+
+        let gutter_w = self.gutter_width();
+        let text_x = (x - gutter_w).max(0.0);
+
+        // Find the byte offset closest to text_x.
+        let mut best_byte_col = 0usize;
+        let mut best_dist = f64::MAX;
+        let mut byte_pos = 0usize;
+        loop {
+            let w = self.renderer.measure_text(&text_clone[..byte_pos]);
+            let dist = (w - text_x).abs();
+            if dist < best_dist {
+                best_dist = dist;
+                best_byte_col = byte_pos;
+            }
+            if let Some(ch) = text_clone[byte_pos..].chars().next() {
+                byte_pos += ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+
+        self.rust_cursor_line = line_number;
+        self.rust_col = best_byte_col;
+        let cursor_x = gutter_w + self.renderer.measure_text(&text_clone[..best_byte_col]);
+        self.cursor = Some(CursorData { x: cursor_x, y: line_y_offset, style: 0 });
+
+        self.sync_selection_rects();
+        self.invalidate();
     }
 
     pub fn set_scroll_callback(&mut self, cb: ScrollCallback) {
@@ -417,19 +875,52 @@ impl EditorView {
 
     /// Called from the WndProc's WM_MOUSEWHEEL handler.
     pub fn on_scroll(&mut self, dx: f64, dy: f64) {
-        // Queue event for Perry polling
-        self.pending_events.push(PendingEvent {
-            event_type: event_type::SCROLL,
-            char_code: 0,
-            action_id: 0,
-            x: dx,
-            y: dy,
-        });
-        // Also fire callback for non-Perry paths
         if let Some(cb) = self.scroll_callback {
             let self_ptr = self as *mut EditorView;
             cb(self_ptr, dx, dy);
+            return;
         }
+        if self.frame_lines.is_empty() {
+            return;
+        }
+
+        // Clamp the scroll delta so content never drifts outside its valid range.
+        let ts_line_h = self.ts_line_height();
+        let n = self.frame_lines.len() as f64;
+        let total_content_h = n * ts_line_h;
+
+        // Windows scroll: positive dy = scroll down = content moves up = y_offsets decrease.
+        // So we subtract dy from y_offsets.
+        let actual_dy = if let Some(max_first_y) = self.initial_top_y {
+            if total_content_h <= self.height {
+                0.0
+            } else {
+                let min_first_y = max_first_y + self.height - total_content_h;
+                let proposed = self.frame_lines[0].y_offset - dy;
+                let clamped = proposed.clamp(min_first_y, max_first_y);
+                clamped - self.frame_lines[0].y_offset
+            }
+        } else {
+            -dy
+        };
+
+        if actual_dy.abs() < 0.1 {
+            return;
+        }
+
+        for line in &mut self.frame_lines {
+            line.y_offset += actual_dy;
+        }
+        if let Some(ref mut c) = self.cursor {
+            c.y += actual_dy;
+        }
+        for sel in &mut self.selections {
+            sel.y += actual_dy;
+        }
+        for decor in &mut self.decorations {
+            decor.y += actual_dy;
+        }
+        self.invalidate();
     }
 
     pub fn add_context_menu_item(&mut self, title: &str, action_id: &str) {
@@ -460,7 +951,10 @@ impl EditorView {
 
     pub fn begin_frame(&mut self) {
         self.frame_lines.clear();
-        self.cursor = None;
+        // Only clear cursor if user hasn't manually positioned it via a click.
+        if !self.user_has_clicked {
+            self.cursor = None;
+        }
         self.cursors.clear();
         self.selections.clear();
         self.decorations.clear();
@@ -488,7 +982,29 @@ impl EditorView {
     }
 
     pub fn set_cursor(&mut self, x: f64, y: f64, style: i32) {
+        if self.user_has_clicked {
+            // User manually positioned cursor via click — don't let TypeScript override.
+            // Update cursor visual position using the freshly rendered frame_lines so that
+            // y_offset stays consistent with re-rendered content.
+            if let Some(line) = self.frame_lines.iter().find(|l| l.line_number == self.rust_cursor_line) {
+                let cursor_x = self.gutter_width() + self.renderer.measure_text(
+                    &line.text[..self.rust_col.min(line.text.len())]
+                );
+                self.cursor = Some(CursorData { x: cursor_x, y: line.y_offset, style: 0 });
+            }
+            return;
+        }
         self.cursor = Some(CursorData { x, y, style });
+        // Derive Rust cursor position from pixel coords so editing works correctly.
+        let gutter_w = self.gutter_width();
+        self.rust_col = ((x - gutter_w).max(0.0) / self.renderer.char_width).round() as usize;
+        if let Some(line) = self.frame_lines.iter().min_by(|a, b| {
+            let da = (a.y_offset - y).abs();
+            let db = (b.y_offset - y).abs();
+            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+        }) {
+            self.rust_cursor_line = line.line_number;
+        }
     }
 
     pub fn set_cursors(&mut self, cursors_json: &str) {
@@ -519,6 +1035,13 @@ impl EditorView {
     }
 
     pub fn end_frame(&mut self) {
+        // Record the TypeScript-assigned y_offset of the first line on the first render.
+        // This becomes the upper scroll bound — content can never drift below this position.
+        if self.initial_top_y.is_none() {
+            if let Some(first) = self.frame_lines.first() {
+                self.initial_top_y = Some(first.y_offset);
+            }
+        }
         self.invalidate();
     }
 
@@ -646,6 +1169,295 @@ impl EditorView {
         }
     }
 
+    // ── Rust-side editing helpers ─────────────────────────────────
+
+    /// Index into frame_lines for the current cursor line, if any.
+    fn cursor_line_idx(&self) -> Option<usize> {
+        self.frame_lines.iter().position(|l| l.line_number == self.rust_cursor_line)
+    }
+
+    /// Recompute the pixel X and Y of the cursor from rust_cursor_line / rust_col.
+    fn sync_cursor_x(&mut self) {
+        let gutter_w = self.gutter_width();
+        if let Some(idx) = self.cursor_line_idx() {
+            let text_len = self.frame_lines[idx].text.len();
+            let col = self.rust_col.min(text_len);
+            let x = gutter_w + self.renderer.measure_text(&self.frame_lines[idx].text[..col]);
+            let y = self.frame_lines[idx].y_offset;
+            if let Some(ref mut c) = self.cursor {
+                c.x = x;
+                c.y = y;
+            }
+        } else {
+            let x = gutter_w + self.rust_col as f64 * self.renderer.char_width;
+            if let Some(ref mut c) = self.cursor {
+                c.x = x;
+            }
+        }
+    }
+
+    /// Infer TypeScript's line height from the gap between the first two frame_lines.
+    fn ts_line_height(&self) -> f64 {
+        if self.frame_lines.len() >= 2 {
+            (self.frame_lines[1].y_offset - self.frame_lines[0].y_offset).abs()
+        } else {
+            self.renderer.line_height
+        }
+    }
+
+    /// If there is an active selection, delete its content and collapse the cursor
+    /// to the start of the selection.
+    fn delete_selection_if_any(&mut self) {
+        let anchor = match self.rust_sel_anchor.take() {
+            Some(a) => a,
+            None => return,
+        };
+        self.selections.clear();
+
+        let (anchor_line, anchor_col) = anchor;
+        let cursor_line = self.rust_cursor_line;
+        let cursor_col = self.rust_col;
+
+        let anchor_idx = match self.frame_lines.iter().position(|l| l.line_number == anchor_line) {
+            Some(i) => i,
+            None => return,
+        };
+        let cursor_idx = match self.frame_lines.iter().position(|l| l.line_number == cursor_line) {
+            Some(i) => i,
+            None => return,
+        };
+
+        let (start_idx, start_col, end_idx, end_col) =
+            if anchor_idx < cursor_idx || (anchor_idx == cursor_idx && anchor_col <= cursor_col) {
+                (anchor_idx, anchor_col, cursor_idx, cursor_col)
+            } else {
+                (cursor_idx, cursor_col, anchor_idx, anchor_col)
+            };
+
+        if start_idx == end_idx {
+            let lo = start_col.min(self.frame_lines[start_idx].text.len());
+            let hi = end_col.min(self.frame_lines[start_idx].text.len());
+            if lo < hi {
+                self.frame_lines[start_idx].text.drain(lo..hi);
+                let new_tokens = crate::tokenizer::tokenize_line(&self.frame_lines[start_idx].text);
+                self.frame_lines[start_idx].tokens = new_tokens;
+            }
+        } else {
+            let ts_line_h = self.ts_line_height();
+            let start_text = {
+                let lo = start_col.min(self.frame_lines[start_idx].text.len());
+                self.frame_lines[start_idx].text[..lo].to_string()
+            };
+            let end_text = {
+                let ec = end_col.min(self.frame_lines[end_idx].text.len());
+                self.frame_lines[end_idx].text[ec..].to_string()
+            };
+            let merged = start_text + &end_text;
+            let lines_removed = end_idx - start_idx;
+            for _ in 0..lines_removed {
+                self.frame_lines.remove(start_idx + 1);
+            }
+            let new_tokens = crate::tokenizer::tokenize_line(&merged);
+            self.frame_lines[start_idx].tokens = new_tokens;
+            self.frame_lines[start_idx].text = merged;
+            for j in (start_idx + 1)..self.frame_lines.len() {
+                self.frame_lines[j].line_number -= lines_removed as i32;
+                self.frame_lines[j].y_offset -= lines_removed as f64 * ts_line_h;
+            }
+        }
+
+        self.rust_cursor_line = self.frame_lines[start_idx].line_number;
+        self.rust_col = start_col;
+    }
+
+    /// Collect the selected text as a String.
+    fn get_selected_text(&self) -> String {
+        let anchor = match self.rust_sel_anchor {
+            Some(a) => a,
+            None => return String::new(),
+        };
+
+        let (anchor_line, anchor_col) = anchor;
+        let anchor_idx = match self.frame_lines.iter().position(|l| l.line_number == anchor_line) {
+            Some(i) => i,
+            None => return String::new(),
+        };
+        let cursor_idx = match self.frame_lines.iter().position(|l| l.line_number == self.rust_cursor_line) {
+            Some(i) => i,
+            None => return String::new(),
+        };
+
+        let (start_idx, start_col, end_idx, end_col) =
+            if anchor_idx < cursor_idx || (anchor_idx == cursor_idx && anchor_col <= self.rust_col) {
+                (anchor_idx, anchor_col, cursor_idx, self.rust_col)
+            } else {
+                (cursor_idx, self.rust_col, anchor_idx, anchor_col)
+            };
+
+        if start_idx == end_idx {
+            let lo = start_col.min(self.frame_lines[start_idx].text.len());
+            let hi = end_col.min(self.frame_lines[start_idx].text.len());
+            self.frame_lines[start_idx].text[lo..hi].to_string()
+        } else {
+            let mut result = String::new();
+            let first_lo = start_col.min(self.frame_lines[start_idx].text.len());
+            result.push_str(&self.frame_lines[start_idx].text[first_lo..]);
+            for i in (start_idx + 1)..end_idx {
+                result.push('\n');
+                result.push_str(&self.frame_lines[i].text);
+            }
+            result.push('\n');
+            let last_hi = end_col.min(self.frame_lines[end_idx].text.len());
+            result.push_str(&self.frame_lines[end_idx].text[..last_hi]);
+            result
+        }
+    }
+
+    /// Write `text` to the Windows clipboard using Win32 API.
+    fn write_to_clipboard(&self, text: &str) {
+        let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+        let byte_len = wide.len() * 2;
+
+        unsafe {
+            if OpenClipboard(HWND::default()).is_ok() {
+                let _ = windows::Win32::System::DataExchange::EmptyClipboard();
+                if let Ok(hmem) = GlobalAlloc(GMEM_MOVEABLE, byte_len) {
+                    let ptr = GlobalLock(hmem);
+                    if !ptr.is_null() {
+                        std::ptr::copy_nonoverlapping(
+                            wide.as_ptr() as *const u8,
+                            ptr as *mut u8,
+                            byte_len,
+                        );
+                        let _ = GlobalUnlock(hmem);
+                        let _ = SetClipboardData(
+                            CF_UNICODETEXT.0 as u32,
+                            HANDLE(hmem.0 as isize),
+                        );
+                    }
+                }
+                let _ = CloseClipboard();
+            }
+        }
+    }
+
+    /// Read plain text from the Windows clipboard using Win32 API.
+    fn read_from_clipboard(&self) -> String {
+        unsafe {
+            if OpenClipboard(HWND::default()).is_err() {
+                return String::new();
+            }
+            let handle = GetClipboardData(CF_UNICODETEXT.0 as u32);
+            let result = if let Ok(handle) = handle {
+                let hglobal = HGLOBAL(handle.0 as *mut std::ffi::c_void);
+                let ptr = GlobalLock(hglobal) as *const u16;
+                if ptr.is_null() {
+                    String::new()
+                } else {
+                    let mut len = 0;
+                    while *ptr.add(len) != 0 {
+                        len += 1;
+                    }
+                    let slice = std::slice::from_raw_parts(ptr, len);
+                    let s = String::from_utf16_lossy(slice);
+                    let _ = GlobalUnlock(hglobal);
+                    s.replace("\r\n", "\n")
+                }
+            } else {
+                String::new()
+            };
+            let _ = CloseClipboard();
+            result
+        }
+    }
+
+    /// Rebuild `self.selections` from the current anchor + cursor positions.
+    fn sync_selection_rects(&mut self) {
+        self.selections.clear();
+        let anchor = match self.rust_sel_anchor {
+            Some(a) => a,
+            None => return,
+        };
+
+        let (anchor_line, anchor_col) = anchor;
+        let anchor_idx = match self.frame_lines.iter().position(|l| l.line_number == anchor_line) {
+            Some(i) => i,
+            None => return,
+        };
+        let cursor_idx = match self.frame_lines.iter().position(|l| l.line_number == self.rust_cursor_line) {
+            Some(i) => i,
+            None => return,
+        };
+
+        let (start_idx, start_col, end_idx, end_col) =
+            if anchor_idx < cursor_idx || (anchor_idx == cursor_idx && anchor_col <= self.rust_col) {
+                (anchor_idx, anchor_col, cursor_idx, self.rust_col)
+            } else {
+                (cursor_idx, self.rust_col, anchor_idx, anchor_col)
+            };
+
+        let gutter_w = self.gutter_width();
+        let line_h = self.ts_line_height();
+        let char_w = self.renderer.char_width;
+
+        let mut rects: Vec<SelectionRegion> = Vec::new();
+        for i in start_idx..=end_idx {
+            let y_off = self.frame_lines[i].y_offset;
+            let text_len = self.frame_lines[i].text.len();
+            let x1 = if i == start_idx {
+                let col = start_col.min(text_len);
+                gutter_w + self.renderer.measure_text(&self.frame_lines[i].text[..col])
+            } else {
+                gutter_w
+            };
+            let x2 = if i == end_idx {
+                let col = end_col.min(text_len);
+                gutter_w + self.renderer.measure_text(&self.frame_lines[i].text[..col])
+            } else {
+                gutter_w + self.renderer.measure_text(&self.frame_lines[i].text) + char_w
+            };
+            let w = (x2 - x1).max(char_w);
+            rects.push(SelectionRegion { x: x1, y: y_off, w, h: line_h });
+        }
+        self.selections = rects;
+    }
+
+    /// Collapse the selection, placing the cursor at the start (lower) position.
+    fn clear_selection_keep_cursor_at_start(&mut self) {
+        let anchor_opt = self.rust_sel_anchor.take();
+        if let Some((anchor_line, anchor_col)) = anchor_opt {
+            let anchor_idx = self.frame_lines.iter().position(|l| l.line_number == anchor_line);
+            let cursor_idx = self.frame_lines.iter().position(|l| l.line_number == self.rust_cursor_line);
+            if let (Some(ai), Some(_ci)) = (anchor_idx, cursor_idx) {
+                if ai < _ci || (ai == _ci && anchor_col < self.rust_col) {
+                    let anchor_y = self.frame_lines[ai].y_offset;
+                    self.rust_cursor_line = anchor_line;
+                    self.rust_col = anchor_col;
+                    if let Some(ref mut c) = self.cursor { c.y = anchor_y; }
+                }
+            }
+        }
+        self.selections.clear();
+    }
+
+    /// Collapse the selection, placing the cursor at the end (higher) position.
+    fn clear_selection_keep_cursor_at_end(&mut self) {
+        let anchor_opt = self.rust_sel_anchor.take();
+        if let Some((anchor_line, anchor_col)) = anchor_opt {
+            let anchor_idx = self.frame_lines.iter().position(|l| l.line_number == anchor_line);
+            let cursor_idx = self.frame_lines.iter().position(|l| l.line_number == self.rust_cursor_line);
+            if let (Some(ai), Some(_ci)) = (anchor_idx, cursor_idx) {
+                if ai > _ci || (ai == _ci && anchor_col > self.rust_col) {
+                    let anchor_y = self.frame_lines[ai].y_offset;
+                    self.rust_cursor_line = anchor_line;
+                    self.rust_col = anchor_col;
+                    if let Some(ref mut c) = self.cursor { c.y = anchor_y; }
+                }
+            }
+        }
+        self.selections.clear();
+    }
+
     // ── Drawing ──────────────────────────────────────────────────
 
     /// Compute gutter width matching the TS GutterRenderer formula:
@@ -665,6 +1477,7 @@ impl EditorView {
         unsafe {
             rt.Clear(Some(&self.background_color));
         }
+
 
         let gutter_w = self.gutter_width();
 

@@ -2,16 +2,51 @@
 //!
 //! Uses DirectWrite for text rendering and Direct2D for drawing.
 //! DirectComposition provides smooth scrolling via composition surfaces.
-
-use std::ffi::{c_char, CStr};
+//!
+//! ## Perry ABI Notes
+//!
+//! Perry's Cranelift codegen passes parameters using the types declared in
+//! `package.json` `perry.nativeLibrary.functions`. On Windows x64, integer
+//! params go in RCX/RDX/R8/R9 and float params go in XMM0-XMM3 (positional
+//! slot-based). If the Rust function's type disagrees with Perry's declaration
+//! for a given slot, the param lands in the wrong register.
+//!
+//! - `i64` params → integer registers (pointers, handles)
+//! - `f64` params → XMM float registers (numbers, including line_number, style)
+//!
+//! Perry strings are NOT null-terminated C strings. They are length-prefixed:
+//!   `[len: u32, capacity: u32, data: u8[len]]`
+//! Use `perry_str()` to extract a `&str` from an i64 Perry string pointer.
 
 mod compositor;
 mod editor_view;
 mod input_handler;
 mod text_renderer;
+mod tokenizer;
 
 pub use editor_view::EditorView;
 use editor_view::{ActionCallback, MouseDownCallback, ScrollCallback, TextInputCallback};
+
+// ── Perry string helper ──────────────────────────────────────────────
+
+/// Extract a Rust `&str` from a Perry string pointer.
+///
+/// Perry strings have layout: `[len: u32, capacity: u32, data: u8[len]]`.
+/// The pointer passed via FFI points to the start of this struct.
+/// Returns `""` if the pointer is null or invalid.
+unsafe fn perry_str<'a>(ptr: i64) -> &'a str {
+    let p = ptr as usize;
+    if p < 0x10000 {
+        return "";
+    }
+    let len = *(p as *const u32) as usize;
+    if len == 0 {
+        return "";
+    }
+    // Safety: data starts at offset 8 (after len + capacity u32s)
+    let data = std::slice::from_raw_parts((p + 8) as *const u8, len);
+    std::str::from_utf8_unchecked(data)
+}
 
 // === FFI Contract Implementation ===
 
@@ -49,52 +84,61 @@ pub extern "C" fn hone_editor_destroy(view: *mut EditorView) {
 }
 
 /// Set the editor font family and size.
+/// Perry params: ["i64", "i64", "f64"]
 #[no_mangle]
 pub extern "C" fn hone_editor_set_font(
     view: *mut EditorView,
-    family: *const c_char,
+    family: i64,
     size: f64,
 ) {
     let view = unsafe { &mut *view };
-    let family_str = unsafe { CStr::from_ptr(family) }.to_str().unwrap_or("Consolas");
+    let family_str = unsafe { perry_str(family) };
+    let family_str = if family_str.is_empty() { "Consolas" } else { family_str };
     view.set_font(family_str, size);
 }
 
 /// Render a single line of text with syntax coloring.
+/// Perry params: ["i64", "f64", "i64", "i64", "f64"]
+/// NOTE: line_number is f64 (not i32) because Perry sends it via XMM register.
 #[no_mangle]
 pub extern "C" fn hone_editor_render_line(
     view: *mut EditorView,
-    line_number: i32,
-    text: *const c_char,
-    tokens_json: *const c_char,
+    line_number: f64,
+    text: i64,
+    tokens_json: i64,
     y_offset: f64,
 ) {
     let view = unsafe { &mut *view };
-    let text_str = unsafe { CStr::from_ptr(text) }.to_str().unwrap_or("");
-    let tokens_str = unsafe { CStr::from_ptr(tokens_json) }.to_str().unwrap_or("[]");
-    view.render_line(line_number, text_str, tokens_str, y_offset);
+    let text_str = unsafe { perry_str(text) };
+    let tokens_str = unsafe { perry_str(tokens_json) };
+    let tokens_str = if tokens_str.is_empty() { "[]" } else { tokens_str };
+    view.render_line(line_number as i32, text_str, tokens_str, y_offset);
 }
 
 /// Set the cursor position and style.
+/// Perry params: ["i64", "f64", "f64", "f64"]
+/// NOTE: style is f64 (not i32) to match Perry's Cranelift ABI.
 #[no_mangle]
 pub extern "C" fn hone_editor_set_cursor(
     view: *mut EditorView,
     x: f64,
     y: f64,
-    style: i32,
+    style: f64,
 ) {
     let view = unsafe { &mut *view };
-    view.set_cursor(x, y, style);
+    view.set_cursor(x, y, style as i32);
 }
 
 /// Set selection highlight regions.
+/// Perry params: ["i64", "i64"]
 #[no_mangle]
 pub extern "C" fn hone_editor_set_selection(
     view: *mut EditorView,
-    regions_json: *const c_char,
+    regions_json: i64,
 ) {
     let view = unsafe { &mut *view };
-    let json_str = unsafe { CStr::from_ptr(regions_json) }.to_str().unwrap_or("[]");
+    let json_str = unsafe { perry_str(regions_json) };
+    let json_str = if json_str.is_empty() { "[]" } else { json_str };
     view.set_selection(json_str);
 }
 
@@ -106,13 +150,14 @@ pub extern "C" fn hone_editor_scroll(view: *mut EditorView, offset_y: f64) {
 }
 
 /// Measure the width of a text string in the current font.
+/// Perry params: ["i64", "i64"] returns "f64"
 #[no_mangle]
 pub extern "C" fn hone_editor_measure_text(
     view: *mut EditorView,
-    text: *const c_char,
+    text: i64,
 ) -> f64 {
     let view = unsafe { &*view };
-    let text_str = unsafe { CStr::from_ptr(text) }.to_str().unwrap_or("");
+    let text_str = unsafe { perry_str(text) };
     view.measure_text(text_str)
 }
 
@@ -126,39 +171,45 @@ pub extern "C" fn hone_editor_invalidate(view: *mut EditorView) {
 // === Optional Extended FFI ===
 
 /// Render decorations (underlines, backgrounds) for a line.
+/// Perry params: ["i64", "i64"]
 #[no_mangle]
 pub extern "C" fn hone_editor_render_decorations(
     view: *mut EditorView,
-    decorations_json: *const c_char,
+    decorations_json: i64,
 ) {
     let view = unsafe { &mut *view };
-    let json_str = unsafe { CStr::from_ptr(decorations_json) }.to_str().unwrap_or("[]");
+    let json_str = unsafe { perry_str(decorations_json) };
+    let json_str = if json_str.is_empty() { "[]" } else { json_str };
     view.render_decorations(json_str);
 }
 
 /// Render ghost text (semi-transparent inline completion).
+/// Perry params: ["i64", "i64", "f64", "f64", "i64"]
 #[no_mangle]
 pub extern "C" fn hone_editor_render_ghost_text(
     view: *mut EditorView,
-    text: *const c_char,
+    text: i64,
     x: f64,
     y: f64,
-    color: *const c_char,
+    color: i64,
 ) {
     let view = unsafe { &mut *view };
-    let text_str = unsafe { CStr::from_ptr(text) }.to_str().unwrap_or("");
-    let color_str = unsafe { CStr::from_ptr(color) }.to_str().unwrap_or("#808080");
+    let text_str = unsafe { perry_str(text) };
+    let color_str = unsafe { perry_str(color) };
+    let color_str = if color_str.is_empty() { "#808080" } else { color_str };
     view.render_ghost_text(text_str, x, y, color_str);
 }
 
 /// Set multiple cursor positions.
+/// Perry params: ["i64", "i64"]
 #[no_mangle]
 pub extern "C" fn hone_editor_set_cursors(
     view: *mut EditorView,
-    cursors_json: *const c_char,
+    cursors_json: i64,
 ) {
     let view = unsafe { &mut *view };
-    let json_str = unsafe { CStr::from_ptr(cursors_json) }.to_str().unwrap_or("[]");
+    let json_str = unsafe { perry_str(cursors_json) };
+    let json_str = if json_str.is_empty() { "[]" } else { json_str };
     view.set_cursors(json_str);
 }
 
@@ -207,12 +258,12 @@ pub extern "C" fn hone_editor_set_scroll_callback(
 #[no_mangle]
 pub extern "C" fn hone_editor_add_context_menu_item(
     view: *mut EditorView,
-    title: *const c_char,
-    action_id: *const c_char,
+    title: i64,
+    action_id: i64,
 ) {
     let view = unsafe { &mut *view };
-    let title_str = unsafe { CStr::from_ptr(title) }.to_str().unwrap_or("");
-    let action_str = unsafe { CStr::from_ptr(action_id) }.to_str().unwrap_or("");
+    let title_str = unsafe { perry_str(title) };
+    let action_str = unsafe { perry_str(action_id) };
     view.add_context_menu_item(title_str, action_str);
 }
 
