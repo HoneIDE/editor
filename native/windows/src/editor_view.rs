@@ -765,9 +765,13 @@ impl EditorView {
 
     /// Called from the WndProc's WM_LBUTTONDOWN handler.
     pub fn on_mouse_down(&mut self, x: f64, y: f64) {
+        // Convert from physical pixels to DIPs for DPI-aware Perry mode.
+        let scale = self.dpi_scale();
+        let x = x / scale;
+        let y = y / scale;
         if let Some(cb) = self.mouse_down_callback {
             let self_ptr = self as *mut EditorView;
-            cb(self_ptr, x, y);
+            cb(self_ptr, x * scale, y * scale); // pass physical pixels to callback
             return;
         }
         // Rust-side cursor positioning: find nearest line by y, compute col from x.
@@ -823,6 +827,10 @@ impl EditorView {
     /// Called from the WndProc's WM_MOUSEMOVE handler during drag.
     /// Updates the cursor to the drag position and recomputes selection highlights.
     pub fn on_mouse_drag(&mut self, x: f64, y: f64) {
+        // Convert from physical pixels to DIPs.
+        let scale = self.dpi_scale();
+        let x = x / scale;
+        let y = y / scale;
         if self.mouse_down_callback.is_some() {
             return;
         }
@@ -880,6 +888,9 @@ impl EditorView {
             cb(self_ptr, dx, dy);
             return;
         }
+        // Scale scroll delta from physical pixels to DIPs.
+        let scale = self.dpi_scale();
+        let dy = dy / scale;
         if self.frame_lines.is_empty() {
             return;
         }
@@ -888,14 +899,15 @@ impl EditorView {
         let ts_line_h = self.ts_line_height();
         let n = self.frame_lines.len() as f64;
         let total_content_h = n * ts_line_h;
+        let view_height = self.height / scale; // convert physical height to DIPs
 
         // Windows scroll: positive dy = scroll down = content moves up = y_offsets decrease.
         // So we subtract dy from y_offsets.
         let actual_dy = if let Some(max_first_y) = self.initial_top_y {
-            if total_content_h <= self.height {
+            if total_content_h <= view_height {
                 0.0
             } else {
-                let min_first_y = max_first_y + self.height - total_content_h;
+                let min_first_y = max_first_y + view_height - total_content_h;
                 let proposed = self.frame_lines[0].y_offset - dy;
                 let clamped = proposed.clamp(min_first_y, max_first_y);
                 clamped - self.frame_lines[0].y_offset
@@ -1170,6 +1182,19 @@ impl EditorView {
     }
 
     // ── Rust-side editing helpers ─────────────────────────────────
+
+    /// Get DPI scale factor for this window.
+    /// With PER_MONITOR_AWARE_V2, mouse coords are in physical pixels but
+    /// Direct2D renders in DIPs. This returns physical_pixels / DIPs.
+    fn dpi_scale(&self) -> f64 {
+        if is_null_hwnd(self.hwnd) {
+            return 1.0;
+        }
+        let dpi = unsafe {
+            windows::Win32::UI::HiDpi::GetDpiForWindow(self.hwnd)
+        };
+        if dpi == 0 { 1.0 } else { dpi as f64 / 96.0 }
+    }
 
     /// Index into frame_lines for the current cursor line, if any.
     fn cursor_line_idx(&self) -> Option<usize> {
