@@ -73,7 +73,11 @@ const LANGUAGE_LINE_COMMENTS: Record<string, string> = {
   markdown: '',
 };
 
-const SUPPORTED_LANGUAGES = Object.keys(LANGUAGE_KEYWORDS);
+// Perry AOT: Object.keys() is not supported in native codegen.
+// List languages explicitly instead of deriving from the Record.
+const SUPPORTED_LANGUAGES = [
+  'typescript', 'javascript', 'python', 'rust', 'html', 'css', 'json', 'markdown', 'c', 'cpp',
+];
 
 // ---------------------------------------------------------------------------
 // Token classification helpers
@@ -444,7 +448,8 @@ export class KeywordSyntaxEngine implements ISyntaxEngine {
           endLine = j;
         }
         if (endLine > i) {
-          ranges.push({ startLine: i, endLine });
+          // Perry AOT: { startLine: i, endLine } shorthand captures initial value.
+          ranges.push({ startLine: i, endLine: endLine });
         }
       }
     }
@@ -498,7 +503,12 @@ export class KeywordSyntaxEngine implements ISyntaxEngine {
   }
 
   hasLanguage(languageId: string): boolean {
-    return LANGUAGE_KEYWORDS[languageId] !== undefined;
+    // Perry AOT: LANGUAGE_KEYWORDS[languageId] dynamic key access is broken.
+    // Use the explicit list instead.
+    for (let i = 0; i < SUPPORTED_LANGUAGES.length; i++) {
+      if (SUPPORTED_LANGUAGES[i] === languageId) return true;
+    }
+    return false;
   }
 
   // -----------------------------------------------------------------------

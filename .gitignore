@@ -7,6 +7,7 @@ target/
 *.a
 *.lib
 *.wasm
+*.o
 .DS_Store
 .env
 .env.*

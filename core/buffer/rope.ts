@@ -31,37 +31,43 @@ type RopeNode = LeafNode | InternalNode;
 function createLeaf(pieces: PieceDescriptor[]): LeafNode {
   let charCount = 0;
   let lineBreakCount = 0;
-  for (const p of pieces) {
-    charCount += p.len;
-    lineBreakCount += p.lineBreakCount;
+  // Perry AOT: use index loop (for...of fails on arrays in Perry codegen)
+  for (let _cli = 0; _cli < pieces.length; _cli++) {
+    charCount += pieces[_cli].len;
+    lineBreakCount += pieces[_cli].lineBreakCount;
   }
-  return { kind: 'leaf', pieces, charCount, lineBreakCount };
+  // Perry AOT: explicit key: value (shorthand object literals capture initial value)
+  return { kind: 'leaf', pieces: pieces, charCount: charCount, lineBreakCount: lineBreakCount };
 }
 
 function createInternal(children: RopeNode[]): InternalNode {
   let charCount = 0;
   let lineBreakCount = 0;
-  for (const c of children) {
-    charCount += c.charCount;
-    lineBreakCount += c.lineBreakCount;
+  // Perry AOT: use index loop (for...of fails on arrays in Perry codegen)
+  for (let _cii = 0; _cii < children.length; _cii++) {
+    charCount += children[_cii].charCount;
+    lineBreakCount += children[_cii].lineBreakCount;
   }
-  return { kind: 'internal', children, charCount, lineBreakCount };
+  // Perry AOT: explicit key: value (shorthand object literals capture initial value)
+  return { kind: 'internal', children: children, charCount: charCount, lineBreakCount: lineBreakCount };
 }
 
 function updateNodeStats(node: RopeNode): void {
   if (node.kind === 'leaf') {
     let cc = 0, lbc = 0;
-    for (const p of node.pieces) {
-      cc += p.len;
-      lbc += p.lineBreakCount;
+    // Perry AOT: use index loop (for...of fails on arrays in Perry codegen)
+    for (let _ui = 0; _ui < node.pieces.length; _ui++) {
+      cc += node.pieces[_ui].len;
+      lbc += node.pieces[_ui].lineBreakCount;
     }
     node.charCount = cc;
     node.lineBreakCount = lbc;
   } else {
     let cc = 0, lbc = 0;
-    for (const c of node.children) {
-      cc += c.charCount;
-      lbc += c.lineBreakCount;
+    // Perry AOT: use index loop (for...of fails on arrays in Perry codegen)
+    for (let _ui = 0; _ui < node.children.length; _ui++) {
+      cc += node.children[_ui].charCount;
+      lbc += node.children[_ui].lineBreakCount;
     }
     node.charCount = cc;
     node.lineBreakCount = lbc;
@@ -91,12 +97,14 @@ export class Rope {
 
   constructor(pieceTable: PieceTable) {
     this.pieceTable = pieceTable;
-    // Build initial tree from piece table's pieces
-    const pieces = [...pieceTable.pieces];
-    if (pieces.length === 0) {
+    // Build initial tree from piece table's pieces.
+    // Perry AOT: [...pieceTable.pieces] spread crashes; read length directly.
+    const ptPieces = pieceTable.pieces;
+    if (ptPieces.length === 0) {
       this.root = createLeaf([]);
     } else {
-      this.root = this.buildTree(pieces);
+      // Cast: buildTree reads but never mutates the array, so readonly is safe.
+      this.root = this.buildTree(ptPieces as PieceDescriptor[]);
     }
   }
 
@@ -489,13 +497,15 @@ export class Rope {
 
   private walkNode(node: RopeNode, callback: (piece: PieceDescriptor) => boolean): boolean {
     if (node.kind === 'leaf') {
-      for (const piece of node.pieces) {
-        if (!callback(piece)) return false;
+      // Perry AOT: use index loop (for...of fails on arrays in Perry codegen)
+      for (let _wni = 0; _wni < node.pieces.length; _wni++) {
+        if (!callback(node.pieces[_wni])) return false;
       }
       return true;
     }
-    for (const child of node.children) {
-      if (!this.walkNode(child, callback)) return false;
+    // Perry AOT: use index loop (for...of fails on arrays in Perry codegen)
+    for (let _wni = 0; _wni < node.children.length; _wni++) {
+      if (!this.walkNode(node.children[_wni], callback)) return false;
     }
     return true;
   }
