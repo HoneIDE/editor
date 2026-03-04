@@ -59,7 +59,10 @@ export class TextBuffer {
     const pieceTable = new PieceTable(normalized);
     this.rope = new Rope(pieceTable);
     this.lineIndex = new LineIndex();
-    this.lineIndex.rebuild(this.rope);
+    // Perry AOT: lineIndex.rebuild uses class-field push which is broken in Perry
+    // codegen. All lineIndex queries are bypassed in _text scanning above, so
+    // skip the rebuild — lineStarts stays at [0] (unused in Perry mode).
+    // this.lineIndex.rebuild(this.rope);
   }
 
   /**
@@ -187,10 +190,26 @@ export class TextBuffer {
   applyEdits(edits: TextEdit[]): void {
     if (edits.length === 0) return;
 
-    // Sort by offset in REVERSE order so earlier offsets remain valid
-    const sorted = [...edits].sort((a, b) => b.offset - a.offset);
+    // Perry AOT: [...edits].sort() uses spread + closure comparator, both broken.
+    // Sort in place using a Perry-safe insertion sort (edits are usually small).
+    const n = edits.length;
+    // Copy to local array first (index assignment is Perry-safe)
+    const sorted: TextEdit[] = [];
+    for (let _si = 0; _si < n; _si++) { sorted[_si] = edits[_si]; }
+    // Insertion sort descending by offset (Perry-safe: no closure comparator)
+    for (let _si = 1; _si < n; _si++) {
+      const cur = sorted[_si];
+      let _sj = _si - 1;
+      while (_sj >= 0 && sorted[_sj].offset < cur.offset) {
+        sorted[_sj + 1] = sorted[_sj];
+        _sj--;
+      }
+      sorted[_sj + 1] = cur;
+    }
 
-    for (const edit of sorted) {
+    // Perry AOT: for...of on arrays is broken; use index loop
+    for (let _ei = 0; _ei < sorted.length; _ei++) {
+      const edit = sorted[_ei];
       if (edit.deleteCount > 0) {
         this.delete(edit.offset, edit.deleteCount);
       }
@@ -246,7 +265,8 @@ export class TextBuffer {
     const pieceTable = new PieceTable(text);
     this.rope = new Rope(pieceTable);
     this.lineIndex = new LineIndex();
-    this.lineIndex.rebuild(this.rope);
+    // Perry AOT: lineIndex.rebuild uses class-field push (broken). Skip it.
+    // this.lineIndex.rebuild(this.rope);
   }
 
   /**

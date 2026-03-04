@@ -59,7 +59,7 @@ export const CursorStyle = {
   Line: 0,
   Block: 1,
   Underline: 2,
-} as const;
+};
 
 /**
  * The FFI contract that every platform must implement.

@@ -225,27 +225,33 @@ export class NativeRenderCoordinator {
       : renderState.style === 'underline' ? CursorStyle.Underline
       : CursorStyle.Line;
 
-    // Build a key for dirty check
-    const cursorKey = cursors.map(c =>
-      `${c.line}:${c.column}:${cursorStyle}:${renderState.visible}`
-    ).join('|') + `:${scroll.scrollTop}`;
+    // Perry AOT: cursors.map(c => ...) broken — build key with index loop.
+    let cursorKey = '';
+    for (let _ci = 0; _ci < cursors.length; _ci++) {
+      const c = cursors[_ci];
+      if (_ci > 0) cursorKey += '|';
+      cursorKey += c.line + ':' + c.column + ':' + cursorStyle + ':' + renderState.visible;
+    }
+    cursorKey += ':' + scroll.scrollTop;
 
     if (cursorKey === this._lastCursorKey) return;
     this._lastCursorKey = cursorKey;
 
-    if (cursors.length === 1 || !this._ffi.setCursors) {
-      // Single cursor or multi-cursor not supported
+    if (cursors.length === 1) {
+      // Single cursor (common case)
       const primary = cursors[0];
       const x = this.computeCursorX(handle, primary, vm);
       const y = this.computeYOffset(primary.line, scroll.scrollTop);
       this._ffi.setCursor(handle, x, y, cursorStyle);
-    } else {
-      // Multi-cursor
-      const cursorsData = cursors.map(c => ({
-        x: this.computeCursorX(handle, c, vm),
-        y: this.computeYOffset(c.line, scroll.scrollTop),
-        style: cursorStyle,
-      }));
+    } else if (this._ffi.setCursors) {
+      // Perry AOT: cursors.map(c => ({...})) broken — use index loop.
+      const cursorsData: any[] = [];
+      for (let _ci = 0; _ci < cursors.length; _ci++) {
+        const c = cursors[_ci];
+        const cx = this.computeCursorX(handle, c, vm);
+        const cy = this.computeYOffset(c.line, scroll.scrollTop);
+        cursorsData.push({ x: cx, y: cy, style: cursorStyle });
+      }
       this._ffi.setCursors(handle, JSON.stringify(cursorsData));
     }
   }
@@ -254,16 +260,23 @@ export class NativeRenderCoordinator {
     const selections = vm.selections;
     const scroll = vm.scrollState;
 
-    const selectionKey = selections.map(s =>
-      `${s.startLine}:${s.startColumn}-${s.endLine}:${s.endColumn}`
-    ).join('|') + `:${scroll.scrollTop}`;
+    // Perry AOT: selections.map(s => ...).join() broken — build key with index loop.
+    let selectionKey = '';
+    for (let _si = 0; _si < selections.length; _si++) {
+      const s = selections[_si];
+      if (_si > 0) selectionKey += '|';
+      selectionKey += s.startLine + ':' + s.startColumn + '-' + s.endLine + ':' + s.endColumn;
+    }
+    selectionKey += ':' + scroll.scrollTop;
 
     if (selectionKey === this._lastSelectionKey) return;
     this._lastSelectionKey = selectionKey;
 
     const regions: SelectionRegion[] = [];
 
-    for (const sel of selections) {
+    // Perry AOT: for (const sel of selections) broken — use index loop.
+    for (let _si = 0; _si < selections.length; _si++) {
+      const sel = selections[_si];
       // Skip empty selections
       if (sel.startLine === sel.endLine && sel.startColumn === sel.endColumn) continue;
 
@@ -273,12 +286,13 @@ export class NativeRenderCoordinator {
         const startCol = line === sel.startLine ? sel.startColumn : 0;
         const endCol = line === sel.endLine ? sel.endColumn : lineContent.length;
 
-        const x = this.measureTextWidth(handle, lineContent.substring(0, startCol)) + vm.gutterWidth;
-        const w = this.measureTextWidth(handle, lineContent.substring(startCol, endCol));
-        const y = this.computeYOffset(line, scroll.scrollTop);
-
+        const rx = this.measureTextWidth(handle, lineContent.substring(0, startCol)) + vm.gutterWidth;
+        const rw = this.measureTextWidth(handle, lineContent.substring(startCol, endCol));
+        const ry = this.computeYOffset(line, scroll.scrollTop);
         const sz2 = this._config.fontSize;
-        regions.push({ x, y, w, h: sz2 + sz2 / 2 });
+        // Perry AOT: {x, y, w, h} shorthand → use explicit key:value.
+        // Perry AOT: _lineHeightPx broken → use sz+sz/2.
+        regions.push({ x: rx, y: ry, w: rw, h: sz2 + sz2 / 2 });
       }
     }
 
@@ -322,12 +336,13 @@ export class NativeRenderCoordinator {
   }
 
   private serializeTokens(tokens: LineToken[]): string {
-    const ffiTokens: RenderToken[] = tokens.map(t => ({
-      s: t.startColumn,
-      e: t.endColumn,
-      c: t.color,
-      st: t.fontStyle === 'bold-italic' ? 'bold' : t.fontStyle,
-    }));
+    // Perry AOT: tokens.map(t => ({...})) broken — use index loop.
+    const ffiTokens: RenderToken[] = [];
+    for (let _ti = 0; _ti < tokens.length; _ti++) {
+      const t = tokens[_ti];
+      const st = t.fontStyle === 'bold-italic' ? 'bold' : t.fontStyle;
+      ffiTokens.push({ s: t.startColumn, e: t.endColumn, c: t.color, st: st });
+    }
     return JSON.stringify(ffiTokens);
   }
 
@@ -336,25 +351,36 @@ export class NativeRenderCoordinator {
     lineNumber: number,
     scrollTop: number,
   ): string {
+    // Perry AOT: decorations.map(d => ({...})) broken — use index loop.
     const y = this.computeYOffset(lineNumber, scrollTop);
     const sz3 = this._config.fontSize;
-    const overlays: DecorationOverlay[] = decorations.map(d => ({
-      x: d.startColumn * this._charWidth,
-      y,
-      w: (d.endColumn - d.startColumn) * this._charWidth,
-      h: sz3 + sz3 / 2,
-      color: d.color,
-      type: d.type.startsWith('underline') ? (
-        d.type === 'underline-error' ? 'underline-wavy' : 'underline'
-      ) : 'background',
-    }));
+    const overlays: DecorationOverlay[] = [];
+    for (let _di = 0; _di < decorations.length; _di++) {
+      const d = decorations[_di];
+      let dType: 'background' | 'underline' | 'underline-wavy';
+      if (d.type === 'underline-error') {
+        dType = 'underline-wavy';
+      } else if (d.type === 'underline' || d.type === 'underline-warning' || d.type === 'underline-info') {
+        dType = 'underline';
+      } else {
+        dType = 'background';
+      }
+      const dx = d.startColumn * this._charWidth;
+      const dw = (d.endColumn - d.startColumn) * this._charWidth;
+      // Perry AOT: _lineHeightPx broken → use sz+sz/2.
+      overlays.push({ x: dx, y: y, w: dw, h: sz3 + sz3 / 2, color: d.color, type: dType });
+    }
     return JSON.stringify(overlays);
   }
 
   private hashLine(line: RenderedLine): string {
-    // Simple hash combining content, tokens, decorations, and fold state
-    return `${line.content}|${line.tokens.length}|${line.decorations.length}|${line.foldState}|${
-      line.tokens.map(t => `${t.startColumn}:${t.endColumn}:${t.color}`).join(',')
-    }`;
+    // Perry AOT: line.tokens.map(t => ...).join(',') broken — use index loop.
+    let tokenHash = '';
+    for (let _hi = 0; _hi < line.tokens.length; _hi++) {
+      const t = line.tokens[_hi];
+      if (_hi > 0) tokenHash += ',';
+      tokenHash += t.startColumn + ':' + t.endColumn + ':' + t.color;
+    }
+    return line.content + '|' + line.tokens.length + '|' + line.decorations.length + '|' + line.foldState + '|' + tokenHash;
   }
 }

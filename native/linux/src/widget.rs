@@ -5,7 +5,7 @@
 
 use gdk4::Key;
 use gtk4::prelude::*;
-use gtk4::{DrawingArea, EventControllerKey, EventControllerScroll, EventControllerScrollFlags, GestureClick};
+use gtk4::{DrawingArea, EventControllerKey, EventControllerScroll, EventControllerScrollFlags, GestureClick, GestureDrag};
 
 use crate::editor_view::EditorView;
 
@@ -30,6 +30,7 @@ pub fn create_editor_widget(
     setup_draw_handler(&area, state);
     setup_key_handler(&area, state);
     setup_click_handler(&area, state);
+    setup_drag_handler(&area, state);
     setup_scroll_handler(&area, state);
 
     // Convert to raw pointer — caller must ensure the widget stays alive
@@ -121,7 +122,7 @@ fn setup_key_handler(area: &DrawingArea, state: *mut EditorView) {
     area.add_controller(controller);
 }
 
-/// Set up mouse click handling.
+/// Set up mouse click handling (left button down = cursor position + anchor).
 fn setup_click_handler(area: &DrawingArea, state: *mut EditorView) {
     let gesture = GestureClick::new();
     gesture.set_button(1); // Left click only
@@ -133,6 +134,25 @@ fn setup_click_handler(area: &DrawingArea, state: *mut EditorView) {
         // Grab focus on click
         let widget = gesture.widget();
         widget.grab_focus();
+    });
+
+    area.add_controller(gesture);
+}
+
+/// Set up mouse drag handling (drag = extend selection).
+fn setup_drag_handler(area: &DrawingArea, state: *mut EditorView) {
+    let gesture = GestureDrag::new();
+    gesture.set_button(1); // Left button drag only
+    let state_ptr = state as usize;
+
+    gesture.connect_drag_update(move |gesture, offset_x, offset_y| {
+        let editor_view = unsafe { &mut *(state_ptr as *mut EditorView) };
+        // GestureDrag gives us the start point plus offset — compute absolute coords.
+        if let Some((start_x, start_y)) = gesture.start_point() {
+            let x = start_x + offset_x;
+            let y = start_y + offset_y;
+            editor_view.on_mouse_drag(x, y);
+        }
     });
 
     area.add_controller(gesture);
