@@ -315,6 +315,21 @@ pub extern "C" fn hone_editor_clear_events(view: *mut EditorView) {
     view.pending_events.clear();
 }
 
+/// Enable TypeScript mode: event handlers only queue events, TypeScript handles all state.
+/// Call with mode=1.0 to enable, mode=0.0 to disable.
+#[no_mangle]
+pub extern "C" fn hone_editor_set_ts_mode(view: *mut EditorView, mode: f64) {
+    let view = unsafe { &mut *view };
+    view.ts_handles_events = mode > 0.5;
+}
+
+/// Set gutter width from TypeScript (ensures pixel-perfect cursor/text alignment).
+#[no_mangle]
+pub extern "C" fn hone_editor_set_gutter_width(view: *mut EditorView, width: f64) {
+    let view = unsafe { &mut *view };
+    view.ts_gutter_width = Some(width);
+}
+
 /// Get the NSView handle for the editor view (as a raw pointer).
 #[no_mangle]
 pub extern "C" fn hone_editor_nsview(view: *mut EditorView) -> *mut std::ffi::c_void {

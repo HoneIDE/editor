@@ -263,6 +263,20 @@ pub extern "C" fn hone_editor_end_frame(view: *mut EditorView) {
     view.end_frame();
 }
 
+// === TypeScript mode control ===
+
+#[no_mangle]
+pub extern "C" fn hone_editor_set_ts_mode(view: *mut EditorView, mode: f64) {
+    let view = unsafe { &mut *view };
+    view.ts_handles_events = mode > 0.5;
+}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_set_gutter_width(view: *mut EditorView, width: f64) {
+    let view = unsafe { &mut *view };
+    view.ts_gutter_width = Some(width);
+}
+
 // === TypeScript event polling API (Perry mode) ===
 // All values are f64 for Perry ABI compatibility.
 

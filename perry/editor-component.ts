@@ -46,6 +46,8 @@ declare function hone_editor_get_event_action(handle: number, index: number): nu
 declare function hone_editor_get_event_x(handle: number, index: number): number;
 declare function hone_editor_get_event_y(handle: number, index: number): number;
 declare function hone_editor_clear_events(handle: number): void;
+declare function hone_editor_set_ts_mode(handle: number, mode: number): void;
+declare function hone_editor_set_gutter_width(handle: number, width: number): void;
 
 // === Action IDs (must match Rust action_id constants) ===
 const ACTION_MOVE_LEFT = 1;
@@ -94,6 +96,13 @@ function _globalEventHandler(): void {
   if (_activeEditor !== null && _activeEditor !== undefined) {
     _activeEditor.flushEvents();
   }
+}
+
+/** Module-level poll function for setInterval. Reads _activeEditor at call time. */
+function _pollEditorEvents(): void {
+  if (_activeEditor === null) return;
+  if (_activeEditor === undefined) return;
+  _activeEditor.flushEvents();
 }
 
 /**
@@ -244,6 +253,7 @@ export class Editor {
 
     const syntaxEngine = new KeywordSyntaxEngine();
     const vm = new EditorViewModel(doc, theme, syntaxEngine);
+    vm.setPerryMode(true);
     this._vm = vm;
 
     const config: RenderCoordinatorConfig = {
@@ -260,7 +270,13 @@ export class Editor {
 
     coordinator.attach(vm);
 
+    // Sync gutter width to Rust for pixel-perfect cursor/text alignment.
+    hone_editor_set_gutter_width(handle, vm.gutterWidth);
+
     vm.onResize(width, height);
+
+    // Enable ts_mode: Rust only queues events, TypeScript handles all state.
+    hone_editor_set_ts_mode(handle, 1);
 
     // Register global reference for the RAF polling loop.
     _activeEditor = this;
@@ -271,20 +287,10 @@ export class Editor {
     // NOTE: setInterval does not fire in Perry's AOT runtime.
     // NOTE: C function pointer callbacks to Perry closures crash on ARM64
     // (Perry closures are in non-executable heap memory).
-    const self = this;
-    function rafTick() {
-      self._pollEvents();
-      if (typeof requestAnimationFrame !== 'undefined') {
-        requestAnimationFrame(rafTick);
-      } else {
-        setTimeout(rafTick, 16);
-      }
-    }
-    if (typeof requestAnimationFrame !== 'undefined') {
-      requestAnimationFrame(rafTick);
-    } else {
-      setTimeout(rafTick, 16);
-    }
+    // Perry: Use setInterval to poll events. setTimeout self-recursion doesn't
+    // work in Perry (closures capture by value → self-reference breaks).
+    // setInterval registers once and repeats via the runtime — no self-reference needed.
+    setInterval(() => { _pollEditorEvents(); }, 16);
   }
 
   /** Get the current text content. */
@@ -397,7 +403,20 @@ export class Editor {
    * Public so the module-level top-level function can reach it without a closure.
    */
   flushEvents(): void {
-    this._pollEvents();
+    const hadEvents = this._pollEvents();
+    // Perry: onChange closure (() => { this.render(); }) in coordinator.attach()
+    // silently fails — Perry closures capture `this` by value. Explicitly
+    // re-render here after processing events to bypass the broken closure.
+    if (hadEvents) {
+      // Sync gutter width (may change as line count grows/shrinks).
+      const handle = this.nativeHandle;
+      if (handle !== null) {
+        const vm = this._vm;
+        hone_editor_set_gutter_width(handle as number, vm.gutterWidth);
+      }
+      const coordinator = this._coordinator;
+      coordinator.render();
+    }
   }
 
   /** Set the font. */
@@ -416,13 +435,15 @@ export class Editor {
    * Drain the Rust event queue and process all pending input events.
    * Called periodically by the setInterval timer.
    */
-  private _pollEvents(): void {
-    if (this._disposed) return;
+  private _pollEvents(): boolean {
+    if (this._disposed) return false;
     const handle = this.nativeHandle;
-    if (handle === null) return;
+    if (handle === null) {
+      return false;
+    }
 
     const count = hone_editor_pending_event_count(handle as number);
-    if (count <= 0) return;
+    if (count <= 0) return false;
 
     const vm = this._vm;
 
@@ -432,7 +453,8 @@ export class Editor {
       if (evType === EVENT_TEXT) {
         const code = hone_editor_get_event_char(handle as number, i);
         if (code > 0) {
-          vm.onTextInput(String.fromCharCode(code));
+          const ch = String.fromCharCode(code);
+          vm.onTextInput(ch);
         }
       } else if (evType === EVENT_ACTION) {
         const aid = hone_editor_get_event_action(handle as number, i);
@@ -446,9 +468,10 @@ export class Editor {
       } else if (evType === EVENT_MOUSE_DOWN) {
         const x = hone_editor_get_event_x(handle as number, i);
         const y = hone_editor_get_event_y(handle as number, i);
+        // Perry: explicit key: value (no ES6 shorthand)
         const mouseEvent: EditorMouseEvent = {
-          x,
-          y,
+          x: x,
+          y: y,
           button: 0,
           clickCount: 1,
           ctrlKey: false,
@@ -461,6 +484,7 @@ export class Editor {
     }
 
     hone_editor_clear_events(handle as number);
+    return true;
   }
 
   /**
@@ -504,12 +528,13 @@ export class Editor {
     else if (aid === ACTION_REDO) { vm.executeCommand('editor.action.redo'); return; }
 
     if (key.length > 0) {
+      // Perry: explicit key: value (no ES6 shorthand — it captures initial values)
       const event: KeyEvent = {
-        key,
+        key: key,
         code: key,
-        ctrlKey,
-        shiftKey,
-        altKey,
+        ctrlKey: ctrlKey,
+        shiftKey: shiftKey,
+        altKey: altKey,
         metaKey: false,
       };
       vm.onKeyDown(event);

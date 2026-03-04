@@ -207,6 +207,11 @@ pub struct EditorView {
     rust_col: usize,
     rust_sel_anchor: Option<(i32, usize)>,  // (line_number, byte_col)
     user_has_clicked: bool,
+    // When true, event handlers only queue events — TypeScript handles all state changes.
+    // Set via hone_editor_set_ts_mode(handle, 1) from TypeScript once the poll loop is active.
+    pub ts_handles_events: bool,
+    // Gutter width set by TypeScript (overrides computed gutter_width when Some).
+    pub ts_gutter_width: Option<f64>,
     initial_top_y: Option<f64>,
 
     // Context menu
@@ -249,6 +254,8 @@ impl EditorView {
             rust_col: 0,
             rust_sel_anchor: None,
             user_has_clicked: false,
+            ts_handles_events: false,
+            ts_gutter_width: None,
             initial_top_y: None,
             context_menu_items: Vec::new(),
             background_color: (0.118, 0.118, 0.118),
@@ -284,18 +291,7 @@ impl EditorView {
             }
             return;
         }
-        // Rust-side editing in Perry mode.
-        if let Some(idx) = self.cursor_line_idx() {
-            for ch in text.chars() {
-                let col = self.rust_col.min(self.frame_lines[idx].text.len());
-                self.frame_lines[idx].text.insert(col, ch);
-                self.rust_col = col + ch.len_utf8();
-            }
-            self.frame_lines[idx].tokens =
-                crate::tokenizer::tokenize_line(&self.frame_lines[idx].text);
-            self.sync_cursor_x();
-            view::invalidate_view(self.uiview);
-        }
+        // Queue events for TypeScript's polling loop.
         for ch in text.chars() {
             self.pending_events.push(PendingEvent {
                 event_type: event_type::TEXT,
@@ -304,6 +300,23 @@ impl EditorView {
                 x: 0.0,
                 y: 0.0,
             });
+        }
+        // In ts_mode, TypeScript handles the edit and re-renders via FFI.
+        if self.ts_handles_events {
+            return;
+        }
+        // Rust-side editing: insert into the cursor line in frame_lines directly.
+        if let Some(idx) = self.cursor_line_idx() {
+            for ch in text.chars() {
+                let col = self.rust_col.min(self.frame_lines[idx].text.len());
+                self.frame_lines[idx].text.insert(col, ch);
+                self.rust_col = col + ch.len_utf8();
+            }
+            // Retokenize the whole line so keyword colors are immediately correct.
+            self.frame_lines[idx].tokens =
+                crate::tokenizer::tokenize_line(&self.frame_lines[idx].text);
+            self.sync_cursor_x();
+            view::invalidate_view(self.uiview);
         }
     }
 
@@ -316,7 +329,22 @@ impl EditorView {
             }
             return;
         }
-
+        // Queue the action event for TypeScript's polling loop.
+        let aid = selector_to_action_id(selector);
+        if aid != 0 {
+            self.pending_events.push(PendingEvent {
+                event_type: event_type::ACTION,
+                char_code: 0,
+                action_id: aid,
+                x: 0.0,
+                y: 0.0,
+            });
+        }
+        // In ts_mode, TypeScript handles the action and re-renders via FFI.
+        if self.ts_handles_events {
+            return;
+        }
+        // Rust-side action handling.
         let mut dirty = false;
         match selector {
             // ── Editing ──────────────────────────────────────────────────────
@@ -625,16 +653,6 @@ impl EditorView {
             _ => {}
         }
 
-        let aid = selector_to_action_id(selector);
-        if aid != 0 {
-            self.pending_events.push(PendingEvent {
-                event_type: event_type::ACTION,
-                char_code: 0,
-                action_id: aid,
-                x: 0.0,
-                y: 0.0,
-            });
-        }
         if dirty {
             self.sync_cursor_x();
             view::invalidate_view(self.uiview);
@@ -652,6 +670,19 @@ impl EditorView {
             cb(self_ptr, x, y);
             return;
         }
+        // Queue for TypeScript's polling loop.
+        self.pending_events.push(PendingEvent {
+            event_type: event_type::MOUSE_DOWN,
+            char_code: 0,
+            action_id: 0,
+            x,
+            y,
+        });
+        // In ts_mode, TypeScript handles cursor positioning and re-renders via FFI.
+        if self.ts_handles_events {
+            return;
+        }
+        // Rust-side cursor positioning: find nearest line by y, compute col from x.
         if let Some(line) = self.frame_lines.iter().min_by(|a, b| {
             let da = (a.y_offset - y).abs();
             let db = (b.y_offset - y).abs();
@@ -687,14 +718,6 @@ impl EditorView {
             let cursor_x = gutter_w + self.renderer.measure_text(&line.text[..self.rust_col]);
             let cursor_y = line.y_offset;
             self.cursor = Some(CursorData { x: cursor_x, y: cursor_y, style: 0 });
-
-            self.pending_events.push(PendingEvent {
-                event_type: event_type::MOUSE_DOWN,
-                char_code: 0,
-                action_id: 0,
-                x,
-                y,
-            });
             view::invalidate_view(self.uiview);
         }
     }
@@ -757,6 +780,17 @@ impl EditorView {
             cb(self_ptr, dx, dy);
             return;
         }
+        // Queue for TypeScript's polling loop.
+        self.pending_events.push(PendingEvent {
+            event_type: event_type::SCROLL,
+            char_code: 0,
+            action_id: 0,
+            x: dx,
+            y: dy,
+        });
+        // In ts_mode, also handle scroll directly in Rust for visual responsiveness.
+        // TypeScript will sync its viewport state from the queued event, so the next
+        // full re-render (after text edits) uses the correct scrollTop.
         if self.frame_lines.is_empty() {
             return;
         }
@@ -822,7 +856,9 @@ impl EditorView {
 
     pub fn begin_frame(&mut self) {
         self.frame_lines.clear();
-        if !self.user_has_clicked {
+        // In ts_mode, TypeScript manages all state — always accept its cursor.
+        // Without ts_mode, only clear cursor if user hasn't manually clicked.
+        if self.ts_handles_events || !self.user_has_clicked {
             self.cursor = None;
         }
         self.cursors.clear();
@@ -846,7 +882,9 @@ impl EditorView {
     }
 
     pub fn set_cursor(&mut self, x: f64, y: f64, style: i32) {
-        if self.user_has_clicked {
+        if !self.ts_handles_events && self.user_has_clicked {
+            // User manually positioned cursor via click — don't let TypeScript override.
+            // (In ts_mode, TypeScript is authoritative — always accept its cursor.)
             if let Some(line) = self.frame_lines.iter().find(|l| l.line_number == self.rust_cursor_line) {
                 let cursor_x = self.gutter_width() + self.renderer.measure_text(
                     &line.text[..self.rust_col.min(line.text.len())]
@@ -1177,6 +1215,10 @@ impl EditorView {
     // ── Drawing ──────────────────────────────────────────────────────────────
 
     fn gutter_width(&self) -> f64 {
+        // In ts_mode, use TypeScript's gutter width for pixel-perfect alignment.
+        if let Some(w) = self.ts_gutter_width {
+            return w;
+        }
         let digits = if self.max_line_number <= 0 {
             2
         } else {

@@ -241,6 +241,9 @@ extern "C" fn touches_began(this: &Object, _sel: Sel, touches: Id, _event: Id) {
 
             // Report as mouse down (tap to position cursor)
             editor_view.on_mouse_down(x, y);
+
+            // Become first responder to show the iOS software keyboard.
+            let _: BOOL = msg_send![this_mut, becomeFirstResponder];
         }
     }
 }

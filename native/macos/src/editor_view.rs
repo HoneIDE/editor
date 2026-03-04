@@ -213,6 +213,11 @@ pub struct EditorView {
     rust_sel_anchor: Option<(i32, usize)>,  // (line_number, byte_col)
     // Once the user manually clicks, don't let TypeScript re-renders override the cursor.
     user_has_clicked: bool,
+    // When true, event handlers only queue events — TypeScript handles all state changes.
+    // Set via hone_editor_set_ts_mode(handle, 1) from TypeScript once the poll loop is active.
+    pub ts_handles_events: bool,
+    // Gutter width set by TypeScript (overrides computed gutter_width when Some).
+    pub ts_gutter_width: Option<f64>,
     // y_offset of frame_lines[0] as received from the first TypeScript frame.
     // Used as the upper scroll bound so content can't be dragged below its initial position.
     initial_top_y: Option<f64>,
@@ -257,6 +262,8 @@ impl EditorView {
             rust_col: 0,
             rust_sel_anchor: None,
             user_has_clicked: false,
+            ts_handles_events: false,
+            ts_gutter_width: None,
             initial_top_y: None,
             context_menu_items: Vec::new(),
             // VS Code dark theme defaults
@@ -290,12 +297,25 @@ impl EditorView {
 
     /// Called from the NSView's insertText: handler.
     pub fn on_text_input(&mut self, text: &str) {
-        eprintln!("[HONE] on_text_input: {:?}", text);
         if let Some(cb) = self.text_input_callback {
             if let Ok(c_text) = CString::new(text) {
                 let self_ptr = self as *mut EditorView;
                 cb(self_ptr, c_text.as_ptr());
             }
+            return;
+        }
+        // Queue events for TypeScript's polling loop.
+        for ch in text.chars() {
+            self.pending_events.push(PendingEvent {
+                event_type: event_type::TEXT,
+                char_code: ch as u32,
+                action_id: 0,
+                x: 0.0,
+                y: 0.0,
+            });
+        }
+        // In ts_mode, TypeScript handles the edit and re-renders via FFI.
+        if self.ts_handles_events {
             return;
         }
         // Rust-side editing: insert into the cursor line in frame_lines directly.
@@ -310,26 +330,30 @@ impl EditorView {
             self.sync_cursor_x();
             view::invalidate_view(self.nsview);
         }
-        // Queue events for TypeScript's polling loop.
-        for ch in text.chars() {
-            self.pending_events.push(PendingEvent {
-                event_type: event_type::TEXT,
-                char_code: ch as u32,
-                action_id: 0,
-                x: 0.0,
-                y: 0.0,
-            });
-        }
     }
 
     /// Called from the NSView's doCommandBySelector: handler.
     pub fn on_action(&mut self, selector: &str) {
-        eprintln!("[HONE] on_action: {:?}", selector);
         if let Some(cb) = self.action_callback {
             if let Ok(c_sel) = CString::new(selector) {
                 let self_ptr = self as *mut EditorView;
                 cb(self_ptr, c_sel.as_ptr());
             }
+            return;
+        }
+        // Queue the action event for TypeScript's polling loop.
+        let aid = selector_to_action_id(selector);
+        if aid != 0 {
+            self.pending_events.push(PendingEvent {
+                event_type: event_type::ACTION,
+                char_code: 0,
+                action_id: aid,
+                x: 0.0,
+                y: 0.0,
+            });
+        }
+        // In ts_mode, TypeScript handles the action and re-renders via FFI.
+        if self.ts_handles_events {
             return;
         }
         // Rust-side action handling.
@@ -660,17 +684,6 @@ impl EditorView {
 
             _ => {}
         }
-        // Queue the action event for TypeScript's polling loop.
-        let aid = selector_to_action_id(selector);
-        if aid != 0 {
-            self.pending_events.push(PendingEvent {
-                event_type: event_type::ACTION,
-                char_code: 0,
-                action_id: aid,
-                x: 0.0,
-                y: 0.0,
-            });
-        }
         if dirty {
             self.sync_cursor_x();
             view::invalidate_view(self.nsview);
@@ -686,6 +699,18 @@ impl EditorView {
         if let Some(cb) = self.mouse_down_callback {
             let self_ptr = self as *mut EditorView;
             cb(self_ptr, x, y);
+            return;
+        }
+        // Queue for TypeScript's polling loop.
+        self.pending_events.push(PendingEvent {
+            event_type: event_type::MOUSE_DOWN,
+            char_code: 0,
+            action_id: 0,
+            x,
+            y,
+        });
+        // In ts_mode, TypeScript handles cursor positioning and re-renders via FFI.
+        if self.ts_handles_events {
             return;
         }
         // Rust-side cursor positioning: find nearest line by y, compute col from x.
@@ -728,18 +753,6 @@ impl EditorView {
             let cursor_x = gutter_w + self.renderer.measure_text(text_before);
             let cursor_y = line.y_offset;
             self.cursor = Some(CursorData { x: cursor_x, y: cursor_y, style: 0 });
-            eprintln!("[HONE] click: raw_x={:.1} gutter={:.1} byte_col={} cursor_x={:.1} line={} y={:.1}",
-                x, gutter_w, self.rust_col, cursor_x, line_number, cursor_y);
-            // Queue for TypeScript so it syncs its cursor position before processing text events.
-            // This ensures subsequent TEXT events are inserted at the clicked position in
-            // TypeScript's buffer, keeping it in sync with the Rust-side frame_lines.
-            self.pending_events.push(PendingEvent {
-                event_type: event_type::MOUSE_DOWN,
-                char_code: 0,
-                action_id: 0,
-                x,
-                y,
-            });
             view::invalidate_view(self.nsview);
         }
     }
@@ -805,6 +818,17 @@ impl EditorView {
             cb(self_ptr, dx, dy);
             return;
         }
+        // Queue for TypeScript's polling loop.
+        self.pending_events.push(PendingEvent {
+            event_type: event_type::SCROLL,
+            char_code: 0,
+            action_id: 0,
+            x: dx,
+            y: dy,
+        });
+        // In ts_mode, also handle scroll directly in Rust for visual responsiveness.
+        // TypeScript will sync its viewport state from the queued event, so the next
+        // full re-render (after text edits) uses the correct scrollTop.
         if self.frame_lines.is_empty() {
             return;
         }
@@ -893,9 +917,9 @@ impl EditorView {
 
     pub fn begin_frame(&mut self) {
         self.frame_lines.clear();
-        // Only clear cursor if user hasn't manually positioned it via a click.
-        // TypeScript re-renders (from setCharWidth/onResize) don't know about user clicks.
-        if !self.user_has_clicked {
+        // In ts_mode, TypeScript manages all state — always accept its cursor.
+        // Without ts_mode, only clear cursor if user hasn't manually clicked.
+        if self.ts_handles_events || !self.user_has_clicked {
             self.cursor = None;
         }
         self.cursors.clear();
@@ -919,10 +943,9 @@ impl EditorView {
     }
 
     pub fn set_cursor(&mut self, x: f64, y: f64, style: i32) {
-        if self.user_has_clicked {
+        if !self.ts_handles_events && self.user_has_clicked {
             // User manually positioned cursor via click — don't let TypeScript override.
-            // Update cursor visual position using the freshly rendered frame_lines so that
-            // y_offset stays consistent with re-rendered content (e.g. after scroll reset).
+            // (In ts_mode, TypeScript is authoritative — always accept its cursor.)
             if let Some(line) = self.frame_lines.iter().find(|l| l.line_number == self.rust_cursor_line) {
                 let cursor_x = self.gutter_width() + self.renderer.measure_text(
                     &line.text[..self.rust_col.min(line.text.len())]
@@ -1036,6 +1059,10 @@ impl EditorView {
     /// Compute gutter width matching the TS GutterRenderer formula:
     /// max(2, digits) * charWidth + 36  (16px fold + 16px padding + 4px diff)
     fn gutter_width(&self) -> f64 {
+        // In ts_mode, use TypeScript's gutter width for pixel-perfect alignment.
+        if let Some(w) = self.ts_gutter_width {
+            return w;
+        }
         let digits = if self.max_line_number <= 0 {
             2
         } else {

@@ -101,6 +101,7 @@ export class EditorViewModel {
   private _gutter: GutterRenderer;
   private _theme: EditorTheme;
   private _charWidth: number = 8; // default, updated by native renderer
+  private _perryMode: boolean = false; // set true to use Perry-safe command handlers
   // Single listener — Perry-safe (no array push/splice/for...of needed).
   private _listener: ChangeListener | null = null;
 
@@ -185,6 +186,11 @@ export class EditorViewModel {
   setCharWidth(width: number): void {
     this._charWidth = width;
     this._gutter.setCharWidth(width);
+  }
+
+  /** Enable Perry-safe command handlers (avoids destructuring, .map(), spread). */
+  setPerryMode(enabled: boolean): void {
+    this._perryMode = enabled;
   }
 
   setTokenProvider(provider: (lineNumber: number) => LineToken[]): void {
@@ -324,16 +330,12 @@ export class EditorViewModel {
       }
     }
 
-    const ctx: CommandContext = { editor: this };
-    const result = this.commandRegistry.execute(commandId, ctx, args);
-    if (result) {
-      this.afterEdit();
-      return true;
-    }
+    // Perry-safe command handlers: run BEFORE the command registry because
+    // registered handlers use destructuring, .map(), spread, for...of — all
+    // broken in Perry AOT. These use only Perry-safe patterns.
+    // Only active when setPerryMode(true) has been called.
+    if (this._perryMode) {
 
-    // Perry-safe fallbacks: command registry uses Map internally which may fail
-    // in Perry AOT native codegen (class-field method dispatch broken for Map).
-    // These handle the most common commands without spread/sort/for...of/destructuring.
     const cursors0 = this.cursorManager.cursors;
     if (cursors0.length === 0) return false;
     const cursor0 = cursors0[0];
@@ -341,7 +343,66 @@ export class EditorViewModel {
     if (commandId === 'editor.action.type') {
       const text = args !== null && args !== undefined ? args.text : '';
       if (text === null || text === undefined || text.length === 0) return false;
+
+      const lineContent = this.document.buffer.getLine(cursor0.line);
       const lineOffset = this.document.buffer.getLineOffset(cursor0.line);
+      const ch = text.charAt(0);
+
+      // Auto-bracket: single character handling
+      if (text.length === 1) {
+        // Over-type check: if typing a closing bracket/quote and next char matches, skip insert
+        const nextChar = cursor0.column < lineContent.length ? lineContent.charAt(cursor0.column) : '';
+        if (ch === ')' || ch === '}' || ch === ']' || ch === '"' || ch === "'" || ch === '`') {
+          if (nextChar === ch) {
+            cursor0.column = cursor0.column + 1;
+            cursor0.desiredColumn = cursor0.column;
+            cursor0.selectionAnchor = null;
+            this.notifyChange();
+            return true;
+          }
+        }
+
+        // Auto-close: opening bracket → insert pair, cursor between
+        let closeChar = '';
+        if (ch === '(') closeChar = ')';
+        else if (ch === '{') closeChar = '}';
+        else if (ch === '[') closeChar = ']';
+        else if (ch === '"') closeChar = '"';
+        else if (ch === "'") closeChar = "'";
+        else if (ch === '`') closeChar = '`';
+
+        if (closeChar.length > 0) {
+          // For quotes, don't auto-close if adjacent to word char
+          let shouldClose = true;
+          if (ch === '"' || ch === "'" || ch === '`') {
+            if (cursor0.column < lineContent.length) {
+              const nc = lineContent.charCodeAt(cursor0.column);
+              if ((nc >= 97 && nc <= 122) || (nc >= 65 && nc <= 90) || (nc >= 48 && nc <= 57) || nc === 95) {
+                shouldClose = false;
+              }
+            }
+            if (cursor0.column > 0) {
+              const pc = lineContent.charCodeAt(cursor0.column - 1);
+              if ((pc >= 97 && pc <= 122) || (pc >= 65 && pc <= 90) || (pc >= 48 && pc <= 57) || pc === 95) {
+                shouldClose = false;
+              }
+            }
+          }
+          if (shouldClose) {
+            let pair = '';
+            pair += ch;
+            pair += closeChar;
+            this.document.buffer.insert(lineOffset + cursor0.column, pair);
+            cursor0.column = cursor0.column + 1;
+            cursor0.desiredColumn = cursor0.column;
+            cursor0.selectionAnchor = null;
+            this.afterEdit();
+            return true;
+          }
+        }
+      }
+
+      // Plain insert (no auto-bracket)
       this.document.buffer.insert(lineOffset + cursor0.column, text);
       cursor0.column = cursor0.column + text.length;
       cursor0.desiredColumn = cursor0.column;
@@ -350,9 +411,112 @@ export class EditorViewModel {
       return true;
     }
 
+    if (commandId === 'editor.action.insertLineAfter') {
+      const currentLine = this.document.buffer.getLine(cursor0.line);
+      // Get leading whitespace (Perry-safe: no regex)
+      let indentEnd = 0;
+      for (let wi = 0; wi < currentLine.length; wi++) {
+        const wc = currentLine.charAt(wi);
+        if (wc === ' ' || wc === '\t') {
+          indentEnd = wi + 1;
+        } else {
+          break;
+        }
+      }
+      const indent = currentLine.substring(0, indentEnd);
+
+      // Check char before and after cursor for smart indent
+      const charBefore = cursor0.column > 0 ? currentLine.charAt(cursor0.column - 1) : '';
+      const charAfter = cursor0.column < currentLine.length ? currentLine.charAt(cursor0.column) : '';
+
+      // Check if last non-ws char before cursor is '{'
+      let endsWithBrace = false;
+      for (let bi = cursor0.column - 1; bi >= 0; bi--) {
+        const bc = currentLine.charAt(bi);
+        if (bc === ' ' || bc === '\t') continue;
+        if (bc === '{') endsWithBrace = true;
+        break;
+      }
+
+      let insertText = '\n';
+      let newLine = cursor0.line + 1;
+      let newCol = 0;
+
+      if (charBefore === '{' && charAfter === '}') {
+        // Smart Enter between braces: {|} → {\n  indent\n indent}
+        insertText += indent;
+        insertText += '  ';
+        insertText += '\n';
+        insertText += indent;
+        newCol = indentEnd + 2;
+      } else if (endsWithBrace) {
+        // After opening brace: increase indent
+        insertText += indent;
+        insertText += '  ';
+        newCol = indentEnd + 2;
+      } else {
+        // Normal Enter: preserve indent
+        insertText += indent;
+        newCol = indentEnd;
+      }
+
+      const offset = this.document.buffer.getLineOffset(cursor0.line) + cursor0.column;
+      this.document.buffer.insert(offset, insertText);
+      cursor0.line = newLine;
+      cursor0.column = newCol;
+      cursor0.desiredColumn = newCol;
+      cursor0.selectionAnchor = null;
+      this.afterEdit();
+      return true;
+    }
+
     if (commandId === 'editor.action.deleteLeft') {
       if (cursor0.selectionAnchor !== null && cursor0.selectionAnchor !== undefined) {
+        // Delete selection
+        const anchorLine = cursor0.selectionAnchor.line;
+        const anchorCol = cursor0.selectionAnchor.column;
+        let startLine = cursor0.line;
+        let startCol = cursor0.column;
+        let endLine = anchorLine;
+        let endCol = anchorCol;
+        if (startLine > endLine || (startLine === endLine && startCol > endCol)) {
+          startLine = anchorLine;
+          startCol = anchorCol;
+          endLine = cursor0.line;
+          endCol = cursor0.column;
+        }
+        const startOff = this.document.buffer.getLineOffset(startLine) + startCol;
+        const endOff = this.document.buffer.getLineOffset(endLine) + endCol;
+        if (endOff > startOff) {
+          this.document.buffer.delete(startOff, endOff - startOff);
+        }
+        cursor0.line = startLine;
+        cursor0.column = startCol;
+        cursor0.desiredColumn = startCol;
         cursor0.selectionAnchor = null;
+        this.afterEdit();
+        return true;
+      }
+      // Auto-delete pair: if between matching brackets, delete both
+      if (cursor0.column > 0) {
+        const delLine = this.document.buffer.getLine(cursor0.line);
+        const prevCh = delLine.charAt(cursor0.column - 1);
+        const nextCh = cursor0.column < delLine.length ? delLine.charAt(cursor0.column) : '';
+        let isPair = false;
+        if (prevCh === '(' && nextCh === ')') isPair = true;
+        else if (prevCh === '{' && nextCh === '}') isPair = true;
+        else if (prevCh === '[' && nextCh === ']') isPair = true;
+        else if (prevCh === '"' && nextCh === '"') isPair = true;
+        else if (prevCh === "'" && nextCh === "'") isPair = true;
+        else if (prevCh === '`' && nextCh === '`') isPair = true;
+        if (isPair) {
+          const lineOff = this.document.buffer.getLineOffset(cursor0.line);
+          this.document.buffer.delete(lineOff + cursor0.column - 1, 2);
+          cursor0.column = cursor0.column - 1;
+          cursor0.desiredColumn = cursor0.column;
+          this.afterEdit();
+          return true;
+        }
       }
       if (cursor0.column > 0) {
         const lineOff = this.document.buffer.getLineOffset(cursor0.line);
@@ -372,6 +536,16 @@ export class EditorViewModel {
         return true;
       }
       return false;
+    }
+
+    } // end if (this._perryMode)
+
+    // For commands without Perry-safe fallbacks, try the command registry
+    const ctx: CommandContext = { editor: this };
+    const result = this.commandRegistry.execute(commandId, ctx, args);
+    if (result) {
+      this.afterEdit();
+      return true;
     }
 
     if (commandId === 'editor.action.moveCursorLeft') {

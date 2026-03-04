@@ -28,8 +28,24 @@ export class GutterRenderer {
   private config: GutterConfig;
   private charWidth: number = 8; // approximate monospace char width
 
-  constructor(config: Partial<GutterConfig> = {}) {
-    this.config = { ...DEFAULT_CONFIG, ...config };
+  constructor(config?: Partial<GutterConfig>) {
+    // Perry: object spread { ...x } is broken — use explicit property assignment.
+    let showLineNumbers = true;
+    let showFoldIndicators = true;
+    let showBreakpoints = false;
+    let showDiffMarkers = true;
+    if (config) {
+      if (config.showLineNumbers !== undefined) showLineNumbers = config.showLineNumbers;
+      if (config.showFoldIndicators !== undefined) showFoldIndicators = config.showFoldIndicators;
+      if (config.showBreakpoints !== undefined) showBreakpoints = config.showBreakpoints;
+      if (config.showDiffMarkers !== undefined) showDiffMarkers = config.showDiffMarkers;
+    }
+    this.config = {
+      showLineNumbers: showLineNumbers,
+      showFoldIndicators: showFoldIndicators,
+      showBreakpoints: showBreakpoints,
+      showDiffMarkers: showDiffMarkers,
+    };
   }
 
   setCharWidth(width: number): void {
