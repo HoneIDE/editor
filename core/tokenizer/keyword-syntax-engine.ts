@@ -47,6 +47,76 @@ const CSS_KEYWORDS = ['import', 'media', 'keyframes', 'font-face', 'supports', '
 const JSON_KEYWORDS = ['true', 'false', 'null'];
 const MARKDOWN_KEYWORDS: string[] = [];
 
+const GO_KEYWORDS = [
+  'package', 'import', 'func', 'return', 'var', 'const', 'type', 'struct', 'interface',
+  'map', 'chan', 'go', 'defer', 'select', 'case', 'default', 'if', 'else', 'for',
+  'range', 'switch', 'break', 'continue', 'fallthrough', 'goto', 'true', 'false', 'nil',
+  'make', 'new', 'len', 'cap', 'append', 'delete', 'copy', 'panic', 'recover',
+];
+
+const JAVA_KEYWORDS = [
+  'import', 'package', 'class', 'interface', 'extends', 'implements', 'public', 'private',
+  'protected', 'static', 'final', 'abstract', 'void', 'int', 'long', 'double', 'float',
+  'boolean', 'char', 'byte', 'short', 'return', 'if', 'else', 'for', 'while', 'do',
+  'switch', 'case', 'break', 'continue', 'default', 'new', 'this', 'super', 'try', 'catch',
+  'finally', 'throw', 'throws', 'instanceof', 'enum', 'assert', 'synchronized', 'volatile',
+  'transient', 'native', 'null', 'true', 'false',
+];
+
+const SWIFT_KEYWORDS = [
+  'import', 'class', 'struct', 'enum', 'protocol', 'extension', 'func', 'var', 'let',
+  'return', 'if', 'else', 'guard', 'switch', 'case', 'default', 'for', 'in', 'while',
+  'repeat', 'break', 'continue', 'fallthrough', 'do', 'try', 'catch', 'throw', 'throws',
+  'rethrows', 'public', 'private', 'internal', 'fileprivate', 'open', 'static', 'override',
+  'final', 'mutating', 'nonmutating', 'lazy', 'weak', 'unowned', 'self', 'Self', 'super',
+  'nil', 'true', 'false', 'as', 'is', 'init', 'deinit', 'typealias', 'associatedtype',
+  'where', 'async', 'await',
+];
+
+const SHELL_KEYWORDS = [
+  'if', 'then', 'else', 'elif', 'fi', 'for', 'while', 'do', 'done', 'case', 'esac', 'in',
+  'function', 'return', 'local', 'export', 'readonly', 'declare', 'typeset', 'unset', 'shift',
+  'exit', 'echo', 'printf', 'read', 'test', 'set', 'source', 'eval', 'exec', 'true', 'false',
+  'cd', 'pwd', 'pushd', 'popd',
+];
+
+const RUBY_KEYWORDS = [
+  'def', 'class', 'module', 'end', 'if', 'elsif', 'else', 'unless', 'while', 'until', 'for',
+  'do', 'begin', 'rescue', 'ensure', 'raise', 'return', 'yield', 'require', 'require_relative',
+  'include', 'extend', 'attr_reader', 'attr_writer', 'attr_accessor', 'self', 'super', 'nil',
+  'true', 'false', 'and', 'or', 'not', 'puts', 'print', 'p', 'lambda', 'proc', 'new',
+];
+
+const PHP_KEYWORDS = [
+  'function', 'class', 'interface', 'trait', 'extends', 'implements', 'public', 'private',
+  'protected', 'static', 'abstract', 'final', 'return', 'if', 'else', 'elseif', 'for',
+  'foreach', 'while', 'do', 'switch', 'case', 'break', 'continue', 'default', 'match', 'new',
+  'echo', 'print', 'var', 'const', 'use', 'namespace', 'try', 'catch', 'finally', 'throw',
+  'null', 'true', 'false', 'array', 'list', 'isset', 'unset', 'empty',
+];
+
+const YAML_KEYWORDS = ['true', 'false', 'null', 'yes', 'no', 'on', 'off'];
+
+const TOML_KEYWORDS = ['true', 'false'];
+
+const SQL_KEYWORDS = [
+  'select', 'SELECT', 'from', 'FROM', 'where', 'WHERE', 'insert', 'INSERT', 'into', 'INTO',
+  'values', 'VALUES', 'update', 'UPDATE', 'set', 'SET', 'delete', 'DELETE', 'create', 'CREATE',
+  'table', 'TABLE', 'drop', 'DROP', 'alter', 'ALTER', 'index', 'INDEX', 'view', 'VIEW',
+  'join', 'JOIN', 'left', 'LEFT', 'right', 'RIGHT', 'inner', 'INNER', 'outer', 'OUTER',
+  'on', 'ON', 'as', 'AS', 'and', 'AND', 'or', 'OR', 'not', 'NOT', 'null', 'NULL',
+  'is', 'IS', 'in', 'IN', 'between', 'BETWEEN', 'like', 'LIKE', 'order', 'ORDER',
+  'by', 'BY', 'group', 'GROUP', 'having', 'HAVING', 'limit', 'LIMIT', 'offset', 'OFFSET',
+  'union', 'UNION', 'all', 'ALL', 'distinct', 'DISTINCT', 'count', 'COUNT', 'sum', 'SUM',
+  'avg', 'AVG', 'min', 'MIN', 'max', 'MAX', 'exists', 'EXISTS', 'case', 'CASE',
+  'when', 'WHEN', 'then', 'THEN', 'else', 'ELSE', 'end', 'END', 'begin', 'BEGIN',
+  'commit', 'COMMIT', 'rollback', 'ROLLBACK', 'transaction', 'TRANSACTION',
+  'primary', 'PRIMARY', 'key', 'KEY', 'foreign', 'FOREIGN', 'references', 'REFERENCES',
+  'constraint', 'CONSTRAINT', 'default', 'DEFAULT', 'true', 'TRUE', 'false', 'FALSE',
+];
+
+const XML_KEYWORDS = ['xml', 'xmlns', 'version', 'encoding', 'standalone'];
+
 const LANGUAGE_KEYWORDS: Record<string, string[]> = {
   typescript: TYPESCRIPT_KEYWORDS,
   javascript: TYPESCRIPT_KEYWORDS,
@@ -58,6 +128,16 @@ const LANGUAGE_KEYWORDS: Record<string, string[]> = {
   markdown: MARKDOWN_KEYWORDS,
   c: RUST_KEYWORDS,
   cpp: RUST_KEYWORDS,
+  go: GO_KEYWORDS,
+  java: JAVA_KEYWORDS,
+  swift: SWIFT_KEYWORDS,
+  shell: SHELL_KEYWORDS,
+  ruby: RUBY_KEYWORDS,
+  php: PHP_KEYWORDS,
+  yaml: YAML_KEYWORDS,
+  toml: TOML_KEYWORDS,
+  sql: SQL_KEYWORDS,
+  xml: XML_KEYWORDS,
 };
 
 const LANGUAGE_LINE_COMMENTS: Record<string, string> = {
@@ -71,12 +151,23 @@ const LANGUAGE_LINE_COMMENTS: Record<string, string> = {
   css: '',
   json: '',
   markdown: '',
+  go: '//',
+  java: '//',
+  swift: '//',
+  shell: '#',
+  ruby: '#',
+  php: '//',
+  yaml: '#',
+  toml: '#',
+  sql: '--',
+  xml: '',
 };
 
 // Perry AOT: Object.keys() is not supported in native codegen.
 // List languages explicitly instead of deriving from the Record.
 const SUPPORTED_LANGUAGES = [
   'typescript', 'javascript', 'python', 'rust', 'html', 'css', 'json', 'markdown', 'c', 'cpp',
+  'go', 'java', 'swift', 'shell', 'ruby', 'php', 'yaml', 'toml', 'sql', 'xml',
 ];
 
 // ---------------------------------------------------------------------------
@@ -105,6 +196,34 @@ const OPERATORS = '=+-*/<>!&|?:%~^';
 // ---------------------------------------------------------------------------
 // KeywordSyntaxEngine
 // ---------------------------------------------------------------------------
+
+// Block comment depth cache — precomputed once per parse/render cycle.
+// blockCommentDepths[i] = depth of block comment nesting AT THE START of line i.
+let blockCommentDepths: number[] = [];
+let blockCommentCacheLineCount: number = 0;
+
+function precomputeBlockCommentDepths(buffer: TextBuffer): void {
+  const lineCount = buffer.getLineCount();
+  blockCommentDepths = [];
+  blockCommentCacheLineCount = lineCount;
+  let depth = 0;
+  for (let i = 0; i < lineCount; i++) {
+    blockCommentDepths[i] = depth;
+    const line = buffer.getLine(i);
+    let j = 0;
+    while (j < line.length) {
+      if (line.charAt(j) === '/' && j + 1 < line.length && line.charAt(j + 1) === '*') {
+        depth = depth + 1;
+        j = j + 2;
+      } else if (line.charAt(j) === '*' && j + 1 < line.length && line.charAt(j + 1) === '/') {
+        if (depth > 0) depth = depth - 1;
+        j = j + 2;
+      } else {
+        j = j + 1;
+      }
+    }
+  }
+}
 
 export class KeywordSyntaxEngine implements ISyntaxEngine {
   private languageId: string = '';
@@ -140,6 +259,36 @@ export class KeywordSyntaxEngine implements ISyntaxEngine {
     } else if (languageId === 'c' || languageId === 'cpp') {
       this.keywords = RUST_KEYWORDS;
       this.lineComment = '//';
+    } else if (languageId === 'go') {
+      this.keywords = GO_KEYWORDS;
+      this.lineComment = '//';
+    } else if (languageId === 'java') {
+      this.keywords = JAVA_KEYWORDS;
+      this.lineComment = '//';
+    } else if (languageId === 'swift') {
+      this.keywords = SWIFT_KEYWORDS;
+      this.lineComment = '//';
+    } else if (languageId === 'shell') {
+      this.keywords = SHELL_KEYWORDS;
+      this.lineComment = '#';
+    } else if (languageId === 'ruby') {
+      this.keywords = RUBY_KEYWORDS;
+      this.lineComment = '#';
+    } else if (languageId === 'php') {
+      this.keywords = PHP_KEYWORDS;
+      this.lineComment = '//';
+    } else if (languageId === 'yaml') {
+      this.keywords = YAML_KEYWORDS;
+      this.lineComment = '#';
+    } else if (languageId === 'toml') {
+      this.keywords = TOML_KEYWORDS;
+      this.lineComment = '#';
+    } else if (languageId === 'sql') {
+      this.keywords = SQL_KEYWORDS;
+      this.lineComment = '--';
+    } else if (languageId === 'xml') {
+      this.keywords = XML_KEYWORDS;
+      this.lineComment = '';
     } else {
       this.keywords = [];
       this.lineComment = '//';
@@ -149,6 +298,10 @@ export class KeywordSyntaxEngine implements ISyntaxEngine {
 
   parse(_buffer: TextBuffer, _changedRanges?: { fromOffset: number; toOffset: number }[]): any {
     this.parsed = true;
+    // Precompute block comment depth for all lines in O(N)
+    if (this.languageId !== 'python') {
+      precomputeBlockCommentDepths(_buffer);
+    }
     return true;
   }
 
@@ -161,9 +314,13 @@ export class KeywordSyntaxEngine implements ISyntaxEngine {
     const tokens: LineToken[] = [];
     let i = 0;
 
-    // Check if we're inside a block comment by scanning prior lines
+    // Check if we're inside a block comment using precomputed cache
     let inBlockComment = false;
     if (this.languageId !== 'python') {
+      // Ensure cache is populated (may not be if parse() wasn't called)
+      if (blockCommentCacheLineCount < 1 || blockCommentCacheLineCount !== buffer.getLineCount()) {
+        precomputeBlockCommentDepths(buffer);
+      }
       inBlockComment = this.isInsideBlockComment(buffer, lineNumber);
     }
 
@@ -516,23 +673,15 @@ export class KeywordSyntaxEngine implements ISyntaxEngine {
   // -----------------------------------------------------------------------
 
   private isInsideBlockComment(buffer: TextBuffer, lineNumber: number): boolean {
-    // Count unclosed `/*` in all lines before this one
-    let depth = 0;
-    for (let i = 0; i < lineNumber; i++) {
-      const line = buffer.getLine(i);
-      let j = 0;
-      while (j < line.length) {
-        if (line.charAt(j) === '/' && j + 1 < line.length && line.charAt(j + 1) === '*') {
-          depth++;
-          j += 2;
-        } else if (line.charAt(j) === '*' && j + 1 < line.length && line.charAt(j + 1) === '/') {
-          depth = Math.max(0, depth - 1);
-          j += 2;
-        } else {
-          j++;
-        }
-      }
+    // Use precomputed cache (O(1) lookup instead of O(N) scan)
+    if (lineNumber < blockCommentCacheLineCount) {
+      return blockCommentDepths[lineNumber] > 0;
     }
-    return depth > 0;
+    // Fallback: recompute if cache is stale
+    precomputeBlockCommentDepths(buffer);
+    if (lineNumber < blockCommentCacheLineCount) {
+      return blockCommentDepths[lineNumber] > 0;
+    }
+    return false;
   }
 }

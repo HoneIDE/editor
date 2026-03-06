@@ -4,6 +4,8 @@
  * Wraps EditorDocument + EditorViewModel + NativeRenderCoordinator
  * behind a simple API. FFI functions are declared as extern and resolved
  * by Perry's codegen from the perry.nativeLibrary manifest in package.json.
+ *
+ * Supports up to 3 concurrent Editor instances (main + 2 diff editors).
  */
 
 import { embedNSView } from 'perry/ui';
@@ -49,6 +51,11 @@ declare function hone_editor_clear_events(handle: number): void;
 declare function hone_editor_set_ts_mode(handle: number, mode: number): void;
 declare function hone_editor_set_gutter_width(handle: number, width: number): void;
 
+// === Read-only + line background FFI ===
+declare function hone_editor_set_read_only(handle: number, mode: number): void;
+declare function hone_editor_set_line_background(handle: number, line: number, r: number, g: number, b: number, a: number): void;
+declare function hone_editor_clear_line_backgrounds(handle: number): void;
+
 // === Action IDs (must match Rust action_id constants) ===
 const ACTION_MOVE_LEFT = 1;
 const ACTION_MOVE_RIGHT = 2;
@@ -86,23 +93,35 @@ const EVENT_ACTION = 2;
 const EVENT_SCROLL = 3;
 const EVENT_MOUSE_DOWN = 4;
 
-// === Synchronous event callback ===
+// === Multi-instance editor slots (max 3: main + 2 diff editors) ===
 // Perry closures can't be passed as C function pointers on ARM64 (non-executable heap memory).
-// Use a module-level singleton + a top-level (non-closure) function instead.
-// Top-level functions are in the executable text segment — safe to call from C.
-let _activeEditor: Editor | null = null;
+// Use module-level slots + a top-level (non-closure) function instead.
+let _editor0: Editor | null = null;
+let _editor1: Editor | null = null;
+let _editor2: Editor | null = null;
+let _editorCount: number = 0;
+let _pollStarted: number = 0;
 
-function _globalEventHandler(): void {
-  if (_activeEditor !== null && _activeEditor !== undefined) {
-    _activeEditor.flushEvents();
-  }
+function _registerEditor(ed: Editor): number {
+  if (_editor0 === null) { _editor0 = ed; _editorCount = _editorCount + 1; return 0; }
+  if (_editor1 === null) { _editor1 = ed; _editorCount = _editorCount + 1; return 1; }
+  if (_editor2 === null) { _editor2 = ed; _editorCount = _editorCount + 1; return 2; }
+  return -1; // all slots full
 }
 
-/** Module-level poll function for setInterval. Reads _activeEditor at call time. */
-function _pollEditorEvents(): void {
-  if (_activeEditor === null) return;
-  if (_activeEditor === undefined) return;
-  _activeEditor.flushEvents();
+function _unregisterEditor(slot: number): void {
+  if (slot === 0) { _editor0 = null; }
+  else if (slot === 1) { _editor1 = null; }
+  else if (slot === 2) { _editor2 = null; }
+  _editorCount = _editorCount - 1;
+  if (_editorCount < 0) _editorCount = 0;
+}
+
+/** Module-level poll function for setInterval. Polls all registered editors. */
+function _pollAllEditors(): void {
+  if (_editor0 !== null && _editor0 !== undefined) _editor0.flushEvents();
+  if (_editor1 !== null && _editor1 !== undefined) _editor1.flushEvents();
+  if (_editor2 !== null && _editor2 !== undefined) _editor2.flushEvents();
 }
 
 /**
@@ -187,6 +206,8 @@ export interface EditorOptions {
   fontSize?: number;
   /** Font family name. Defaults to 'JetBrains Mono'. */
   fontFamily?: string;
+  /** Read-only mode. When true, text input and edit actions are blocked. */
+  readOnly?: boolean;
 }
 
 /**
@@ -204,10 +225,14 @@ export class Editor {
   private _width: number;
   private _height: number;
   private _disposed: boolean;
+  private _readOnly: boolean;
+  private _editorSlot: number;
   nativeHandle: number | null;
 
   constructor(width: number, height: number, opts?: EditorOptions) {
     this._disposed = false;
+    this._readOnly = false;
+    this._editorSlot = -1;
     this._width = width;
     this._height = height;
     this.nativeHandle = null;
@@ -248,6 +273,11 @@ export class Editor {
       fontFamily = opts.fontFamily;
     }
 
+    let readOnly = false;
+    if (opts && opts.readOnly) {
+      readOnly = true;
+    }
+
     const doc = new EditorDocument('untitled', initialContent, language);
     this._doc = doc;
 
@@ -278,23 +308,29 @@ export class Editor {
     // Enable ts_mode: Rust only queues events, TypeScript handles all state.
     hone_editor_set_ts_mode(handle, 1);
 
-    // Register global reference for the RAF polling loop.
-    _activeEditor = this;
+    // Apply read-only mode
+    if (readOnly) {
+      this._readOnly = true;
+      hone_editor_set_read_only(handle, 1);
+    }
 
-    // Poll the Rust event queue on every animation frame.
-    // Uses requestAnimationFrame (tied to Perry's display refresh, ~60fps).
-    // Falls back to setTimeout if RAF is unavailable.
-    // NOTE: setInterval does not fire in Perry's AOT runtime.
-    // NOTE: C function pointer callbacks to Perry closures crash on ARM64
-    // (Perry closures are in non-executable heap memory).
-    // Perry: Use setInterval to poll events. setTimeout self-recursion doesn't
-    // work in Perry (closures capture by value → self-reference breaks).
-    // setInterval registers once and repeats via the runtime — no self-reference needed.
-    setInterval(() => { _pollEditorEvents(); }, 16);
+    // Register in a multi-instance slot.
+    this._editorSlot = _registerEditor(this);
+
+    // Start the shared poll timer only once (first Editor instance).
+    if (_pollStarted < 1) {
+      _pollStarted = 1;
+      setInterval(() => { _pollAllEditors(); }, 16);
+    }
   }
 
   /** Get the current text content. */
   get content(): string {
+    return this._doc.buffer.getText();
+  }
+
+  /** Get the current text content (method form for Perry compatibility). */
+  getContent(): string {
     return this._doc.buffer.getText();
   }
 
@@ -319,7 +355,22 @@ export class Editor {
     }
     const vm = this._vm;
     vm.viewport.setTotalLines(lineCount);
+    // Rebuild block comment depth cache for new content
+    const engine = vm.syntaxEngine;
+    engine.parse(buf);
     vm.touch(); // notify onChange listeners (buffer was modified externally)
+    const coordinator = this._coordinator;
+    coordinator.invalidate();
+  }
+
+  /** Switch the syntax highlighting language. */
+  setLanguage(languageId: string): void {
+    const doc = this._doc;
+    doc.languageId = languageId;
+    const vm = this._vm;
+    const engine = vm.syntaxEngine;
+    engine.setLanguage(languageId);
+    engine.parse(doc.buffer);
     const coordinator = this._coordinator;
     coordinator.invalidate();
   }
@@ -397,6 +448,31 @@ export class Editor {
     coordinator.render();
   }
 
+  /** Set read-only mode at runtime. */
+  setReadOnly(mode: boolean): void {
+    this._readOnly = mode;
+    const handle = this.nativeHandle;
+    if (handle !== null) {
+      hone_editor_set_read_only(handle as number, mode ? 1 : 0);
+    }
+  }
+
+  /** Set a background color for a specific line (1-based). Used for diff highlighting. */
+  setLineBackground(line: number, r: number, g: number, b: number, a: number): void {
+    const handle = this.nativeHandle;
+    if (handle !== null) {
+      hone_editor_set_line_background(handle as number, line, r, g, b, a);
+    }
+  }
+
+  /** Clear all per-line background colors. */
+  clearLineBackgrounds(): void {
+    const handle = this.nativeHandle;
+    if (handle !== null) {
+      hone_editor_clear_line_backgrounds(handle as number);
+    }
+  }
+
   /**
    * Drain the Rust event queue and re-render. Called by the synchronous Rust
    * event_callback (_globalEventHandler) when Rust queues a new input event.
@@ -446,11 +522,14 @@ export class Editor {
     if (count <= 0) return false;
 
     const vm = this._vm;
+    const isReadOnly = this._readOnly;
 
     for (let i = 0; i < count; i++) {
       const evType = hone_editor_get_event_type(handle as number, i);
 
       if (evType === EVENT_TEXT) {
+        // Skip text input in read-only mode
+        if (isReadOnly) continue;
         const code = hone_editor_get_event_char(handle as number, i);
         if (code > 0) {
           const ch = String.fromCharCode(code);
@@ -458,6 +537,18 @@ export class Editor {
         }
       } else if (evType === EVENT_ACTION) {
         const aid = hone_editor_get_event_action(handle as number, i);
+        // Skip edit actions in read-only mode
+        if (isReadOnly) {
+          if (aid === ACTION_INSERT_NEWLINE) continue;
+          if (aid === ACTION_DELETE_BACKWARD) continue;
+          if (aid === ACTION_DELETE_FORWARD) continue;
+          if (aid === ACTION_INSERT_TAB) continue;
+          if (aid === ACTION_CUT) continue;
+          if (aid === ACTION_PASTE) continue;
+          if (aid === ACTION_UNDO) continue;
+          if (aid === ACTION_REDO) continue;
+          if (aid === ACTION_DELETE_WORD_BACKWARD) continue;
+        }
         this._dispatchAction(vm, aid);
       } else if (evType === EVENT_SCROLL) {
         const dx = hone_editor_get_event_x(handle as number, i);
@@ -541,10 +632,11 @@ export class Editor {
     }
   }
 
-  /** Free all resources. */
+  /** Free all resources and unregister from multi-instance slots. */
   dispose(): void {
     if (this._disposed) return;
     this._disposed = true;
+    _unregisterEditor(this._editorSlot);
     const coordinator = this._coordinator;
     coordinator.detach();
     coordinator.destroy();
