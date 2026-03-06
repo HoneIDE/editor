@@ -375,4 +375,52 @@ describe('KeywordSyntaxEngine', () => {
     expect(tokens.length).toBe(1);
     expect(tokens[0].color).toBe(DARK_THEME.tokens.comment);
   });
+
+  // -----------------------------------------------------------------------
+  // Plain-text-like languages use foreground for all words
+  // -----------------------------------------------------------------------
+
+  test('markdown words use foreground color, not typeName/variableName', () => {
+    const engine = new KeywordSyntaxEngine();
+    engine.setLanguage('markdown');
+    // "Hello World" — uppercase H would be typeName in code languages, lowercase 'world' would be variableName
+    const buf = new TextBuffer('Hello world Something test');
+    engine.parse(buf);
+    const tokens = engine.getLineTokens(buf, 0, DARK_THEME);
+    for (let i = 0; i < tokens.length; i++) {
+      const t = tokens[i];
+      // No word should be typeName (green) or variableName (cyan) or functionName (yellow)
+      expect(t.color).not.toBe(DARK_THEME.tokens.typeName);
+      expect(t.color).not.toBe(DARK_THEME.tokens.variableName);
+      expect(t.color).not.toBe(DARK_THEME.tokens.functionName);
+      // All words should be foreground
+      expect(t.color).toBe(DARK_THEME.foreground);
+    }
+  });
+
+  test('yaml words use foreground color for non-keyword identifiers', () => {
+    const engine = new KeywordSyntaxEngine();
+    engine.setLanguage('yaml');
+    const buf = new TextBuffer('name: MyService');
+    engine.parse(buf);
+    const tokens = engine.getLineTokens(buf, 0, DARK_THEME);
+    // 'name' and 'MyService' should use foreground, not typeName/variableName
+    for (let i = 0; i < tokens.length; i++) {
+      const t = tokens[i];
+      if (t.color !== DARK_THEME.tokens.keyword && t.color !== DARK_THEME.tokens.string) {
+        expect(t.color).not.toBe(DARK_THEME.tokens.typeName);
+        expect(t.color).not.toBe(DARK_THEME.tokens.variableName);
+      }
+    }
+  });
+
+  test('toml words use foreground color for non-keyword identifiers', () => {
+    const engine = new KeywordSyntaxEngine();
+    engine.setLanguage('toml');
+    const buf = new TextBuffer('[package]\nname = "hello"');
+    engine.parse(buf);
+    const tokens = engine.getLineTokens(buf, 1, DARK_THEME);
+    // 'name' should be foreground (not variableName cyan)
+    expect(tokens[0].color).toBe(DARK_THEME.foreground);
+  });
 });

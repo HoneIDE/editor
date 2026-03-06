@@ -487,6 +487,10 @@ export class KeywordSyntaxEngine implements ISyntaxEngine {
         for (let ki = 0; ki < kws.length; ki++) {
           if (kws[ki] === word) { isKeyword = true; break; }
         }
+        // For plain-text-like languages, skip code-style word classification
+        const langId = this.languageId;
+        const isPlainText = langId === 'markdown' || langId === 'yaml' || langId === 'toml' || langId === 'xml';
+
         if (isKeyword) {
           color = theme.tokens.keyword;
           // Boolean/null literals
@@ -498,6 +502,8 @@ export class KeywordSyntaxEngine implements ISyntaxEngine {
             color = theme.tokens.keyword;
             fontStyle = 'italic';
           }
+        } else if (isPlainText) {
+          color = theme.foreground;
         } else if (isFunction) {
           color = theme.tokens.functionName;
         } else if (isUpperCase(word.charAt(0)) && word.length > 1) {
