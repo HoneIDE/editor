@@ -394,3 +394,17 @@ pub extern "C" fn hone_editor_clear_events(view: *mut EditorView) {
     let view = unsafe { &mut *view };
     view.pending_events.clear();
 }
+
+/// Set TypeScript mode (enables TS-aware syntax handling).
+/// Perry params: ["i64", "f64"]
+#[no_mangle]
+pub extern "C" fn hone_editor_set_ts_mode(_view: *mut EditorView, _mode: f64) {
+    // Stub — TypeScript tokenization not yet ported to Linux
+}
+
+/// Set the gutter (line number area) width in pixels.
+/// Perry params: ["i64", "f64"]
+#[no_mangle]
+pub extern "C" fn hone_editor_set_gutter_width(_view: *mut EditorView, _width: f64) {
+    // Stub — gutter width not yet implemented on Linux
+}

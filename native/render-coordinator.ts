@@ -70,6 +70,15 @@ export class NativeRenderCoordinator {
   }
 
   /**
+   * Initialize with a pre-created handle (Perry AOT workaround).
+   * Bypasses create() to avoid interface dispatch via NativeEditorFFI which
+   * Perry AOT cannot resolve (js_native_call_method callback is null in AOT).
+   */
+  setHandle(handle: NativeViewHandle): void {
+    this._handle = handle;
+  }
+
+  /**
    * Destroy the native editor view.
    */
   destroy(): void {

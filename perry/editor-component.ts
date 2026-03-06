@@ -265,7 +265,13 @@ export class Editor {
     const coordinator = new NativeRenderCoordinator(ffi, config);
     this._coordinator = coordinator;
 
-    const handle = coordinator.create(width, height);
+    // Perry AOT: coordinator.create() dispatches through the NativeEditorFFI
+    // interface at runtime. Perry's AOT codegen emits js_native_call_method for
+    // interface methods, which requires a JS callback that is null in AOT mode.
+    // Instead, call hone_editor_create directly (a declared extern "C" function
+    // that Perry resolves statically) and inject the handle into the coordinator.
+    const handle = hone_editor_create(width, height);
+    coordinator.setHandle(handle);
     this.nativeHandle = handle;
 
     coordinator.attach(vm);
@@ -277,6 +283,12 @@ export class Editor {
 
     // Enable ts_mode: Rust only queues events, TypeScript handles all state.
     hone_editor_set_ts_mode(handle, 1);
+
+    // Perry AOT: coordinator.attach() and vm.onResize() trigger onChange → render()
+    // which calls _ffi.* methods via interface dispatch — fails on GTK4/Linux
+    // (Perry's js_native_call_method callback is null in AOT mode).
+    // Call direct render with initialContent to populate frame_lines in the Rust view.
+    this._directRenderText(initialContent);
 
     // Register global reference for the RAF polling loop.
     _activeEditor = this;
@@ -320,8 +332,9 @@ export class Editor {
     const vm = this._vm;
     vm.viewport.setTotalLines(lineCount);
     vm.touch(); // notify onChange listeners (buffer was modified externally)
-    const coordinator = this._coordinator;
-    coordinator.invalidate();
+    // Perry AOT: coordinator.invalidate() calls _ffi.* via interface dispatch → fails.
+    // Use direct render with the text parameter (already in scope) to push to Rust.
+    this._directRenderText(text);
   }
 
   /** Get the underlying EditorDocument. */
@@ -539,6 +552,50 @@ export class Editor {
       };
       vm.onKeyDown(event);
     }
+  }
+
+  /**
+   * Perry AOT direct render: bypasses NativeRenderCoordinator interface dispatch,
+   * which fails on GTK4/Linux (js_native_call_method callback is null in AOT mode).
+   * Calls hone_editor_* FFI functions directly — Perry resolves these statically.
+   *
+   * Takes text as a parameter to avoid Perry getter dispatch issues:
+   * Perry's AOT codegen does not call TypeScript `get` property getters — it reads
+   * the property as a plain field (returning undefined). vm.visibleLines as a getter
+   * returns undefined, making visibleLines.length === 0 and the render loop a no-op.
+   * Passing text directly sidesteps all getter/view-model access.
+   *
+   * Perry AOT constraints apply:
+   * - `for (let i...)` loop (not for-of or .map)
+   * - No object shorthand, no ?. or ??
+   * - Cast strings to `any` for FFI pointer params
+   * - charCodeAt compared to numeric literal (not variable) — Perry-safe
+   */
+  private _directRenderText(text: string): void {
+    const handle = this.nativeHandle;
+    // fontSize 14, lineHeight 1.5 → lineHeightPx = 21 (same as coordinator default)
+    const sz = 14;
+    const lh = sz + sz / 2;
+
+    hone_editor_begin_frame(handle as number);
+
+    // Scan text and emit one render_line per line (Perry-safe manual split)
+    let lineNum = 0;
+    let lineStart = 0;
+    for (let i = 0; i <= text.length; i++) {
+      // Treat EOF as implicit newline to flush last line
+      const ch = i < text.length ? text.charCodeAt(i) : 10;
+      if (ch === 10) {
+        const lineContent = text.substring(lineStart, i);
+        const yOffset = lineNum * lh;
+        // Empty tokens "[]": Rust tokenizer retokenizes on each edit in AOT mode.
+        hone_editor_render_line(handle as number, lineNum + 1, lineContent as any, '[]' as any, yOffset);
+        lineNum++;
+        lineStart = i + 1;
+      }
+    }
+
+    hone_editor_end_frame(handle as number);
   }
 
   /** Free all resources. */
