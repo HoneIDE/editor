@@ -197,6 +197,21 @@ export class EditorViewModel {
     this._tokenProvider = provider;
   }
 
+  /**
+   * Re-create the _tokenProvider closure so Perry captures the CURRENT
+   * syntax engine state (language, keywords, lineComment). Must be called
+   * after engine.setLanguage() because Perry closures capture by value —
+   * the constructor-time closure holds stale engine state.
+   */
+  refreshTokenProvider(): void {
+    const engine = this.syntaxEngine;
+    const buf = this.document.buffer;
+    const theme = this._theme;
+    this._tokenProvider = (lineNumber: number) => {
+      return engine.getLineTokens(buf, lineNumber, theme);
+    };
+  }
+
   setDecorationProvider(provider: (lineNumber: number) => LineDecoration[]): void {
     this._decorationProvider = provider;
   }
@@ -231,10 +246,13 @@ export class EditorViewModel {
   // === Computed State ===
 
   get visibleLines(): RenderedLine[] {
-    // Render ALL lines so Rust has the full content available for scrolling.
-    // Virtual scrolling is handled by Rust (y_offset shifting in frame_lines).
-    // NOTE: Use push() not index assignment — Perry codegen handles push on local arrays.
+    // Send ALL lines to Rust (it needs full content for scrolling),
+    // but only tokenize the visible viewport lines for performance.
     const lineCount = this.document.buffer.getLineCount();
+
+    // Get the visible range from viewport (with buffer zone)
+    const visRange = this.viewport.getVisibleRange();
+
     const lineNumbers: number[] = [];
     let i = 0;
     while (i < lineCount) {
@@ -246,6 +264,8 @@ export class EditorViewModel {
       lineNumbers,
       this._gutter,
       this._tokenProvider,
+      visRange.startLine,
+      visRange.endLine,
     );
   }
 

@@ -371,6 +371,10 @@ export class Editor {
     const engine = vm.syntaxEngine;
     engine.setLanguage(languageId);
     engine.parse(doc.buffer);
+    // Re-create the token provider closure so Perry captures the UPDATED
+    // engine state (keywords, lineComment). The constructor-time closure
+    // holds stale state because Perry closures capture by value.
+    vm.refreshTokenProvider();
     const coordinator = this._coordinator;
     coordinator.invalidate();
   }
