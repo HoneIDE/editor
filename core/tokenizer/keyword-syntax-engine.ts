@@ -197,11 +197,61 @@ const OPERATORS = '=+-*/<>!&|?:%~^';
 // KeywordSyntaxEngine
 // ---------------------------------------------------------------------------
 
-// Compute block comment depth at the start of a given line by scanning all
-// preceding lines.  Perry AOT has issues with module-level array indexed
-// assignment (`arr[i] = val`) so we avoid caching depths in an array and
-// recompute on each call instead.  For files under a few thousand lines this
-// is fast enough (each call is O(lines * avg_line_length)).
+// Build a string where charCodeAt(i) = block comment depth at start of line i.
+// Uses string += which is Perry-safe (no module-level array indexed assignment).
+function buildBlockDepthString(buffer: TextBuffer): string {
+  let result = '';
+  let depth = 0;
+  const lineCount = buffer.getLineCount();
+  for (let i = 0; i < lineCount; i++) {
+    result += String.fromCharCode(depth);
+    const line = buffer.getLine(i);
+    let j = 0;
+    while (j < line.length) {
+      if (line.charAt(j) === "'") {
+        j = j + 1;
+        while (j < line.length) {
+          if (line.charAt(j) === '\\') { j = j + 2; continue; }
+          if (line.charAt(j) === "'") { j = j + 1; break; }
+          j = j + 1;
+        }
+        continue;
+      }
+      if (line.charAt(j) === '"') {
+        j = j + 1;
+        while (j < line.length) {
+          if (line.charAt(j) === '\\') { j = j + 2; continue; }
+          if (line.charAt(j) === '"') { j = j + 1; break; }
+          j = j + 1;
+        }
+        continue;
+      }
+      if (line.charAt(j) === '`') {
+        j = j + 1;
+        while (j < line.length) {
+          if (line.charAt(j) === '`') { j = j + 1; break; }
+          j = j + 1;
+        }
+        continue;
+      }
+      if (line.charAt(j) === '/' && j + 1 < line.length && line.charAt(j + 1) === '/') {
+        break;
+      }
+      if (line.charAt(j) === '/' && j + 1 < line.length && line.charAt(j + 1) === '*') {
+        depth = depth + 1;
+        j = j + 2;
+      } else if (line.charAt(j) === '*' && j + 1 < line.length && line.charAt(j + 1) === '/') {
+        if (depth > 0) depth = depth - 1;
+        j = j + 2;
+      } else {
+        j = j + 1;
+      }
+    }
+  }
+  return result;
+}
+
+// Fallback: compute block comment depth without cache (used if cache is stale).
 function computeBlockCommentDepthAtLine(buffer: TextBuffer, targetLine: number): number {
   let depth = 0;
   for (let i = 0; i < targetLine; i++) {
@@ -260,6 +310,11 @@ export class KeywordSyntaxEngine implements ISyntaxEngine {
   private keywords: string[] = [];
   private lineComment: string = '//';
   private parsed: boolean = false;
+  // Block comment depth cache as a STRING — each char's code is the depth at
+  // that line index.  Strings are Perry-safe (no array indexed assignment).
+  // Built in parse(), read via charCodeAt in isInsideBlockComment.
+  private _blockDepthCache: string = '';
+  private _blockDepthLineCount: number = 0;
 
   setLanguage(languageId: string): void {
     this.languageId = languageId;
@@ -328,8 +383,12 @@ export class KeywordSyntaxEngine implements ISyntaxEngine {
 
   parse(_buffer: TextBuffer, _changedRanges?: { fromOffset: number; toOffset: number }[]): any {
     this.parsed = true;
-    // Block comment depth is now computed on-demand in isInsideBlockComment()
-    // instead of cached in a module-level array (Perry AOT array issues).
+    // Build block comment depth cache as a string (Perry-safe: no array
+    // indexed assignment).  Each char's code = depth at start of that line.
+    if (this.languageId !== 'python') {
+      this._blockDepthCache = buildBlockDepthString(_buffer);
+      this._blockDepthLineCount = _buffer.getLineCount();
+    }
     return true;
   }
 
@@ -703,6 +762,12 @@ export class KeywordSyntaxEngine implements ISyntaxEngine {
   // -----------------------------------------------------------------------
 
   private isInsideBlockComment(buffer: TextBuffer, lineNumber: number): boolean {
+    // Use string cache (O(1) lookup) if available and line count matches
+    const cache = this._blockDepthCache;
+    if (cache.length > 0 && this._blockDepthLineCount === buffer.getLineCount() && lineNumber < cache.length) {
+      return cache.charCodeAt(lineNumber) > 0;
+    }
+    // Fallback: recompute inline (O(N) scan)
     return computeBlockCommentDepthAtLine(buffer, lineNumber) > 0;
   }
 }
