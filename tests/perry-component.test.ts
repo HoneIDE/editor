@@ -140,7 +140,8 @@ describe('Editor Component', () => {
     editor.render();
 
     expect(ffi.getCalls('beginFrame').length).toBeGreaterThan(0);
-    expect(ffi.getCalls('renderLine').length).toBeGreaterThan(0);
+    expect(ffi.getCalls('cacheLine').length).toBeGreaterThan(0);
+    expect(ffi.getCalls('setViewport').length).toBeGreaterThan(0);
     expect(ffi.getCalls('setCursor').length).toBeGreaterThan(0);
     expect(ffi.getCalls('endFrame').length).toBeGreaterThan(0);
   });

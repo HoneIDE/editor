@@ -310,6 +310,9 @@ export class KeywordSyntaxEngine implements ISyntaxEngine {
   private keywords: string[] = [];
   private lineComment: string = '//';
   private parsed: boolean = false;
+  // Perry AOT: class field string === comparison is unreliable for dynamically
+  // assigned strings. Use a numeric flag instead.
+  _isMarkdown: number = 0;
   // Block comment depth cache as a STRING — each char's code is the depth at
   // that line index.  Strings are Perry-safe (no array indexed assignment).
   // Built in parse(), read via charCodeAt in isInsideBlockComment.
@@ -318,6 +321,7 @@ export class KeywordSyntaxEngine implements ISyntaxEngine {
 
   setLanguage(languageId: string): void {
     this.languageId = languageId;
+    this._isMarkdown = 0;
     // Explicit if-else instead of Record[variable] lookup — Perry doesn't support
     // dynamic key access on module-level Record constants in AOT native codegen.
     if (languageId === 'typescript' || languageId === 'javascript') {
@@ -341,6 +345,7 @@ export class KeywordSyntaxEngine implements ISyntaxEngine {
     } else if (languageId === 'markdown') {
       this.keywords = MARKDOWN_KEYWORDS;
       this.lineComment = '';
+      this._isMarkdown = 1;
     } else if (languageId === 'c' || languageId === 'cpp') {
       this.keywords = RUST_KEYWORDS;
       this.lineComment = '//';
@@ -389,6 +394,12 @@ export class KeywordSyntaxEngine implements ISyntaxEngine {
       this._blockDepthCache = buildBlockDepthString(_buffer);
       this._blockDepthLineCount = _buffer.getLineCount();
     }
+    // Rebuild markdown fence cache on re-parse
+    if (this._isMarkdown === 1) {
+      this._mdFenceLineCount = 0;
+      this._mdFenceCache = '';
+      this.buildMarkdownFenceCache(_buffer);
+    }
     return true;
   }
 
@@ -397,6 +408,14 @@ export class KeywordSyntaxEngine implements ISyntaxEngine {
 
     const lineText = buffer.getLine(lineNumber);
     if (lineText.length === 0) return [];
+
+    // Markdown gets its own tokenizer — headers, bold, italic, links, code, etc.
+    // Perry AOT: class field string === comparison is unreliable for dynamically
+    // assigned strings. Use numeric flag set in setLanguage() instead.
+    if (this._isMarkdown === 1) {
+      const inFence = this.isInsideMarkdownFence(buffer, lineNumber);
+      return tokenizeMarkdownLine(lineText, theme, inFence);
+    }
 
     const tokens: LineToken[] = [];
     let i = 0;
@@ -757,6 +776,40 @@ export class KeywordSyntaxEngine implements ISyntaxEngine {
     return false;
   }
 
+  // Track whether we're inside a fenced code block for markdown
+  _mdFenceLineCount = 0;
+  _mdFenceCache = '';
+
+  /** Build a string where charCode at lineN = 1 if inside code fence, 0 if not. */
+  buildMarkdownFenceCache(buffer: TextBuffer): void {
+    const lineCount = buffer.getLineCount();
+    if (lineCount === this._mdFenceLineCount && this._mdFenceCache.length > 0) return;
+    let result = '';
+    let inFence = false;
+    for (let i = 0; i < lineCount; i++) {
+      if (inFence) {
+        result += String.fromCharCode(1);
+      } else {
+        result += String.fromCharCode(0);
+      }
+      const line = buffer.getLine(i);
+      const trimmed = line.trimStart();
+      if (trimmed.length >= 3 && trimmed.charAt(0) === '`' && trimmed.charAt(1) === '`' && trimmed.charAt(2) === '`') {
+        inFence = !inFence;
+      }
+    }
+    this._mdFenceCache = result;
+    this._mdFenceLineCount = lineCount;
+  }
+
+  isInsideMarkdownFence(buffer: TextBuffer, lineNumber: number): boolean {
+    this.buildMarkdownFenceCache(buffer);
+    if (lineNumber < this._mdFenceCache.length) {
+      return this._mdFenceCache.charCodeAt(lineNumber) > 0;
+    }
+    return false;
+  }
+
   // -----------------------------------------------------------------------
   // Private helpers
   // -----------------------------------------------------------------------
@@ -770,4 +823,276 @@ export class KeywordSyntaxEngine implements ISyntaxEngine {
     // Fallback: recompute inline (O(N) scan)
     return computeBlockCommentDepthAtLine(buffer, lineNumber) > 0;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Markdown tokenizer
+// ---------------------------------------------------------------------------
+
+/**
+ * Tokenize a single markdown line. Perry-safe: no regex, no optional chaining,
+ * no shorthand objects, no for...of, no dynamic key access.
+ */
+function tokenizeMarkdownLine(line: string, theme: EditorTheme, inFence: boolean): LineToken[] {
+  const tokens: LineToken[] = [];
+  const len = line.length;
+
+  // Code block background color — noticeably lighter than editor background (#1e1e1e)
+  const codeBg = '#282830';
+
+  // Inside a fenced code block — color entire line as string (code) + background
+  if (inFence) {
+    // Sentinel token for line background (startColumn=-1 signals background color)
+    tokens.push({ startColumn: -1, endColumn: -1, color: codeBg, fontStyle: 'normal' });
+    // Check if this line is the closing fence
+    const trimmed = line.trimStart();
+    if (trimmed.length >= 3 && trimmed.charAt(0) === '`' && trimmed.charAt(1) === '`' && trimmed.charAt(2) === '`') {
+      tokens.push({ startColumn: 0, endColumn: len, color: theme.tokens.meta, fontStyle: 'normal' });
+    } else {
+      tokens.push({ startColumn: 0, endColumn: len, color: theme.tokens.string, fontStyle: 'normal' });
+    }
+    return tokens;
+  }
+
+  // Code fence opening (``` or ```lang)
+  const trimmed = line.trimStart();
+  if (trimmed.length >= 3 && trimmed.charAt(0) === '`' && trimmed.charAt(1) === '`' && trimmed.charAt(2) === '`') {
+    tokens.push({ startColumn: -1, endColumn: -1, color: codeBg, fontStyle: 'normal' });
+    tokens.push({ startColumn: 0, endColumn: len, color: theme.tokens.meta, fontStyle: 'normal' });
+    return tokens;
+  }
+
+  // Heading: lines starting with # (up to 6)
+  if (len > 0 && trimmed.charAt(0) === '#') {
+    let level = 0;
+    let hi = 0;
+    while (hi < trimmed.length && trimmed.charAt(hi) === '#' && level < 6) {
+      level++;
+      hi++;
+    }
+    if (hi < trimmed.length && trimmed.charAt(hi) === ' ') {
+      // h1/h2 → large heading, h3+ → medium heading
+      const headingStyle = level <= 2 ? 'heading-lg' : 'heading-md';
+      tokens.push({ startColumn: 0, endColumn: len, color: theme.tokens.heading, fontStyle: headingStyle });
+      return tokens;
+    }
+  }
+
+  // Horizontal rule: --- or *** or ___ (3+ of same char, optionally with spaces)
+  if (len >= 3) {
+    let hrChar = '';
+    if (trimmed.charAt(0) === '-') hrChar = '-';
+    if (trimmed.charAt(0) === '*') hrChar = '*';
+    if (trimmed.charAt(0) === '_') hrChar = '_';
+    if (hrChar.length > 0) {
+      let allMatch = true;
+      for (let hi = 0; hi < trimmed.length; hi++) {
+        const hc = trimmed.charAt(hi);
+        if (hc !== hrChar && hc !== ' ') { allMatch = false; break; }
+      }
+      let charCount = 0;
+      for (let hi = 0; hi < trimmed.length; hi++) {
+        if (trimmed.charAt(hi) === hrChar) charCount++;
+      }
+      if (allMatch && charCount >= 3) {
+        tokens.push({ startColumn: 0, endColumn: len, color: theme.tokens.punctuation, fontStyle: 'normal' });
+        return tokens;
+      }
+    }
+  }
+
+  // Blockquote: lines starting with >
+  if (trimmed.length > 0 && trimmed.charAt(0) === '>') {
+    tokens.push({ startColumn: 0, endColumn: len, color: theme.tokens.comment, fontStyle: 'italic' });
+    return tokens;
+  }
+
+  // Inline tokenization for remaining lines (including list items)
+  let i = 0;
+
+  // List bullet prefix: "- ", "* ", "+ ", or "1. " etc.
+  if (trimmed.length >= 2) {
+    const fc = trimmed.charAt(0);
+    if ((fc === '-' || fc === '*' || fc === '+') && trimmed.charAt(1) === ' ') {
+      const indent = len - trimmed.length;
+      tokens.push({ startColumn: indent, endColumn: indent + 1, color: theme.tokens.punctuation, fontStyle: 'normal' });
+      i = indent + 2;
+    } else if (DECIMAL_CHARS.indexOf(fc) >= 0) {
+      // Numbered list: digits followed by . and space
+      let ni = 0;
+      while (ni < trimmed.length && DECIMAL_CHARS.indexOf(trimmed.charAt(ni)) >= 0) ni++;
+      if (ni < trimmed.length && trimmed.charAt(ni) === '.' && ni + 1 < trimmed.length && trimmed.charAt(ni + 1) === ' ') {
+        const indent = len - trimmed.length;
+        tokens.push({ startColumn: indent, endColumn: indent + ni + 1, color: theme.tokens.punctuation, fontStyle: 'normal' });
+        i = indent + ni + 2;
+      }
+    }
+  }
+
+  // Scan inline elements
+  while (i < len) {
+    const c = line.charAt(i);
+
+    // Inline code: `...`
+    if (c === '`') {
+      let j = i + 1;
+      while (j < len && line.charAt(j) !== '`') j++;
+      if (j < len) {
+        j++; // include closing backtick
+        tokens.push({ startColumn: i, endColumn: j, color: theme.tokens.string, fontStyle: 'normal' });
+        i = j;
+        continue;
+      }
+    }
+
+    // Bold: **...** or __...__
+    if (c === '*' && i + 1 < len && line.charAt(i + 1) === '*') {
+      let j = i + 2;
+      let found = false;
+      while (j + 1 < len) {
+        if (line.charAt(j) === '*' && line.charAt(j + 1) === '*') {
+          found = true;
+          break;
+        }
+        j++;
+      }
+      if (found) {
+        tokens.push({ startColumn: i, endColumn: j + 2, color: theme.foreground, fontStyle: 'bold' });
+        i = j + 2;
+        continue;
+      }
+    }
+    if (c === '_' && i + 1 < len && line.charAt(i + 1) === '_') {
+      let j = i + 2;
+      let found = false;
+      while (j + 1 < len) {
+        if (line.charAt(j) === '_' && line.charAt(j + 1) === '_') {
+          found = true;
+          break;
+        }
+        j++;
+      }
+      if (found) {
+        tokens.push({ startColumn: i, endColumn: j + 2, color: theme.foreground, fontStyle: 'bold' });
+        i = j + 2;
+        continue;
+      }
+    }
+
+    // Italic: *...* or _..._  (single, not double)
+    if (c === '*' && (i + 1 >= len || line.charAt(i + 1) !== '*')) {
+      let j = i + 1;
+      while (j < len && line.charAt(j) !== '*') j++;
+      if (j < len) {
+        tokens.push({ startColumn: i, endColumn: j + 1, color: theme.foreground, fontStyle: 'italic' });
+        i = j + 1;
+        continue;
+      }
+    }
+    if (c === '_' && (i + 1 >= len || line.charAt(i + 1) !== '_')) {
+      // Only treat as italic if not in the middle of a word
+      const prevIsWord = i > 0 && isWordChar(line.charAt(i - 1));
+      if (!prevIsWord) {
+        let j = i + 1;
+        while (j < len && line.charAt(j) !== '_') j++;
+        if (j < len) {
+          tokens.push({ startColumn: i, endColumn: j + 1, color: theme.foreground, fontStyle: 'italic' });
+          i = j + 1;
+          continue;
+        }
+      }
+    }
+
+    // Link: [text](url)
+    if (c === '[') {
+      let j = i + 1;
+      while (j < len && line.charAt(j) !== ']') j++;
+      if (j < len && j + 1 < len && line.charAt(j + 1) === '(') {
+        let k = j + 2;
+        while (k < len && line.charAt(k) !== ')') k++;
+        if (k < len) {
+          // [text] in link color
+          tokens.push({ startColumn: i, endColumn: j + 1, color: theme.tokens.link, fontStyle: 'normal' });
+          // (url) in comment/dim color
+          tokens.push({ startColumn: j + 1, endColumn: k + 1, color: theme.tokens.comment, fontStyle: 'normal' });
+          i = k + 1;
+          continue;
+        }
+      }
+    }
+
+    // Image: ![alt](url)
+    if (c === '!' && i + 1 < len && line.charAt(i + 1) === '[') {
+      let j = i + 2;
+      while (j < len && line.charAt(j) !== ']') j++;
+      if (j < len && j + 1 < len && line.charAt(j + 1) === '(') {
+        let k = j + 2;
+        while (k < len && line.charAt(k) !== ')') k++;
+        if (k < len) {
+          tokens.push({ startColumn: i, endColumn: j + 1, color: theme.tokens.link, fontStyle: 'normal' });
+          tokens.push({ startColumn: j + 1, endColumn: k + 1, color: theme.tokens.comment, fontStyle: 'normal' });
+          i = k + 1;
+          continue;
+        }
+      }
+    }
+
+    i++;
+  }
+
+  return tokens;
+}
+
+/**
+ * Perry-safe standalone tokenization function.
+ * Bypasses ISyntaxEngine vtable dispatch which fails after first call in Perry AOT.
+ * Accepts the engine as a plain parameter — Perry handles free function calls correctly.
+ */
+/**
+ * Perry-safe standalone tokenization.
+ * Reads engine state directly (no vtable dispatch).
+ * For markdown: calls tokenizeMarkdownLine (free function).
+ * For other languages: calls engine.getLineTokens (method — only works on first frame in Perry).
+ */
+export function getLineTokensDirect(
+  engine: KeywordSyntaxEngine,
+  buffer: TextBuffer,
+  lineNumber: number,
+  theme: EditorTheme,
+): LineToken[] {
+  if (lineNumber < 0 || lineNumber >= buffer.getLineCount()) return [];
+  const lineText = buffer.getLine(lineNumber);
+  if (lineText.length === 0) return [];
+  // Markdown: use free function directly (bypass method dispatch)
+  if (engine._isMarkdown === 1) {
+    const inFence = engine.isInsideMarkdownFence(buffer, lineNumber);
+    return tokenizeMarkdownLine(lineText, theme, inFence);
+  }
+  // Other languages: call engine method (may fail after first frame in Perry)
+  return engine.getLineTokens(buffer, lineNumber, theme);
+}
+
+/**
+ * Perry-safe markdown tokenization that doesn't require the engine.
+ * Exported for direct use in EditorViewModel when engine method calls fail.
+ */
+/**
+ * Perry-safe fence check: reads engine's _mdFenceCache directly (no method call).
+ */
+export function isInsideMarkdownFenceDirect(
+  engine: KeywordSyntaxEngine,
+  lineNumber: number,
+): boolean {
+  if (lineNumber < engine._mdFenceCache.length) {
+    return engine._mdFenceCache.charCodeAt(lineNumber) > 0;
+  }
+  return false;
+}
+
+export function tokenizeMarkdownLineDirect(
+  lineText: string,
+  theme: EditorTheme,
+  inFence: boolean,
+): LineToken[] {
+  return tokenizeMarkdownLine(lineText, theme, inFence);
 }

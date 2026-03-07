@@ -24,14 +24,14 @@ describe('NoOpFFI', () => {
     const ffi = new NoOpFFI();
     const h = ffi.create(800, 600);
     ffi.setFont(h, 'Menlo', 14);
-    ffi.renderLine(h, 1, 'hello', '[]', 0);
+    ffi.cacheLine(h, 1, 'hello', '0,5,d4d4d4,0|');
     ffi.setCursor(h, 10, 0, 0);
     ffi.invalidate(h);
 
     expect(ffi.calls.length).toBe(5);
     expect(ffi.getCalls('create').length).toBe(1);
     expect(ffi.getCalls('setFont')[0]).toEqual([h, 'Menlo', 14]);
-    expect(ffi.getCalls('renderLine')[0]).toEqual([h, 1, 'hello', '[]', 0]);
+    expect(ffi.getCalls('cacheLine')[0]).toEqual([h, 1, 'hello', '0,5,d4d4d4,0|']);
   });
 
   test('measureText returns 8px per char', () => {
@@ -76,6 +76,21 @@ describe('NoOpFFI', () => {
     expect(ffi.getCalls('renderDecorations').length).toBe(1);
     expect(ffi.getCalls('renderGhostText').length).toBe(1);
     expect(ffi.getCalls('setCursors').length).toBe(1);
+  });
+
+  test('new TS-authoritative protocol methods', () => {
+    const ffi = new NoOpFFI();
+    const h = ffi.create(800, 600);
+    ffi.cacheLine(h, 1, 'hello', '0,5,d4d4d4,0|');
+    ffi.setViewport(h, 1, 40, 0, 100, 21);
+    ffi.beginSelections(h, 2);
+    ffi.addSelectionRect(h, 10, 20, 30, 21);
+    ffi.addSelectionRect(h, 10, 41, 50, 21);
+
+    expect(ffi.getCalls('cacheLine').length).toBe(1);
+    expect(ffi.getCalls('setViewport')).toEqual([[h, 1, 40, 0, 100, 21]]);
+    expect(ffi.getCalls('beginSelections')).toEqual([[h, 2]]);
+    expect(ffi.getCalls('addSelectionRect').length).toBe(2);
   });
 
   test('destroy records call', () => {
@@ -157,11 +172,12 @@ describe('NativeRenderCoordinator', () => {
     ffi.reset();
     coordinator.attach(vm);
 
-    // Should have rendered initial frame
-    expect(ffi.getCalls('renderLine').length).toBeGreaterThan(0);
+    // Should have rendered initial frame with cacheLine + setViewport
+    expect(ffi.getCalls('cacheLine').length).toBeGreaterThan(0);
+    expect(ffi.getCalls('setViewport').length).toBeGreaterThan(0);
   });
 
-  test('render sends lines to FFI', () => {
+  test('render sends lines to FFI via cacheLine + setViewport', () => {
     const { ffi, coordinator } = createCoordinator();
     coordinator.create(800, 600);
     const vm = createViewModelWith('line one\nline two\nline three');
@@ -170,28 +186,38 @@ describe('NativeRenderCoordinator', () => {
     ffi.reset();
     coordinator.attach(vm);
 
-    const renderCalls = ffi.getCalls('renderLine');
-    expect(renderCalls.length).toBeGreaterThanOrEqual(3);
+    const cacheCalls = ffi.getCalls('cacheLine');
+    expect(cacheCalls.length).toBeGreaterThanOrEqual(3);
 
     // Lines are 1-based in display
-    expect(renderCalls[0][1]).toBe(1); // line number
-    expect(renderCalls[0][2]).toBe('line one'); // text
+    expect(cacheCalls[0][1]).toBe(1); // line number
+    expect(cacheCalls[0][2]).toBe('line one'); // text
+    // Packed tokens format (no JSON)
+    expect(typeof cacheCalls[0][3]).toBe('string');
+
+    // Viewport should be set
+    const vpCalls = ffi.getCalls('setViewport');
+    expect(vpCalls.length).toBe(1);
+    expect(vpCalls[0][1]).toBe(1); // startLine
+    expect(vpCalls[0][2]).toBe(3); // endLine
   });
 
-  test('dirty tracking avoids redundant renders', () => {
+  test('dirty tracking avoids redundant cacheLine calls', () => {
     const { ffi, coordinator } = createCoordinator();
     coordinator.create(800, 600);
     const vm = createViewModelWith('hello');
     vm.onResize(800, 600);
 
     coordinator.attach(vm);
-    const firstCount = ffi.getCalls('renderLine').length;
+    const firstCount = ffi.getCalls('cacheLine').length;
 
     ffi.reset();
     coordinator.render(); // re-render same state
 
-    // Should not re-render unchanged lines
-    expect(ffi.getCalls('renderLine').length).toBe(0);
+    // Should not re-cache unchanged lines
+    expect(ffi.getCalls('cacheLine').length).toBe(0);
+    // But setViewport is still called (viewport position may change)
+    expect(ffi.getCalls('setViewport').length).toBe(1);
   });
 
   test('invalidate clears dirty cache', () => {
@@ -204,8 +230,8 @@ describe('NativeRenderCoordinator', () => {
     ffi.reset();
     coordinator.invalidate();
 
-    // Should re-render all lines after invalidation
-    expect(ffi.getCalls('renderLine').length).toBeGreaterThan(0);
+    // Should re-cache all lines after invalidation
+    expect(ffi.getCalls('cacheLine').length).toBeGreaterThan(0);
   });
 
   test('setFont updates config and re-measures', () => {
@@ -248,10 +274,10 @@ describe('NativeRenderCoordinator', () => {
       ctrlKey: false, shiftKey: false, altKey: false, metaKey: false,
     });
 
-    expect(ffi.getCalls('renderLine').length).toBe(0);
+    expect(ffi.getCalls('cacheLine').length).toBe(0);
   });
 
-  test('scroll updates native scroll offset', () => {
+  test('scroll updates via setViewport', () => {
     const { ffi, coordinator } = createCoordinator();
     coordinator.create(800, 600);
     const vm = createViewModelWith('a\nb\nc\nd\ne\nf\ng\nh');
@@ -260,9 +286,9 @@ describe('NativeRenderCoordinator', () => {
     ffi.reset();
     coordinator.attach(vm);
 
-    const scrollCalls = ffi.getCalls('scroll');
-    // Initial scroll should be at 0
-    expect(scrollCalls.length).toBeGreaterThanOrEqual(1);
+    const vpCalls = ffi.getCalls('setViewport');
+    // Viewport should be set with scrollTop
+    expect(vpCalls.length).toBeGreaterThanOrEqual(1);
   });
 
   test('cursor position is sent to FFI', () => {
@@ -277,7 +303,7 @@ describe('NativeRenderCoordinator', () => {
     expect(ffi.getCalls('setCursor').length).toBe(1);
   });
 
-  test('selection regions are sent to FFI', () => {
+  test('selection regions use beginSelections + addSelectionRect', () => {
     const { ffi, coordinator } = createCoordinator();
     coordinator.create(800, 600);
     const vm = createViewModelWith('hello world');
@@ -291,12 +317,16 @@ describe('NativeRenderCoordinator', () => {
     ffi.reset();
     coordinator.invalidate(); // clears dirty caches and re-renders
 
-    const selCalls = ffi.getCalls('setSelection');
-    expect(selCalls.length).toBe(1);
-    // args are [handle, regionsJson]
-    const regions = JSON.parse(selCalls[0][1]);
-    expect(regions.length).toBe(1);
-    expect(regions[0].w).toBeGreaterThan(0);
+    const beginCalls = ffi.getCalls('beginSelections');
+    expect(beginCalls.length).toBe(1);
+    // args are [handle, count]
+    const count = beginCalls[0][1];
+    expect(count).toBe(1);
+
+    const rectCalls = ffi.getCalls('addSelectionRect');
+    expect(rectCalls.length).toBe(1);
+    // rect should have positive width
+    expect(rectCalls[0][3]).toBeGreaterThan(0); // w
   });
 });
 

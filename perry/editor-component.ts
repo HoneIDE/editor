@@ -10,7 +10,7 @@
 
 import { embedNSView } from 'perry/ui';
 import { EditorDocument } from '../core/document/document';
-import { EditorViewModel, KeyEvent, MouseEvent as EditorMouseEvent, ScrollEvent } from '../view-model/editor-view-model';
+import { EditorViewModel, KeyEvent, MouseEvent as EditorMouseEvent, ScrollEvent, setPerryMarkdownState } from '../view-model/editor-view-model';
 import { NativeRenderCoordinator, RenderCoordinatorConfig } from '../native/render-coordinator';
 import { DARK_THEME, LIGHT_THEME, EditorTheme } from '../view-model/theme';
 import type { NativeEditorFFI, NativeViewHandle } from '../native/ffi-bridge';
@@ -55,6 +55,23 @@ declare function hone_editor_set_gutter_width(handle: number, width: number): vo
 declare function hone_editor_set_read_only(handle: number, mode: number): void;
 declare function hone_editor_set_line_background(handle: number, line: number, r: number, g: number, b: number, a: number): void;
 declare function hone_editor_clear_line_backgrounds(handle: number): void;
+
+// === Scroll delta + line cache FFI ===
+declare function hone_editor_get_scroll_delta(handle: number): number;
+declare function hone_editor_clear_scroll_delta(handle: number): void;
+declare function hone_editor_needs_lines(handle: number): number;
+declare function hone_editor_clear_line_cache(handle: number): void;
+
+// === View size query FFI ===
+declare function hone_editor_get_view_width(handle: number): number;
+declare function hone_editor_get_view_height(handle: number): number;
+
+// === New TS-authoritative render protocol FFI ===
+declare function hone_editor_cache_line(handle: number, lineNumber: number, text: number, packedTokens: number): void;
+declare function hone_editor_invalidate_line(handle: number, lineNumber: number): void;
+declare function hone_editor_set_viewport(handle: number, startLine: number, endLine: number, scrollTop: number, totalLines: number, lineHeight: number): void;
+declare function hone_editor_begin_selections(handle: number, count: number): void;
+declare function hone_editor_add_selection_rect(handle: number, x: number, y: number, w: number, h: number): void;
 
 // === Action IDs (must match Rust action_id constants) ===
 const ACTION_MOVE_LEFT = 1;
@@ -184,6 +201,22 @@ class PerryEditorFFI implements NativeEditorFFI {
   setCursors(handle: NativeViewHandle, cursorsJson: string): void {
     hone_editor_set_cursors(handle, cursorsJson as any);
   }
+
+  cacheLine(handle: NativeViewHandle, lineNumber: number, text: string, packedTokens: string): void {
+    hone_editor_cache_line(handle, lineNumber, text as any, packedTokens as any);
+  }
+
+  setViewport(handle: NativeViewHandle, startLine: number, endLine: number, scrollTop: number, totalLines: number, lineHeight: number): void {
+    hone_editor_set_viewport(handle, startLine, endLine, scrollTop, totalLines, lineHeight);
+  }
+
+  beginSelections(handle: NativeViewHandle, count: number): void {
+    hone_editor_begin_selections(handle, count);
+  }
+
+  addSelectionRect(handle: NativeViewHandle, x: number, y: number, w: number, h: number): void {
+    hone_editor_add_selection_rect(handle, x, y, w, h);
+  }
 }
 
 /**
@@ -227,12 +260,14 @@ export class Editor {
   private _disposed: boolean;
   private _readOnly: boolean;
   private _editorSlot: number;
+  private _isMd: number;
   nativeHandle: number | null;
 
   constructor(width: number, height: number, opts?: EditorOptions) {
     this._disposed = false;
     this._readOnly = false;
     this._editorSlot = -1;
+    this._isMd = 0;
     this._width = width;
     this._height = height;
     this.nativeHandle = null;
@@ -268,7 +303,7 @@ export class Editor {
       fontSize = opts.fontSize;
     }
 
-    let fontFamily = 'JetBrains Mono';
+    let fontFamily = 'Menlo';
     if (opts && opts.fontFamily) {
       fontFamily = opts.fontFamily;
     }
@@ -284,6 +319,9 @@ export class Editor {
     const syntaxEngine = new KeywordSyntaxEngine();
     const vm = new EditorViewModel(doc, theme, syntaxEngine);
     vm.setPerryMode(true);
+    // Perry-safe: bypass _tokenProvider closure, call engine directly
+    // in visibleLines getter via this.syntaxEngine (no closure method dispatch).
+    vm.setDirectTokens(1);
     this._vm = vm;
 
     const config: RenderCoordinatorConfig = {
@@ -320,7 +358,7 @@ export class Editor {
     // Start the shared poll timer only once (first Editor instance).
     if (_pollStarted < 1) {
       _pollStarted = 1;
-      setInterval(() => { _pollAllEditors(); }, 16);
+      setInterval(() => { _pollAllEditors(); }, 8);
     }
   }
 
@@ -358,7 +396,34 @@ export class Editor {
     // Rebuild block comment depth cache for new content
     const engine = vm.syntaxEngine;
     engine.parse(buf);
-    vm.touch(); // notify onChange listeners (buffer was modified externally)
+    // Perry-safe: build fence cache for markdown content.
+    // NOTE: doc.languageId === 'markdown' string comparison fails in Perry AOT.
+    // Use this._isMd which was set by setLanguage() (called before setContent).
+    if (this._isMd === 1) {
+      // Build fence cache: char 'N' = not in fence, 'F' = in fence
+      // Using printable chars (not \0/\1) because Perry strings may be null-terminated
+      let fenceStr = '';
+      let inFence = false;
+      for (let fi = 0; fi < lineCount; fi++) {
+        if (inFence) {
+          fenceStr += 'F';
+        } else {
+          fenceStr += 'N';
+        }
+        const fline = buf.getLine(fi);
+        const ftrimmed = fline.trimStart();
+        if (ftrimmed.length >= 3 && ftrimmed.charAt(0) === '`' && ftrimmed.charAt(1) === '`' && ftrimmed.charAt(2) === '`') {
+          inFence = !inFence;
+        }
+      }
+      setPerryMarkdownState(1, fenceStr);
+    }
+    // Clear Rust line cache — old lines are stale after content change.
+    const handle = this.nativeHandle;
+    if (handle !== null) {
+      hone_editor_clear_line_cache(handle as number);
+    }
+    vm.touch();
     const coordinator = this._coordinator;
     coordinator.invalidate();
   }
@@ -371,10 +436,16 @@ export class Editor {
     const engine = vm.syntaxEngine;
     engine.setLanguage(languageId);
     engine.parse(doc.buffer);
-    // Re-create the token provider closure so Perry captures the UPDATED
-    // engine state (keywords, lineComment). The constructor-time closure
-    // holds stale state because Perry closures capture by value.
-    vm.refreshTokenProvider();
+    // Perry-safe: set module-level markdown state directly from the language string.
+    // Engine method calls and property access fail after first frame in Perry AOT.
+    // Module-level vars are the ONLY reliable mutable state in Perry getters.
+    if (languageId === 'markdown') {
+      this._isMd = 1;
+      setPerryMarkdownState(1, '');
+    } else {
+      this._isMd = 0;
+      setPerryMarkdownState(0, '');
+    }
     const coordinator = this._coordinator;
     coordinator.invalidate();
   }
@@ -483,17 +554,53 @@ export class Editor {
    * Public so the module-level top-level function can reach it without a closure.
    */
   flushEvents(): void {
+    const handle = this.nativeHandle;
+    if (handle === null) return;
+    const h = handle as number;
+
+    // Sync actual view dimensions from Rust (auto layout may have resized).
+    const actualW = hone_editor_get_view_width(h);
+    const actualH = hone_editor_get_view_height(h);
+    if (actualW > 1 && actualH > 1) {
+      const vm = this._vm;
+      const curW = this._width;
+      const curH = this._height;
+      if (Math.abs(actualW - curW) > 1 || Math.abs(actualH - curH) > 1) {
+        this._width = actualW;
+        this._height = actualH;
+        vm.onResize(actualW, actualH);
+      }
+    }
+
+    // Sync Rust scroll delta into TS viewport (Rust handles scroll directly —
+    // no scroll events are queued). This keeps TS viewport in sync for when it
+    // needs to provide lines or process content changes.
+    const scrollDelta = hone_editor_get_scroll_delta(h);
+    let scrollChanged = 0;
+    if (scrollDelta !== 0) {
+      const vm = this._vm;
+      // Rust scroll delta is in pixels (positive = content down).
+      // TS scrollBy expects (dx, dy) where positive dy = scroll down = scrollTop increases.
+      vm.viewport.scroll.scrollBy(0, -scrollDelta);
+      hone_editor_clear_scroll_delta(h);
+      scrollChanged = 1;
+    }
+
+    // If Rust needs lines (cache miss during scroll), do a full render to provide them.
+    const rustNeedsLines = hone_editor_needs_lines(h);
+    if (rustNeedsLines > 0 || scrollChanged > 0) {
+      const coordinator = this._coordinator;
+      coordinator.render();
+    }
+
     const hadEvents = this._pollEvents();
     // Perry: onChange closure (() => { this.render(); }) in coordinator.attach()
     // silently fails — Perry closures capture `this` by value. Explicitly
     // re-render here after processing events to bypass the broken closure.
     if (hadEvents > 0) {
       // Sync gutter width (may change as line count grows/shrinks).
-      const handle = this.nativeHandle;
-      if (handle !== null) {
-        const vm = this._vm;
-        hone_editor_set_gutter_width(handle as number, vm.gutterWidth);
-      }
+      const vm = this._vm;
+      hone_editor_set_gutter_width(h, vm.gutterWidth);
       const coordinator = this._coordinator;
       coordinator.render();
     }

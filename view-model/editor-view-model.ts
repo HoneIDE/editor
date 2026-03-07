@@ -20,6 +20,177 @@ import { registerSelectionCommands } from '../core/commands/selection-cmds';
 import { registerClipboardCommands } from '../core/commands/clipboard';
 import { registerMulticursorCommands } from '../core/commands/multicursor';
 import type { ISyntaxEngine } from '../core/tokenizer/tokenizer-interface';
+
+// Perry-safe: module-level variables for direct tokenization state.
+// Class field mutations aren't visible in getters (Perry captures initial values).
+// Module-level variables ARE read fresh on each function/getter call.
+let _perryLangIsMarkdown: number = 0;
+let _perryFenceCache: string = '';
+let _perryUseDirectTokens: number = 0;
+
+export function setPerryMarkdownState(isMarkdown: number, fenceCache: string): void {
+  _perryLangIsMarkdown = isMarkdown;
+  _perryFenceCache = fenceCache;
+}
+
+export function setPerryDirectTokens(enabled: number): void {
+  _perryUseDirectTokens = enabled;
+}
+
+/**
+ * Module-level markdown tokenizer. Must be in the SAME file as the getter
+ * that calls it — Perry AOT silently drops cross-module function calls from getters.
+ * Uses hardcoded VS Code dark theme colors (no theme parameter needed).
+ */
+function _tokenizeMdLine(line: string, inFence: number): LineToken[] {
+  const tokens: LineToken[] = [];
+  const len = line.length;
+  if (len === 0) return tokens;
+
+  const codeBg = '#282830';
+  const headingColor = '#4fc1ff';
+  const stringColor = '#ce9178';
+  const metaColor = '#569cd6';
+  const boldColor = '#d7ba7d';
+  const fgColor = '#d4d4d4';
+
+  // Trim leading whitespace for detection
+  let trimStart = 0;
+  while (trimStart < len && (line.charCodeAt(trimStart) === 32 || line.charCodeAt(trimStart) === 9)) {
+    trimStart++;
+  }
+
+  // Code fence (```)
+  if (len - trimStart >= 3 && line.charAt(trimStart) === '`' && line.charAt(trimStart + 1) === '`' && line.charAt(trimStart + 2) === '`') {
+    tokens.push({ startColumn: -1, endColumn: -1, color: codeBg, fontStyle: 'normal' });
+    tokens.push({ startColumn: 0, endColumn: len, color: metaColor, fontStyle: 'normal' });
+    return tokens;
+  }
+
+  // Inside a fenced code block
+  if (inFence === 1) {
+    tokens.push({ startColumn: -1, endColumn: -1, color: codeBg, fontStyle: 'normal' });
+    tokens.push({ startColumn: 0, endColumn: len, color: stringColor, fontStyle: 'normal' });
+    return tokens;
+  }
+
+  // Heading: starts with # followed by space
+  if (line.charAt(trimStart) === '#') {
+    let level = 0;
+    let hi = trimStart;
+    while (hi < len && line.charAt(hi) === '#' && level < 6) {
+      level++;
+      hi++;
+    }
+    if (hi < len && line.charCodeAt(hi) === 32) {
+      const headingStyle = level <= 2 ? 'heading-lg' : 'heading-md';
+      tokens.push({ startColumn: 0, endColumn: len, color: headingColor, fontStyle: headingStyle });
+      return tokens;
+    }
+  }
+
+  // Horizontal rule: --- or *** or ___
+  if (len - trimStart >= 3) {
+    const hrC = line.charCodeAt(trimStart);
+    if (hrC === 45 || hrC === 42 || hrC === 95) { // - * _
+      let allMatch = true;
+      for (let i = trimStart; i < len; i++) {
+        const c = line.charCodeAt(i);
+        if (c !== hrC && c !== 32) { allMatch = false; break; }
+      }
+      if (allMatch) {
+        tokens.push({ startColumn: 0, endColumn: len, color: metaColor, fontStyle: 'normal' });
+        return tokens;
+      }
+    }
+  }
+
+  // Blockquote: > prefix
+  if (line.charAt(trimStart) === '>') {
+    tokens.push({ startColumn: 0, endColumn: len, color: stringColor, fontStyle: 'italic' });
+    return tokens;
+  }
+
+  // List item: - or * or + or 1.
+  if (trimStart < len) {
+    const lc = line.charCodeAt(trimStart);
+    if (lc === 45 || lc === 42 || lc === 43) { // - * +
+      if (trimStart + 1 < len && line.charCodeAt(trimStart + 1) === 32) {
+        // Bullet point — just color the bullet, rest is normal
+        tokens.push({ startColumn: 0, endColumn: trimStart + 2, color: metaColor, fontStyle: 'normal' });
+        if (trimStart + 2 < len) {
+          tokens.push({ startColumn: trimStart + 2, endColumn: len, color: fgColor, fontStyle: 'normal' });
+        }
+        return tokens;
+      }
+    }
+  }
+
+  // Inline formatting: scan for **, *, `, []()
+  let pos = 0;
+  let lastEnd = 0;
+  while (pos < len) {
+    const ch = line.charCodeAt(pos);
+
+    // Inline code: `...`
+    if (ch === 96) { // backtick
+      let end = pos + 1;
+      while (end < len && line.charCodeAt(end) !== 96) end++;
+      if (end < len) {
+        if (pos > lastEnd) {
+          tokens.push({ startColumn: lastEnd, endColumn: pos, color: fgColor, fontStyle: 'normal' });
+        }
+        tokens.push({ startColumn: pos, endColumn: end + 1, color: stringColor, fontStyle: 'normal' });
+        lastEnd = end + 1;
+        pos = end + 1;
+        continue;
+      }
+    }
+
+    // Bold: **...**
+    if (ch === 42 && pos + 1 < len && line.charCodeAt(pos + 1) === 42) {
+      let end = pos + 2;
+      while (end + 1 < len) {
+        if (line.charCodeAt(end) === 42 && line.charCodeAt(end + 1) === 42) break;
+        end++;
+      }
+      if (end + 1 < len) {
+        if (pos > lastEnd) {
+          tokens.push({ startColumn: lastEnd, endColumn: pos, color: fgColor, fontStyle: 'normal' });
+        }
+        tokens.push({ startColumn: pos, endColumn: end + 2, color: boldColor, fontStyle: 'bold' });
+        lastEnd = end + 2;
+        pos = end + 2;
+        continue;
+      }
+    }
+
+    // Italic: *...*  (single asterisk, not followed by another)
+    if (ch === 42 && (pos + 1 >= len || line.charCodeAt(pos + 1) !== 42)) {
+      let end = pos + 1;
+      while (end < len && line.charCodeAt(end) !== 42) end++;
+      if (end < len) {
+        if (pos > lastEnd) {
+          tokens.push({ startColumn: lastEnd, endColumn: pos, color: fgColor, fontStyle: 'normal' });
+        }
+        tokens.push({ startColumn: pos, endColumn: end + 1, color: fgColor, fontStyle: 'italic' });
+        lastEnd = end + 1;
+        pos = end + 1;
+        continue;
+      }
+    }
+
+    pos++;
+  }
+
+  // Remaining text
+  if (lastEnd < len) {
+    tokens.push({ startColumn: lastEnd, endColumn: len, color: fgColor, fontStyle: 'normal' });
+  }
+
+  return tokens;
+}
+
 import { IncrementalTokenCache } from '../core/tokenizer/incremental';
 import { FoldState } from '../core/folding/fold-state';
 import { CursorBlinkController, CursorRenderState } from './cursor-state';
@@ -110,6 +281,15 @@ export class EditorViewModel {
   private _decorationProvider: ((lineNumber: number) => LineDecoration[]) | null = null;
   private _foldStateProvider: ((lineNumber: number) => 'expanded' | 'collapsed' | 'none') | null = null;
 
+  // Perry-safe direct tokenization: bypass _tokenProvider closure entirely.
+  // When set to 1, visibleLines calls this.syntaxEngine.getLineTokens() directly.
+  private _useDirectTokens: number = 0;
+
+  // Perry-safe language tracking: engine property access fails after first frame.
+  // Track markdown flag and fence cache string directly on the ViewModel.
+  _langIsMarkdown: number = 0;
+  _fenceCache: string = '';
+
   constructor(doc: EditorDocument, theme?: EditorTheme, syntaxEngine?: ISyntaxEngine) {
     this.document = doc;
     this._theme = theme !== undefined ? theme : DARK_THEME;
@@ -193,6 +373,31 @@ export class EditorViewModel {
     this._perryMode = enabled;
   }
 
+  /** Enable direct tokenization (bypass _tokenProvider closure for Perry). */
+  setDirectTokens(enabled: number): void {
+    this._useDirectTokens = enabled;
+    // Also set module-level flag — this is called from within the same module's
+    // class method, which CAN update module-level state (unlike cross-module calls).
+    _perryUseDirectTokens = enabled;
+  }
+
+  /** Perry-safe: set markdown flag directly (avoids engine property access). */
+  setMarkdownMode(isMarkdown: number): void {
+    this._langIsMarkdown = isMarkdown;
+  }
+
+  /** Perry-safe: set fence cache string directly (avoids engine property access). */
+  setFenceCache(cache: string): void {
+    this._fenceCache = cache;
+  }
+
+  /** Direct tokenization for a single line (Perry-safe: bypasses ISyntaxEngine vtable). */
+  tokenizeLine(lineNum: number): LineToken[] {
+    return getLineTokensDirect(
+      this.syntaxEngine as any, this.document.buffer, lineNum, this._theme,
+    );
+  }
+
   setTokenProvider(provider: (lineNumber: number) => LineToken[]): void {
     this._tokenProvider = provider;
   }
@@ -258,6 +463,71 @@ export class EditorViewModel {
       lineNumbers.push(i);
       i = i + 1;
     }
+
+    // Perry-safe: inline tokenization for markdown. Uses module-level
+    // _tokenizeMdLine (same file — cross-module function calls from getters
+    // are silently dropped by Perry AOT). Fence state is computed on-the-fly.
+    if (_perryUseDirectTokens === 1) {
+      const result: RenderedLine[] = [];
+      // Pre-compute fence state up to the first visible line (scan from line 0)
+      let fenceState = 0;
+      const firstLine = lineNumbers.length > 0 ? lineNumbers[0] : 0;
+      for (let fl = 0; fl < firstLine; fl++) {
+        const ftext = this.document.buffer.getLine(fl);
+        let fts = 0;
+        while (fts < ftext.length && (ftext.charCodeAt(fts) === 32 || ftext.charCodeAt(fts) === 9)) fts++;
+        if (ftext.length - fts >= 3 && ftext.charAt(fts) === '`' && ftext.charAt(fts + 1) === '`' && ftext.charAt(fts + 2) === '`') {
+          fenceState = fenceState === 0 ? 1 : 0;
+        }
+      }
+      for (let li = 0; li < lineNumbers.length; li++) {
+        const lineNum = lineNumbers[li];
+        const content = this.document.buffer.getLine(lineNum);
+        let tokens: LineToken[] = [];
+        let lineBg = '';
+        if (content.length > 0) {
+          const mdTokens = _tokenizeMdLine(content, fenceState);
+          if (mdTokens.length > 0) {
+            for (let ti = 0; ti < mdTokens.length; ti++) {
+              if (mdTokens[ti].startColumn === -1) {
+                lineBg = mdTokens[ti].color;
+              } else {
+                tokens.push(mdTokens[ti]);
+              }
+            }
+          }
+        }
+        // Update fence state for next line
+        if (content.length > 0) {
+          let fts2 = 0;
+          while (fts2 < content.length && (content.charCodeAt(fts2) === 32 || content.charCodeAt(fts2) === 9)) fts2++;
+          if (content.length - fts2 >= 3 && content.charAt(fts2) === '`' && content.charAt(fts2 + 1) === '`' && content.charAt(fts2 + 2) === '`') {
+            fenceState = fenceState === 0 ? 1 : 0;
+          }
+        }
+        if (tokens.length === 0 && content.length > 0) {
+          tokens = [{
+            startColumn: 0, endColumn: content.length,
+            color: this._theme.foreground, fontStyle: 'normal',
+          }];
+        }
+        const gutterItems = this._gutter.getGutterItems(
+          lineNum, 'none', false, null, null,
+        );
+        const line: RenderedLine = {
+          lineNumber: lineNum,
+          content: content,
+          tokens: tokens,
+          decorations: [],
+          foldState: 'none',
+          gutterItems: gutterItems,
+          lineBg: lineBg,
+        };
+        result.push(line);
+      }
+      return result;
+    }
+
     return computeRenderedLines(
       this.document.buffer,
       lineNumbers,

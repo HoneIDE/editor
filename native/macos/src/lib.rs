@@ -18,11 +18,46 @@ pub use editor_view::EditorView;
 use editor_view::{ActionCallback, MouseDownCallback, ScrollCallback, TextInputCallback};
 use string_header::str_from_header;
 
+use std::sync::Once;
+
+static INSTALL_SIGNAL_HANDLER: Once = Once::new();
+
+/// Install signal handlers for SIGSEGV, SIGABRT, SIGBUS to log crash info before dying.
+fn install_crash_handler() {
+    INSTALL_SIGNAL_HANDLER.call_once(|| {
+        unsafe {
+            libc::signal(libc::SIGSEGV, crash_signal_handler as libc::sighandler_t);
+            libc::signal(libc::SIGABRT, crash_signal_handler as libc::sighandler_t);
+            libc::signal(libc::SIGBUS, crash_signal_handler as libc::sighandler_t);
+        }
+    });
+}
+
+extern "C" fn crash_signal_handler(sig: libc::c_int) {
+    let sig_name = match sig {
+        libc::SIGSEGV => "SIGSEGV (segfault)",
+        libc::SIGABRT => "SIGABRT (abort)",
+        libc::SIGBUS => "SIGBUS (bus error)",
+        _ => "unknown signal",
+    };
+    // Use write() directly — eprintln! allocates and is not signal-safe
+    let msg = format!("\n[HONE CRASH] Fatal signal: {} ({})\n", sig_name, sig);
+    unsafe {
+        libc::write(2, msg.as_ptr() as *const libc::c_void, msg.len());
+    }
+    // Re-raise to get the default crash behavior (core dump etc.)
+    unsafe {
+        libc::signal(sig, libc::SIG_DFL);
+        libc::raise(sig);
+    }
+}
+
 // === FFI Contract Implementation ===
 
 /// Create a new editor view with the given dimensions.
 #[no_mangle]
 pub extern "C" fn hone_editor_create(width: f64, height: f64) -> *mut EditorView {
+    install_crash_handler();
     let mut ev = Box::new(EditorView::new(width, height));
     ev.init_nsview();
     Box::into_raw(ev)
@@ -337,6 +372,48 @@ pub extern "C" fn hone_editor_nsview(view: *mut EditorView) -> *mut std::ffi::c_
     view.nsview() as *mut std::ffi::c_void
 }
 
+/// Get the actual NSView width (from auto layout).
+#[no_mangle]
+pub extern "C" fn hone_editor_get_view_width(view: *mut EditorView) -> f64 {
+    let view = unsafe { &*view };
+    view.width()
+}
+
+/// Get the actual NSView height (from auto layout).
+#[no_mangle]
+pub extern "C" fn hone_editor_get_view_height(view: *mut EditorView) -> f64 {
+    let view = unsafe { &*view };
+    view.height()
+}
+
+/// Set read-only mode. mode > 0.5 = read-only, mode <= 0.5 = editable.
+#[no_mangle]
+pub extern "C" fn hone_editor_set_read_only(view: *mut EditorView, mode: f64) {
+    let view = unsafe { &mut *view };
+    view.read_only = mode > 0.5;
+}
+
+/// Set a background color for a specific line (1-based). Used for diff highlighting.
+#[no_mangle]
+pub extern "C" fn hone_editor_set_line_background(
+    view: *mut EditorView,
+    line: f64,
+    r: f64,
+    g: f64,
+    b: f64,
+    a: f64,
+) {
+    let view = unsafe { &mut *view };
+    view.line_backgrounds.insert(line as i32, (r, g, b, a));
+}
+
+/// Clear all per-line background colors.
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_line_backgrounds(view: *mut EditorView) {
+    let view = unsafe { &mut *view };
+    view.line_backgrounds.clear();
+}
+
 /// Begin a frame batch.
 #[no_mangle]
 pub extern "C" fn hone_editor_begin_frame(view: *mut EditorView) {
@@ -349,4 +426,108 @@ pub extern "C" fn hone_editor_begin_frame(view: *mut EditorView) {
 pub extern "C" fn hone_editor_end_frame(view: *mut EditorView) {
     let view = unsafe { &mut *view };
     view.end_frame();
+}
+
+// === Scroll delta + line cache FFI ===
+
+/// Get the accumulated scroll delta (in pixels) since the last clear.
+/// TypeScript reads this to sync its viewport state before content changes.
+#[no_mangle]
+pub extern "C" fn hone_editor_get_scroll_delta(view: *mut EditorView) -> f64 {
+    let view = unsafe { &*view };
+    view.rust_scroll_delta
+}
+
+/// Clear the accumulated scroll delta after TypeScript has synced.
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_scroll_delta(view: *mut EditorView) {
+    let view = unsafe { &mut *view };
+    view.rust_scroll_delta = 0.0;
+}
+
+/// Returns 1.0 if Rust needs TypeScript to provide lines (cache miss during scroll),
+/// 0.0 otherwise.
+#[no_mangle]
+pub extern "C" fn hone_editor_needs_lines(view: *mut EditorView) -> f64 {
+    let view = unsafe { &*view };
+    if view.needs_lines { 1.0 } else { 0.0 }
+}
+
+/// Clear the line cache. Call when switching files or when document content changes
+/// significantly (the cached lines would be stale).
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_line_cache(view: *mut EditorView) {
+    let view = unsafe { &mut *view };
+    view.clear_line_cache();
+}
+
+// === New TS-authoritative render protocol ===
+
+/// Cache a line's text and tokens (packed format: "start,end,hexColor,styleInt|...").
+/// Does NOT add to frame_lines — call set_viewport after caching all dirty lines.
+#[no_mangle]
+pub extern "C" fn hone_editor_cache_line(
+    view: *mut EditorView,
+    line_number: f64,
+    text: *const u8,
+    packed_tokens: *const u8,
+) {
+    let view = unsafe { &mut *view };
+    let text_str = str_from_header(text);
+    let tokens_str = str_from_header(packed_tokens);
+    view.cache_line_packed(line_number as i32, text_str, tokens_str);
+}
+
+/// Invalidate a single cached line (remove from cache).
+#[no_mangle]
+pub extern "C" fn hone_editor_invalidate_line(
+    view: *mut EditorView,
+    line_number: f64,
+) {
+    let view = unsafe { &mut *view };
+    view.invalidate_cache_line(line_number as i32);
+}
+
+/// Build frame_lines from the cache for the visible range [start_line, end_line] (1-based).
+/// Computes y_offsets from line numbers, line_height, and scroll_top.
+#[no_mangle]
+pub extern "C" fn hone_editor_set_viewport(
+    view: *mut EditorView,
+    start_line: f64,
+    end_line: f64,
+    scroll_top: f64,
+    total_lines: f64,
+    line_height: f64,
+) {
+    let view = unsafe { &mut *view };
+    view.set_viewport_range(
+        start_line as i32,
+        end_line as i32,
+        scroll_top,
+        total_lines as i32,
+        line_height,
+    );
+}
+
+/// Clear selections and pre-allocate for `count` new rects.
+#[no_mangle]
+pub extern "C" fn hone_editor_begin_selections(
+    view: *mut EditorView,
+    count: f64,
+) {
+    let view = unsafe { &mut *view };
+    view.begin_selections_new(count as usize);
+}
+
+/// Add a selection highlight rectangle.
+#[no_mangle]
+pub extern "C" fn hone_editor_add_selection_rect(
+    view: *mut EditorView,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+) {
+    let view = unsafe { &mut *view };
+    view.add_selection_rect_entry(x, y, w, h);
 }
