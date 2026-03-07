@@ -247,8 +247,11 @@ pub fn draw_line(
     let mut last_end = 0usize;
 
     for token in tokens {
-        let start = token.s.min(text_len);
-        let end = token.e.min(text_len);
+        // Snap byte offsets to valid UTF-8 char boundaries
+        let mut start = token.s.min(text_len);
+        let mut end = token.e.min(text_len);
+        while start < text_len && !text.is_char_boundary(start) { start += 1; }
+        while end < text_len && !text.is_char_boundary(end) { end += 1; }
         if start >= end {
             continue;
         }
