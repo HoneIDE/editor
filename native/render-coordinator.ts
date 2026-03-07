@@ -37,6 +37,10 @@ export class NativeRenderCoordinator {
   private _lastScrollTop: number = -1;
   private _lastCursorKey: string = '';
   private _lastSelectionKey: string = '';
+  // Per-line cache: unchanged lines skip tokenization + JSON.stringify.
+  // Two separate Maps (Perry AOT may not handle anonymous object values).
+  private _lineCacheContent: Map<number, string> = new Map();
+  private _lineCacheTokens: Map<number, string> = new Map();
 
   constructor(ffi: NativeEditorFFI, config: RenderCoordinatorConfig) {
     this._ffi = ffi;
@@ -132,12 +136,30 @@ export class NativeRenderCoordinator {
       this._lastScrollTop = scroll.scrollTop;
     }
 
-    // 2. Render visible lines
+    // 2. Render visible lines (with per-line cache to skip re-serialization)
     const visibleLines = vm.visibleLines;
+    const cContent = this._lineCacheContent;
+    const cTokens = this._lineCacheTokens;
     for (let li = 0; li < visibleLines.length; li++) {
       const line = visibleLines[li];
-      const tokensJson = this.serializeTokens(line.tokens);
       const yOffset = this.computeYOffset(line.lineNumber, scroll.scrollTop);
+      let tokensJson = '';
+      let needsSerialize = true;
+      if (cContent.has(line.lineNumber)) {
+        const prev = cContent.get(line.lineNumber);
+        if (prev === line.content && cTokens.has(line.lineNumber)) {
+          const cached = cTokens.get(line.lineNumber);
+          if (cached !== undefined) {
+            tokensJson = cached;
+            needsSerialize = false;
+          }
+        }
+      }
+      if (needsSerialize) {
+        tokensJson = this.serializeTokens(line.tokens);
+        cContent.set(line.lineNumber, line.content);
+        cTokens.set(line.lineNumber, tokensJson);
+      }
 
       ffi.renderLine(
         handle,
@@ -167,6 +189,8 @@ export class NativeRenderCoordinator {
   invalidate(): void {
     this._lastCursorKey = '';
     this._lastSelectionKey = '';
+    this._lineCacheContent.clear();
+    this._lineCacheTokens.clear();
     if (this._handle) {
       this._ffi.invalidate(this._handle);
     }

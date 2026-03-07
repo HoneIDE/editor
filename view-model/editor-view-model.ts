@@ -246,16 +246,15 @@ export class EditorViewModel {
   // === Computed State ===
 
   get visibleLines(): RenderedLine[] {
-    // Send ALL lines to Rust (it needs full content for scrolling),
-    // but only tokenize the visible viewport lines for performance.
-    const lineCount = this.document.buffer.getLineCount();
-
-    // Get the visible range from viewport (with buffer zone)
+    // Only send visible viewport lines to Rust (not the entire file).
+    // Rust clears frame_lines on begin_frame and only needs lines that
+    // will actually be drawn. Sending ALL lines was O(N) per frame which
+    // made scrolling laggy on files with hundreds of lines.
     const visRange = this.viewport.getVisibleRange();
 
     const lineNumbers: number[] = [];
-    let i = 0;
-    while (i < lineCount) {
+    let i = visRange.startLine;
+    while (i < visRange.endLine) {
       lineNumbers.push(i);
       i = i + 1;
     }
@@ -264,8 +263,6 @@ export class EditorViewModel {
       lineNumbers,
       this._gutter,
       this._tokenProvider,
-      visRange.startLine,
-      visRange.endLine,
     );
   }
 

@@ -487,7 +487,7 @@ export class Editor {
     // Perry: onChange closure (() => { this.render(); }) in coordinator.attach()
     // silently fails — Perry closures capture `this` by value. Explicitly
     // re-render here after processing events to bypass the broken closure.
-    if (hadEvents) {
+    if (hadEvents > 0) {
       // Sync gutter width (may change as line count grows/shrinks).
       const handle = this.nativeHandle;
       if (handle !== null) {
@@ -514,16 +514,17 @@ export class Editor {
   /**
    * Drain the Rust event queue and process all pending input events.
    * Called periodically by the setInterval timer.
+   * Returns: 0 = no events, 1 = scroll-only, 2 = content-changing events
    */
-  private _pollEvents(): boolean {
-    if (this._disposed) return false;
+  private _pollEvents(): number {
+    if (this._disposed) return 0;
     const handle = this.nativeHandle;
     if (handle === null) {
-      return false;
+      return 0;
     }
 
     const count = hone_editor_pending_event_count(handle as number);
-    if (count <= 0) return false;
+    if (count <= 0) return 0;
 
     const vm = this._vm;
     const isReadOnly = this._readOnly;
@@ -579,7 +580,7 @@ export class Editor {
     }
 
     hone_editor_clear_events(handle as number);
-    return true;
+    return 1;
   }
 
   /**
