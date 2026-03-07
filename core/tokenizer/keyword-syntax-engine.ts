@@ -197,21 +197,50 @@ const OPERATORS = '=+-*/<>!&|?:%~^';
 // KeywordSyntaxEngine
 // ---------------------------------------------------------------------------
 
-// Block comment depth cache — precomputed once per parse/render cycle.
-// blockCommentDepths[i] = depth of block comment nesting AT THE START of line i.
-let blockCommentDepths: number[] = [];
-let blockCommentCacheLineCount: number = 0;
-
-function precomputeBlockCommentDepths(buffer: TextBuffer): void {
-  const lineCount = buffer.getLineCount();
-  blockCommentDepths = [];
-  blockCommentCacheLineCount = lineCount;
+// Compute block comment depth at the start of a given line by scanning all
+// preceding lines.  Perry AOT has issues with module-level array indexed
+// assignment (`arr[i] = val`) so we avoid caching depths in an array and
+// recompute on each call instead.  For files under a few thousand lines this
+// is fast enough (each call is O(lines * avg_line_length)).
+function computeBlockCommentDepthAtLine(buffer: TextBuffer, targetLine: number): number {
   let depth = 0;
-  for (let i = 0; i < lineCount; i++) {
-    blockCommentDepths[i] = depth;
+  for (let i = 0; i < targetLine; i++) {
     const line = buffer.getLine(i);
     let j = 0;
     while (j < line.length) {
+      // Skip string literals so that /* or */ inside strings don't confuse depth.
+      // Perry AOT can't compare charAt(j) to a variable — handle each quote
+      // type separately with literal comparisons.
+      if (line.charAt(j) === "'") {
+        j = j + 1;
+        while (j < line.length) {
+          if (line.charAt(j) === '\\') { j = j + 2; continue; }
+          if (line.charAt(j) === "'") { j = j + 1; break; }
+          j = j + 1;
+        }
+        continue;
+      }
+      if (line.charAt(j) === '"') {
+        j = j + 1;
+        while (j < line.length) {
+          if (line.charAt(j) === '\\') { j = j + 2; continue; }
+          if (line.charAt(j) === '"') { j = j + 1; break; }
+          j = j + 1;
+        }
+        continue;
+      }
+      if (line.charAt(j) === '`') {
+        j = j + 1;
+        while (j < line.length) {
+          if (line.charAt(j) === '`') { j = j + 1; break; }
+          j = j + 1;
+        }
+        continue;
+      }
+      // Also skip line comments — they can contain /* or */ as text
+      if (line.charAt(j) === '/' && j + 1 < line.length && line.charAt(j + 1) === '/') {
+        break; // rest of line is a comment, skip
+      }
       if (line.charAt(j) === '/' && j + 1 < line.length && line.charAt(j + 1) === '*') {
         depth = depth + 1;
         j = j + 2;
@@ -223,6 +252,7 @@ function precomputeBlockCommentDepths(buffer: TextBuffer): void {
       }
     }
   }
+  return depth;
 }
 
 export class KeywordSyntaxEngine implements ISyntaxEngine {
@@ -298,10 +328,8 @@ export class KeywordSyntaxEngine implements ISyntaxEngine {
 
   parse(_buffer: TextBuffer, _changedRanges?: { fromOffset: number; toOffset: number }[]): any {
     this.parsed = true;
-    // Precompute block comment depth for all lines in O(N)
-    if (this.languageId !== 'python') {
-      precomputeBlockCommentDepths(_buffer);
-    }
+    // Block comment depth is now computed on-demand in isInsideBlockComment()
+    // instead of cached in a module-level array (Perry AOT array issues).
     return true;
   }
 
@@ -314,13 +342,9 @@ export class KeywordSyntaxEngine implements ISyntaxEngine {
     const tokens: LineToken[] = [];
     let i = 0;
 
-    // Check if we're inside a block comment using precomputed cache
+    // Check if we're inside a block comment (computed on demand per line)
     let inBlockComment = false;
     if (this.languageId !== 'python') {
-      // Ensure cache is populated (may not be if parse() wasn't called)
-      if (blockCommentCacheLineCount < 1 || blockCommentCacheLineCount !== buffer.getLineCount()) {
-        precomputeBlockCommentDepths(buffer);
-      }
       inBlockComment = this.isInsideBlockComment(buffer, lineNumber);
     }
 
@@ -679,15 +703,6 @@ export class KeywordSyntaxEngine implements ISyntaxEngine {
   // -----------------------------------------------------------------------
 
   private isInsideBlockComment(buffer: TextBuffer, lineNumber: number): boolean {
-    // Use precomputed cache (O(1) lookup instead of O(N) scan)
-    if (lineNumber < blockCommentCacheLineCount) {
-      return blockCommentDepths[lineNumber] > 0;
-    }
-    // Fallback: recompute if cache is stale
-    precomputeBlockCommentDepths(buffer);
-    if (lineNumber < blockCommentCacheLineCount) {
-      return blockCommentDepths[lineNumber] > 0;
-    }
-    return false;
+    return computeBlockCommentDepthAtLine(buffer, lineNumber) > 0;
   }
 }
