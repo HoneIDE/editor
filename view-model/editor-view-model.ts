@@ -28,6 +28,13 @@ let _perryLangIsMarkdown: number = 0;
 let _perryFenceCache: string = '';
 let _perryUseDirectTokens: number = 0;
 
+// Perry-safe: module-level keyword/comment state for non-markdown tokenization.
+// Keywords stored as delimited STRING (not array) — Perry module-level array
+// reassignment doesn't work reliably. Use indexOf('|word|') for lookup.
+let _perryKeywordStr: string = '';
+let _perryLineComment: string = '//';
+let _perryLangId: string = '';
+
 export function setPerryMarkdownState(isMarkdown: number, fenceCache: string): void {
   _perryLangIsMarkdown = isMarkdown;
   _perryFenceCache = fenceCache;
@@ -35,6 +42,68 @@ export function setPerryMarkdownState(isMarkdown: number, fenceCache: string): v
 
 export function setPerryDirectTokens(enabled: number): void {
   _perryUseDirectTokens = enabled;
+}
+
+// Keyword strings — delimited with | for indexOf lookup.
+// Perry can't handle module-level array reassignment or array iteration in getters.
+// String indexOf('|word|') is Perry-safe.
+const _KWS_TS = '|import|export|from|const|let|var|function|return|if|else|for|while|do|switch|case|break|continue|new|this|class|extends|implements|interface|type|enum|namespace|module|declare|abstract|readonly|public|private|protected|static|async|await|try|catch|finally|throw|typeof|instanceof|in|of|as|is|keyof|void|null|undefined|true|false|default|yield|super|delete|';
+const _KWS_PY = '|import|from|def|class|return|if|elif|else|for|while|break|continue|pass|raise|try|except|finally|with|as|lambda|yield|global|nonlocal|assert|del|in|not|and|or|is|True|False|None|async|await|print|self|';
+const _KWS_RS = '|fn|let|mut|const|static|struct|enum|impl|trait|pub|use|mod|crate|super|self|Self|where|if|else|match|loop|while|for|in|break|continue|return|as|ref|move|type|unsafe|extern|async|await|dyn|true|false|';
+const _KWS_GO = '|package|import|func|return|var|const|type|struct|interface|map|chan|go|defer|select|case|default|if|else|for|range|switch|break|continue|fallthrough|goto|true|false|nil|make|new|len|cap|append|delete|copy|panic|recover|';
+const _KWS_JAVA = '|import|package|class|interface|extends|implements|public|private|protected|static|final|abstract|void|int|long|double|float|boolean|char|byte|short|return|if|else|for|while|do|switch|case|break|continue|default|new|this|super|try|catch|finally|throw|throws|instanceof|enum|assert|synchronized|volatile|transient|native|null|true|false|';
+const _KWS_SWIFT = '|import|class|struct|enum|protocol|extension|func|var|let|return|if|else|guard|switch|case|default|for|in|while|repeat|break|continue|fallthrough|do|try|catch|throw|throws|rethrows|public|private|internal|fileprivate|open|static|override|final|mutating|nonmutating|lazy|weak|unowned|self|Self|super|nil|true|false|as|is|init|deinit|typealias|associatedtype|where|async|await|';
+const _KWS_SHELL = '|if|then|else|elif|fi|for|while|do|done|case|esac|in|function|return|local|export|readonly|declare|typeset|unset|shift|exit|echo|printf|read|test|set|source|eval|exec|true|false|cd|pwd|pushd|popd|';
+const _KWS_RUBY = '|def|class|module|end|if|elsif|else|unless|while|until|for|do|begin|rescue|ensure|raise|return|yield|require|require_relative|include|extend|attr_reader|attr_writer|attr_accessor|self|super|nil|true|false|and|or|not|puts|print|p|lambda|proc|new|';
+const _KWS_PHP = '|function|class|interface|trait|extends|implements|public|private|protected|static|abstract|final|return|if|else|elseif|for|foreach|while|do|switch|case|break|continue|default|match|new|echo|print|var|const|use|namespace|try|catch|finally|throw|null|true|false|array|list|isset|unset|empty|';
+const _KWS_JSON = '|true|false|null|';
+const _KWS_YAML = '|true|false|null|yes|no|on|off|';
+const _KWS_TOML = '|true|false|';
+const _KWS_HTML = '|doctype|html|head|body|div|span|script|style|link|meta|';
+const _KWS_CSS = '|import|media|keyframes|font-face|supports|charset|';
+const _KWS_XML = '|xml|xmlns|version|encoding|standalone|';
+const _KWS_SQL = '|select|SELECT|from|FROM|where|WHERE|insert|INSERT|into|INTO|update|UPDATE|set|SET|delete|DELETE|create|CREATE|table|TABLE|drop|DROP|alter|ALTER|join|JOIN|left|LEFT|right|RIGHT|inner|INNER|outer|OUTER|on|ON|as|AS|and|AND|or|OR|not|NOT|null|NULL|is|IS|in|IN|order|ORDER|by|BY|group|GROUP|having|HAVING|limit|LIMIT|values|VALUES|true|TRUE|false|FALSE|begin|BEGIN|end|END|';
+
+/** Set module-level language state for Perry-safe code tokenization. */
+export function setPerryLanguageState(langId: string): void {
+  _perryLangId = langId;
+  // Perry AOT: explicit if-else, not Record[variable].
+  // Assign keyword STRING (not array) — Perry can't reassign module-level arrays.
+  if (langId === 'typescript' || langId === 'javascript') {
+    _perryKeywordStr = _KWS_TS; _perryLineComment = '//';
+  } else if (langId === 'python') {
+    _perryKeywordStr = _KWS_PY; _perryLineComment = '#';
+  } else if (langId === 'rust' || langId === 'c' || langId === 'cpp') {
+    _perryKeywordStr = _KWS_RS; _perryLineComment = '//';
+  } else if (langId === 'go') {
+    _perryKeywordStr = _KWS_GO; _perryLineComment = '//';
+  } else if (langId === 'java') {
+    _perryKeywordStr = _KWS_JAVA; _perryLineComment = '//';
+  } else if (langId === 'swift') {
+    _perryKeywordStr = _KWS_SWIFT; _perryLineComment = '//';
+  } else if (langId === 'shell') {
+    _perryKeywordStr = _KWS_SHELL; _perryLineComment = '#';
+  } else if (langId === 'ruby') {
+    _perryKeywordStr = _KWS_RUBY; _perryLineComment = '#';
+  } else if (langId === 'php') {
+    _perryKeywordStr = _KWS_PHP; _perryLineComment = '//';
+  } else if (langId === 'json') {
+    _perryKeywordStr = _KWS_JSON; _perryLineComment = '';
+  } else if (langId === 'yaml') {
+    _perryKeywordStr = _KWS_YAML; _perryLineComment = '#';
+  } else if (langId === 'toml') {
+    _perryKeywordStr = _KWS_TOML; _perryLineComment = '#';
+  } else if (langId === 'html') {
+    _perryKeywordStr = _KWS_HTML; _perryLineComment = '';
+  } else if (langId === 'css') {
+    _perryKeywordStr = _KWS_CSS; _perryLineComment = '';
+  } else if (langId === 'xml') {
+    _perryKeywordStr = _KWS_XML; _perryLineComment = '';
+  } else if (langId === 'sql') {
+    _perryKeywordStr = _KWS_SQL; _perryLineComment = '--';
+  } else {
+    _perryKeywordStr = ''; _perryLineComment = '//';
+  }
 }
 
 /**
@@ -189,6 +258,280 @@ function _tokenizeMdLine(line: string, inFence: number): LineToken[] {
   }
 
   return tokens;
+}
+
+// ---------------------------------------------------------------------------
+// Perry-safe inline keyword tokenizer for non-markdown languages.
+// Must be in the SAME file as the visibleLines getter (Perry AOT drops
+// cross-module function calls from getters).
+// ---------------------------------------------------------------------------
+
+const _WORD_CHARS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$';
+const _UPPER_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const _DIGIT_CHARS = '0123456789';
+const _HEX_CHARS = '0123456789abcdefABCDEF';
+const _OPERATORS = '=+-*/<>!&|?:%~^';
+
+function _tokenizeCodeLine(line: string, inBlockComment: number): LineToken[] {
+  const tokens: LineToken[] = [];
+  const len = line.length;
+  if (len === 0) return tokens;
+
+  // Hardcoded VS Code dark theme colors (same as _tokenizeMdLine)
+  const kwColor = '#569cd6';
+  const strColor = '#ce9178';
+  const cmtColor = '#6a9955';
+  const varColor = '#9cdcfe';
+  const typeColor = '#4ec9b0';
+  const fnColor = '#dcdcaa';
+  const numColor = '#b5cea8';
+  const opColor = '#d4d4d4';
+  const puncColor = '#d4d4d4';
+  const boolColor = '#569cd6';
+  const fgColor = '#d4d4d4';
+
+  let i = 0;
+  const kwStr = _perryKeywordStr;
+  const lcmt = _perryLineComment;
+
+  // If we're inside a block comment from a previous line
+  if (inBlockComment === 1) {
+    const endIdx = line.indexOf('*/');
+    if (endIdx >= 0) {
+      tokens.push({ startColumn: 0, endColumn: endIdx + 2, color: cmtColor, fontStyle: 'italic' });
+      i = endIdx + 2;
+    } else {
+      tokens.push({ startColumn: 0, endColumn: len, color: cmtColor, fontStyle: 'italic' });
+      return tokens;
+    }
+  }
+
+  while (i < len) {
+    const c = line.charAt(i);
+
+    // Line comment
+    if (lcmt.length > 0 && i + lcmt.length <= len) {
+      let match = true;
+      for (let ci = 0; ci < lcmt.length; ci++) {
+        if (line.charAt(i + ci) !== lcmt.charAt(ci)) { match = false; break; }
+      }
+      if (match) {
+        tokens.push({ startColumn: i, endColumn: len, color: cmtColor, fontStyle: 'italic' });
+        return tokens;
+      }
+    }
+
+    // Block comment start
+    if (c === '/' && i + 1 < len && line.charAt(i + 1) === '*') {
+      const endIdx = line.indexOf('*/', i + 2);
+      if (endIdx >= 0) {
+        tokens.push({ startColumn: i, endColumn: endIdx + 2, color: cmtColor, fontStyle: 'italic' });
+        i = endIdx + 2;
+        continue;
+      } else {
+        tokens.push({ startColumn: i, endColumn: len, color: cmtColor, fontStyle: 'italic' });
+        return tokens;
+      }
+    }
+
+    // Python # comment
+    if (_perryLangId === 'python' && c === '#') {
+      tokens.push({ startColumn: i, endColumn: len, color: cmtColor, fontStyle: 'italic' });
+      return tokens;
+    }
+
+    // Strings: single quote
+    if (c === "'") {
+      let j = i + 1;
+      while (j < len) {
+        if (line.charAt(j) === '\\') { j = j + 2; continue; }
+        if (line.charAt(j) === "'") { j = j + 1; break; }
+        j = j + 1;
+      }
+      tokens.push({ startColumn: i, endColumn: j, color: strColor, fontStyle: 'normal' });
+      i = j;
+      continue;
+    }
+    // Strings: double quote
+    if (c === '"') {
+      let j = i + 1;
+      while (j < len) {
+        if (line.charAt(j) === '\\') { j = j + 2; continue; }
+        if (line.charAt(j) === '"') { j = j + 1; break; }
+        j = j + 1;
+      }
+      tokens.push({ startColumn: i, endColumn: j, color: strColor, fontStyle: 'normal' });
+      i = j;
+      continue;
+    }
+    // Strings: backtick
+    if (c === '`') {
+      let j = i + 1;
+      while (j < len) {
+        if (line.charAt(j) === '`') { j = j + 1; break; }
+        j = j + 1;
+      }
+      tokens.push({ startColumn: i, endColumn: j, color: strColor, fontStyle: 'normal' });
+      i = j;
+      continue;
+    }
+
+    // Numbers
+    if (_DIGIT_CHARS.indexOf(c) >= 0 || (c === '.' && i + 1 < len && _DIGIT_CHARS.indexOf(line.charAt(i + 1)) >= 0)) {
+      let j = i;
+      if (c === '0' && j + 1 < len) {
+        const next = line.charAt(j + 1);
+        if (next === 'x' || next === 'X') {
+          j = j + 2;
+          while (j < len && (_HEX_CHARS.indexOf(line.charAt(j)) >= 0 || line.charAt(j) === '_')) j = j + 1;
+        } else if (next === 'b' || next === 'B') {
+          j = j + 2;
+          while (j < len && (line.charAt(j) === '0' || line.charAt(j) === '1' || line.charAt(j) === '_')) j = j + 1;
+        } else {
+          while (j < len && (_DIGIT_CHARS.indexOf(line.charAt(j)) >= 0 || line.charAt(j) === '.' || line.charAt(j) === 'e' || line.charAt(j) === 'E' || line.charAt(j) === '_')) j = j + 1;
+        }
+      } else {
+        while (j < len && (_DIGIT_CHARS.indexOf(line.charAt(j)) >= 0 || line.charAt(j) === '.' || line.charAt(j) === 'e' || line.charAt(j) === 'E' || line.charAt(j) === '_')) j = j + 1;
+      }
+      tokens.push({ startColumn: i, endColumn: j, color: numColor, fontStyle: 'normal' });
+      i = j;
+      continue;
+    }
+
+    // Words (keywords, types, functions, identifiers)
+    if (_WORD_CHARS.indexOf(c) >= 0) {
+      let j = i;
+      while (j < len && _WORD_CHARS.indexOf(line.charAt(j)) >= 0) j = j + 1;
+      const word = line.slice(i, j);
+
+      let color = fgColor;
+      let fontStyle: 'normal' | 'italic' | 'bold' | 'bold-italic' = 'normal';
+
+      // Look ahead for function call: word(
+      let afterWord = j;
+      while (afterWord < len && line.charAt(afterWord) === ' ') afterWord = afterWord + 1;
+      const isFunc = afterWord < len && line.charAt(afterWord) === '(';
+
+      // Check keyword via string indexOf (Perry-safe: no array iteration)
+      // kwStr is '|import|export|...|' — search for '|word|'
+      // Use += (not +) — Perry string + is broken, += works.
+      let needle = '|';
+      needle += word;
+      needle += '|';
+      const isKw = kwStr.indexOf(needle) >= 0;
+
+      if (isKw) {
+        color = kwColor;
+        if (word === 'true' || word === 'false' || word === 'True' || word === 'False') {
+          color = boolColor;
+        } else if (word === 'self' || word === 'Self' || word === 'this' || word === 'super') {
+          color = kwColor;
+          fontStyle = 'italic';
+        }
+      } else if (isFunc) {
+        color = fnColor;
+      } else if (_UPPER_CHARS.indexOf(word.charAt(0)) >= 0 && word.length > 1) {
+        color = typeColor;
+      } else {
+        // Check if after : or < (type annotation)
+        let before = i - 1;
+        while (before >= 0 && line.charAt(before) === ' ') before = before - 1;
+        if (before >= 0 && (line.charAt(before) === ':' || line.charAt(before) === '<')) {
+          color = typeColor;
+        } else {
+          color = varColor;
+        }
+      }
+
+      tokens.push({ startColumn: i, endColumn: j, color: color, fontStyle: fontStyle });
+      i = j;
+      continue;
+    }
+
+    // Operators
+    if (_OPERATORS.indexOf(c) >= 0) {
+      let j = i;
+      while (j < len && _OPERATORS.indexOf(line.charAt(j)) >= 0) j = j + 1;
+      tokens.push({ startColumn: i, endColumn: j, color: opColor, fontStyle: 'normal' });
+      i = j;
+      continue;
+    }
+
+    // Punctuation
+    if ('{}[]().,;@#'.indexOf(c) >= 0) {
+      tokens.push({ startColumn: i, endColumn: i + 1, color: puncColor, fontStyle: 'normal' });
+      i = i + 1;
+      continue;
+    }
+
+    // Whitespace and other
+    let j = i;
+    while (j < len &&
+           _WORD_CHARS.indexOf(line.charAt(j)) < 0 &&
+           _OPERATORS.indexOf(line.charAt(j)) < 0 &&
+           '{}[]().,;@#'.indexOf(line.charAt(j)) < 0 &&
+           line.charAt(j) !== '/' &&
+           line.charAt(j) !== "'" &&
+           line.charAt(j) !== '"' &&
+           line.charAt(j) !== '`') {
+      j = j + 1;
+    }
+    if (j === i) j = i + 1;
+    tokens.push({ startColumn: i, endColumn: j, color: fgColor, fontStyle: 'normal' });
+    i = j;
+  }
+
+  return tokens;
+}
+
+/**
+ * Compute block comment state for visible lines (Perry-safe: no cross-module calls).
+ * Returns 1 if lineNumber starts inside a block comment, 0 otherwise.
+ */
+function _computeBlockCommentState(buf: TextBuffer, targetLine: number): number {
+  if (_perryLangId === 'python') return 0;
+  let depth = 0;
+  for (let i = 0; i < targetLine; i++) {
+    const ln = buf.getLine(i);
+    let j = 0;
+    while (j < ln.length) {
+      if (ln.charAt(j) === "'") {
+        j = j + 1;
+        while (j < ln.length) {
+          if (ln.charAt(j) === '\\') { j = j + 2; continue; }
+          if (ln.charAt(j) === "'") { j = j + 1; break; }
+          j = j + 1;
+        }
+        continue;
+      }
+      if (ln.charAt(j) === '"') {
+        j = j + 1;
+        while (j < ln.length) {
+          if (ln.charAt(j) === '\\') { j = j + 2; continue; }
+          if (ln.charAt(j) === '"') { j = j + 1; break; }
+          j = j + 1;
+        }
+        continue;
+      }
+      if (ln.charAt(j) === '`') {
+        j = j + 1;
+        while (j < ln.length) {
+          if (ln.charAt(j) === '`') { j = j + 1; break; }
+          j = j + 1;
+        }
+        continue;
+      }
+      if (ln.charAt(j) === '/' && j + 1 < ln.length && ln.charAt(j + 1) === '/') break;
+      if (ln.charAt(j) === '/' && j + 1 < ln.length && ln.charAt(j + 1) === '*') {
+        depth = depth + 1; j = j + 2;
+      } else if (ln.charAt(j) === '*' && j + 1 < ln.length && ln.charAt(j + 1) === '/') {
+        if (depth > 0) depth = depth - 1; j = j + 2;
+      } else {
+        j = j + 1;
+      }
+    }
+  }
+  return depth > 0 ? 1 : 0;
 }
 
 import { IncrementalTokenCache } from '../core/tokenizer/incremental';
@@ -464,66 +807,101 @@ export class EditorViewModel {
       i = i + 1;
     }
 
-    // Perry-safe: inline tokenization for markdown. Uses module-level
-    // _tokenizeMdLine (same file — cross-module function calls from getters
-    // are silently dropped by Perry AOT). Fence state is computed on-the-fly.
+    // Perry-safe: inline tokenization. Uses module-level functions in the SAME
+    // file (Perry AOT drops cross-module function calls from getters).
+    // Dispatches between markdown (_tokenizeMdLine) and code (_tokenizeCodeLine).
     if (_perryUseDirectTokens === 1) {
       const result: RenderedLine[] = [];
-      // Pre-compute fence state up to the first visible line (scan from line 0)
-      let fenceState = 0;
+      const buf = this.document.buffer;
       const firstLine = lineNumbers.length > 0 ? lineNumbers[0] : 0;
-      for (let fl = 0; fl < firstLine; fl++) {
-        const ftext = this.document.buffer.getLine(fl);
-        let fts = 0;
-        while (fts < ftext.length && (ftext.charCodeAt(fts) === 32 || ftext.charCodeAt(fts) === 9)) fts++;
-        if (ftext.length - fts >= 3 && ftext.charAt(fts) === '`' && ftext.charAt(fts + 1) === '`' && ftext.charAt(fts + 2) === '`') {
-          fenceState = fenceState === 0 ? 1 : 0;
-        }
-      }
-      for (let li = 0; li < lineNumbers.length; li++) {
-        const lineNum = lineNumbers[li];
-        const content = this.document.buffer.getLine(lineNum);
-        let tokens: LineToken[] = [];
-        let lineBg = '';
-        if (content.length > 0) {
-          const mdTokens = _tokenizeMdLine(content, fenceState);
-          if (mdTokens.length > 0) {
-            for (let ti = 0; ti < mdTokens.length; ti++) {
-              if (mdTokens[ti].startColumn === -1) {
-                lineBg = mdTokens[ti].color;
-              } else {
-                tokens.push(mdTokens[ti]);
-              }
-            }
-          }
-        }
-        // Update fence state for next line
-        if (content.length > 0) {
-          let fts2 = 0;
-          while (fts2 < content.length && (content.charCodeAt(fts2) === 32 || content.charCodeAt(fts2) === 9)) fts2++;
-          if (content.length - fts2 >= 3 && content.charAt(fts2) === '`' && content.charAt(fts2 + 1) === '`' && content.charAt(fts2 + 2) === '`') {
+
+      if (_perryLangIsMarkdown === 1) {
+        // Markdown path: compute fence state up to the first visible line
+        let fenceState = 0;
+        for (let fl = 0; fl < firstLine; fl++) {
+          const ftext = buf.getLine(fl);
+          let fts = 0;
+          while (fts < ftext.length && (ftext.charCodeAt(fts) === 32 || ftext.charCodeAt(fts) === 9)) fts++;
+          if (ftext.length - fts >= 3 && ftext.charAt(fts) === '`' && ftext.charAt(fts + 1) === '`' && ftext.charAt(fts + 2) === '`') {
             fenceState = fenceState === 0 ? 1 : 0;
           }
         }
-        if (tokens.length === 0 && content.length > 0) {
-          tokens = [{
-            startColumn: 0, endColumn: content.length,
-            color: this._theme.foreground, fontStyle: 'normal',
-          }];
+        for (let li = 0; li < lineNumbers.length; li++) {
+          const lineNum = lineNumbers[li];
+          const content = buf.getLine(lineNum);
+          let tokens: LineToken[] = [];
+          let lineBg = '';
+          if (content.length > 0) {
+            const mdTokens = _tokenizeMdLine(content, fenceState);
+            if (mdTokens.length > 0) {
+              for (let ti = 0; ti < mdTokens.length; ti++) {
+                if (mdTokens[ti].startColumn === -1) {
+                  lineBg = mdTokens[ti].color;
+                } else {
+                  tokens.push(mdTokens[ti]);
+                }
+              }
+            }
+          }
+          // Update fence state for next line
+          if (content.length > 0) {
+            let fts2 = 0;
+            while (fts2 < content.length && (content.charCodeAt(fts2) === 32 || content.charCodeAt(fts2) === 9)) fts2++;
+            if (content.length - fts2 >= 3 && content.charAt(fts2) === '`' && content.charAt(fts2 + 1) === '`' && content.charAt(fts2 + 2) === '`') {
+              fenceState = fenceState === 0 ? 1 : 0;
+            }
+          }
+          if (tokens.length === 0 && content.length > 0) {
+            tokens = [{
+              startColumn: 0, endColumn: content.length,
+              color: this._theme.foreground, fontStyle: 'normal',
+            }];
+          }
+          const gutterItems = this._gutter.getGutterItems(lineNum, 'none', false, null, null);
+          const line: RenderedLine = {
+            lineNumber: lineNum, content: content, tokens: tokens,
+            decorations: [], foldState: 'none', gutterItems: gutterItems, lineBg: lineBg,
+          };
+          result.push(line);
         }
-        const gutterItems = this._gutter.getGutterItems(
-          lineNum, 'none', false, null, null,
-        );
-        const line: RenderedLine = {
-          lineNumber: lineNum,
-          content: content,
-          tokens: tokens,
-          decorations: [],
-          foldState: 'none',
-          gutterItems: gutterItems,
-          lineBg: lineBg,
-        };
-        result.push(line);
+      } else {
+        // Code path: compute block comment state, then tokenize with keywords
+        let blockState = _computeBlockCommentState(buf, firstLine);
+        for (let li = 0; li < lineNumbers.length; li++) {
+          const lineNum = lineNumbers[li];
+          const content = buf.getLine(lineNum);
+          let tokens: LineToken[] = [];
+          if (content.length > 0) {
+            tokens = _tokenizeCodeLine(content, blockState);
+            // Update block comment state for next line
+            let d = blockState;
+            let j = 0;
+            while (j < content.length) {
+              if (content.charAt(j) === "'") { j = j + 1; while (j < content.length) { if (content.charAt(j) === '\\') { j = j + 2; continue; } if (content.charAt(j) === "'") { j = j + 1; break; } j = j + 1; } continue; }
+              if (content.charAt(j) === '"') { j = j + 1; while (j < content.length) { if (content.charAt(j) === '\\') { j = j + 2; continue; } if (content.charAt(j) === '"') { j = j + 1; break; } j = j + 1; } continue; }
+              if (content.charAt(j) === '`') { j = j + 1; while (j < content.length) { if (content.charAt(j) === '`') { j = j + 1; break; } j = j + 1; } continue; }
+              if (content.charAt(j) === '/' && j + 1 < content.length && content.charAt(j + 1) === '/') break;
+              if (content.charAt(j) === '/' && j + 1 < content.length && content.charAt(j + 1) === '*') { d = d + 1; j = j + 2; }
+              else if (content.charAt(j) === '*' && j + 1 < content.length && content.charAt(j + 1) === '/') { if (d > 0) d = d - 1; j = j + 2; }
+              else { j = j + 1; }
+            }
+            blockState = d > 0 ? 1 : 0;
+          } else {
+            tokens = [];
+          }
+          if (tokens.length === 0 && content.length > 0) {
+            tokens = [{
+              startColumn: 0, endColumn: content.length,
+              color: this._theme.foreground, fontStyle: 'normal',
+            }];
+          }
+          const gutterItems = this._gutter.getGutterItems(lineNum, 'none', false, null, null);
+          const line: RenderedLine = {
+            lineNumber: lineNum, content: content, tokens: tokens,
+            decorations: [], foldState: 'none', gutterItems: gutterItems, lineBg: '',
+          };
+          result.push(line);
+        }
       }
       return result;
     }

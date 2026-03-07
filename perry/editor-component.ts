@@ -10,7 +10,7 @@
 
 import { embedNSView } from 'perry/ui';
 import { EditorDocument } from '../core/document/document';
-import { EditorViewModel, KeyEvent, MouseEvent as EditorMouseEvent, ScrollEvent, setPerryMarkdownState } from '../view-model/editor-view-model';
+import { EditorViewModel, KeyEvent, MouseEvent as EditorMouseEvent, ScrollEvent, setPerryMarkdownState, setPerryLanguageState } from '../view-model/editor-view-model';
 import { NativeRenderCoordinator, RenderCoordinatorConfig } from '../native/render-coordinator';
 import { DARK_THEME, LIGHT_THEME, EditorTheme } from '../view-model/theme';
 import type { NativeEditorFFI, NativeViewHandle } from '../native/ffi-bridge';
@@ -322,6 +322,8 @@ export class Editor {
     // Perry-safe: bypass _tokenProvider closure, call engine directly
     // in visibleLines getter via this.syntaxEngine (no closure method dispatch).
     vm.setDirectTokens(1);
+    // Set module-level language state so the inline tokenizer knows which keywords to use.
+    setPerryLanguageState(language);
     this._vm = vm;
 
     const config: RenderCoordinatorConfig = {
@@ -439,6 +441,7 @@ export class Editor {
     // Perry-safe: set module-level markdown state directly from the language string.
     // Engine method calls and property access fail after first frame in Perry AOT.
     // Module-level vars are the ONLY reliable mutable state in Perry getters.
+    setPerryLanguageState(languageId);
     if (languageId === 'markdown') {
       this._isMd = 1;
       setPerryMarkdownState(1, '');
