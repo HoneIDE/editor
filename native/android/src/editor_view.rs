@@ -4,33 +4,42 @@
 //! - JNI calls to android.graphics.Canvas and android.graphics.Paint
 //! - Per-token color via Paint.setColor()
 //! - Canvas.drawText() for each token span
-//! - Pre-render lines to Bitmap objects for fast scrolling
+//! - TS-authoritative cache-line protocol: TS caches lines, Rust renders
 
-use serde::Deserialize;
+use std::collections::HashMap;
 use std::ffi::{c_char, CString};
+use serde::Deserialize;
 
 // ── Callback types ──────────────────────────────────────────────
 
-/// Called when the user types printable text. `text` is a null-terminated UTF-8 C string.
 pub type TextInputCallback = extern "C" fn(view: *mut EditorView, text: *const c_char);
-
-/// Called when an action fires (arrow keys, delete, enter, etc.).
-/// `action` is the action name as a null-terminated UTF-8 C string.
 pub type ActionCallback = extern "C" fn(view: *mut EditorView, action: *const c_char);
-
-/// Called when the user taps in the editor view. `x` and `y` are in view coordinates.
 pub type MouseDownCallback = extern "C" fn(view: *mut EditorView, x: f64, y: f64);
-
-/// Called when the user scrolls. `dx`/`dy` are pixel deltas.
 pub type ScrollCallback = extern "C" fn(view: *mut EditorView, dx: f64, dy: f64);
 
-/// A custom context menu item added by the host application.
 pub struct ContextMenuItem {
     pub title: String,
     pub action_id: String,
 }
 
 // ── Data structures ──────────────────────────────────────────────
+
+/// A parsed token span for rendering.
+#[derive(Debug, Clone)]
+pub struct ParsedToken {
+    pub start: usize,
+    pub end: usize,
+    pub color: u32, // ARGB
+    pub style: u8,  // 0=normal, 1=italic, 2=bold, 3=heading-lg, 4=heading-md
+}
+
+/// A cached line with text and parsed tokens.
+#[derive(Debug, Clone)]
+pub struct CachedLine {
+    pub text: String,
+    pub tokens: Vec<ParsedToken>,
+    pub line_bg: Option<u32>, // Optional line background color (ARGB)
+}
 
 #[derive(Debug, Deserialize)]
 pub struct RenderToken {
@@ -48,7 +57,7 @@ pub struct SelectionRegion {
     pub h: f64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct CursorData {
     pub x: f64,
     pub y: f64,
@@ -66,11 +75,13 @@ pub struct DecorationOverlay {
     pub kind: String,
 }
 
-pub struct LineRenderData {
+/// A line ready for rendering (built from cache + viewport).
+pub struct FrameLine {
     pub line_number: i32,
     pub text: String,
-    pub tokens_json: String,
-    pub y_offset: f64,
+    pub tokens: Vec<ParsedToken>,
+    pub line_bg: Option<u32>,
+    pub y_offset: f64, // in dp
 }
 
 struct GhostTextData {
@@ -80,20 +91,40 @@ struct GhostTextData {
     color: String,
 }
 
+// ── Legacy LineRenderData for render_line() ──────────────────────
+
+pub struct LineRenderData {
+    pub line_number: i32,
+    pub text: String,
+    pub tokens_json: String,
+    pub y_offset: f64,
+}
+
 // ── EditorView ───────────────────────────────────────────────────
 
 pub struct EditorView {
     font_family: String,
     font_size: f64,
-    width: f64,
-    height: f64,
+    pub width: f64,
+    pub height: f64,
     scroll_offset_y: f64,
     needs_display: bool,
-    /// Pointer to the parent JNI jobject (Android View) that this editor is attached to.
+    /// Pointer to the parent JNI jobject (Android View).
     pub parent_view: *mut std::ffi::c_void,
+    /// Android GlobalRef to HoneEditorView for JNI callbacks.
+    pub android_view_ref: Option<jni::objects::GlobalRef>,
 
-    // Frame buffer (populated between begin_frame/end_frame)
-    frame_lines: Vec<LineRenderData>,
+    // TS-mode line cache (persistent across frames)
+    line_cache: HashMap<i32, CachedLine>,
+    // Frame buffer (rebuilt each frame from cache + viewport)
+    frame_lines: Vec<FrameLine>,
+    // Viewport state
+    viewport_start: i32,
+    viewport_end: i32,
+    scroll_top: f64,
+    total_lines: i32,
+    line_height: f64,
+
     cursor: Option<CursorData>,
     cursors: Vec<CursorData>,
     selections: Vec<SelectionRegion>,
@@ -121,7 +152,14 @@ impl EditorView {
             scroll_offset_y: 0.0,
             needs_display: true,
             parent_view: std::ptr::null_mut(),
+            android_view_ref: None,
+            line_cache: HashMap::new(),
             frame_lines: Vec::with_capacity(64),
+            viewport_start: 0,
+            viewport_end: 0,
+            scroll_top: 0.0,
+            total_lines: 0,
+            line_height: 21.0,
             cursor: None,
             cursors: Vec::new(),
             selections: Vec::new(),
@@ -139,17 +177,88 @@ impl EditorView {
     pub fn set_font(&mut self, family: &str, size: f64) {
         self.font_family = family.to_string();
         self.font_size = size;
+        self.line_height = size * 1.5;
         self.needs_display = true;
     }
 
     pub fn measure_text(&self, text: &str) -> f64 {
-        // Monospace approximation: each character is font_size * 0.6 wide
         text.len() as f64 * self.font_size * 0.6
+    }
+
+    // ── TS-mode cache protocol ──────────────────────────────────
+
+    /// Cache a line with packed tokens.
+    /// Format: "start,end,hexColor,styleInt|..." optionally prefixed with "BG:hexColor|"
+    pub fn cache_line_packed(&mut self, line_number: i32, text: &str, packed: &str) {
+        let mut line_bg = None;
+        let mut token_str = packed;
+
+        // Check for BG: prefix
+        if packed.starts_with("BG:") {
+            if let Some(pipe_pos) = packed[3..].find('|') {
+                let bg_hex = &packed[3..3 + pipe_pos];
+                line_bg = Some(parse_hex_to_argb(bg_hex));
+                token_str = &packed[3 + pipe_pos + 1..];
+            }
+        }
+
+        let tokens = parse_packed_tokens(token_str);
+        self.line_cache.insert(line_number, CachedLine {
+            text: text.to_string(),
+            tokens,
+            line_bg,
+        });
+    }
+
+    /// Build frame_lines from cache for the visible viewport range.
+    /// Args from TS: startLine (1-based), endLine (1-based), scrollTop (dp), totalLines, lineHeight (dp)
+    pub fn set_viewport_range(
+        &mut self,
+        start_line: i32,
+        end_line: i32,
+        scroll_top: f64,
+        total_lines: i32,
+        line_height: f64,
+    ) {
+        self.viewport_start = start_line;
+        self.viewport_end = end_line;
+        self.scroll_top = scroll_top;
+        self.total_lines = total_lines;
+        if line_height > 0.0 {
+            self.line_height = line_height;
+        }
+
+        // Rebuild frame_lines from cache
+        self.frame_lines.clear();
+        for line_num in start_line..=end_line {
+            if let Some(cached) = self.line_cache.get(&line_num) {
+                let y_offset = ((line_num - 1) as f64) * self.line_height - scroll_top;
+                self.frame_lines.push(FrameLine {
+                    line_number: line_num,
+                    text: cached.text.clone(),
+                    tokens: cached.tokens.clone(),
+                    line_bg: cached.line_bg,
+                    y_offset,
+                });
+                if line_num > self.max_line_number {
+                    self.max_line_number = line_num;
+                }
+            }
+        }
+    }
+
+    pub fn invalidate_cache_line(&mut self, line_number: i32) {
+        self.line_cache.remove(&line_number);
+    }
+
+    pub fn clear_line_cache(&mut self) {
+        self.line_cache.clear();
     }
 
     // ── Frame buffer API ─────────────────────────────────────────
 
     pub fn begin_frame(&mut self) {
+        // Don't clear line_cache — it persists across frames
         self.frame_lines.clear();
         self.cursor = None;
         self.cursors.clear();
@@ -164,10 +273,23 @@ impl EditorView {
         if line_number > self.max_line_number {
             self.max_line_number = line_number;
         }
-        self.frame_lines.push(LineRenderData {
+        // Parse JSON tokens into ParsedTokens
+        let parsed: Vec<RenderToken> = serde_json::from_str(tokens_json).unwrap_or_default();
+        let tokens: Vec<ParsedToken> = parsed.iter().map(|t| ParsedToken {
+            start: t.s,
+            end: t.e,
+            color: parse_hex_to_argb(&t.c.trim_start_matches('#')),
+            style: match t.st.as_str() {
+                "italic" => 1,
+                "bold" => 2,
+                _ => 0,
+            },
+        }).collect();
+        self.frame_lines.push(FrameLine {
             line_number,
             text: text.to_string(),
-            tokens_json: tokens_json.to_string(),
+            tokens,
+            line_bg: None,
             y_offset,
         });
     }
@@ -232,7 +354,6 @@ impl EditorView {
         self.scroll_callback = Some(cb);
     }
 
-    /// Called from the Android View's text input handler.
     pub fn on_text_input(&mut self, text: &str) {
         if let Some(cb) = self.text_input_callback {
             if let Ok(c_text) = CString::new(text) {
@@ -242,7 +363,6 @@ impl EditorView {
         }
     }
 
-    /// Called from the Android View's action handler.
     pub fn on_action(&mut self, action: &str) {
         if let Some(cb) = self.action_callback {
             if let Ok(c_action) = CString::new(action) {
@@ -252,7 +372,6 @@ impl EditorView {
         }
     }
 
-    /// Called from the Android View's touch handler.
     pub fn on_mouse_down(&mut self, x: f64, y: f64) {
         if let Some(cb) = self.mouse_down_callback {
             let self_ptr = self as *mut EditorView;
@@ -260,7 +379,6 @@ impl EditorView {
         }
     }
 
-    /// Called from the Android View's scroll handler.
     pub fn on_scroll(&mut self, dx: f64, dy: f64) {
         if let Some(cb) = self.scroll_callback {
             let self_ptr = self as *mut EditorView;
@@ -285,9 +403,9 @@ impl EditorView {
         &self.context_menu_items
     }
 
-    // ── Accessors (for JNI bridge) ───────────────────────────────
+    // ── Accessors (for JNI drawing) ─────────────────────────────
 
-    pub fn get_rendered_lines(&self) -> &[LineRenderData] {
+    pub fn get_frame_lines(&self) -> &[FrameLine] {
         &self.frame_lines
     }
 
@@ -311,11 +429,60 @@ impl EditorView {
         self.font_size
     }
 
+    pub fn get_line_height(&self) -> f64 {
+        self.line_height
+    }
+
     pub fn get_width(&self) -> f64 {
         self.width
     }
 
     pub fn get_height(&self) -> f64 {
         self.height
+    }
+
+    pub fn get_max_line_number(&self) -> i32 {
+        self.max_line_number
+    }
+}
+
+// ── Token parsing ────────────────────────────────────────────────
+
+/// Parse packed token format: "start,end,hexColor,styleInt|..."
+fn parse_packed_tokens(packed: &str) -> Vec<ParsedToken> {
+    let mut tokens = Vec::new();
+    for segment in packed.split('|') {
+        if segment.is_empty() { continue; }
+        let mut parts = segment.splitn(4, ',');
+        let s = match parts.next().and_then(|s| s.parse::<usize>().ok()) {
+            Some(v) => v,
+            None => continue,
+        };
+        let e = match parts.next().and_then(|s| s.parse::<usize>().ok()) {
+            Some(v) => v,
+            None => continue,
+        };
+        let hex = parts.next().unwrap_or("D4D4D4");
+        let style = parts.next().and_then(|s| s.parse::<u8>().ok()).unwrap_or(0);
+        tokens.push(ParsedToken {
+            start: s,
+            end: e,
+            color: parse_hex_to_argb(hex),
+            style,
+        });
+    }
+    tokens
+}
+
+/// Parse hex color (no '#') to ARGB u32. E.g., "569CD6" → 0xFF569CD6
+fn parse_hex_to_argb(hex: &str) -> u32 {
+    let hex = hex.trim_start_matches('#');
+    if hex.len() >= 6 {
+        let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(212);
+        let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(212);
+        let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(212);
+        0xFF000000 | (r as u32) << 16 | (g as u32) << 8 | (b as u32)
+    } else {
+        0xFFD4D4D4
     }
 }
