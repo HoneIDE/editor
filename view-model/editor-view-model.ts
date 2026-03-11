@@ -20,6 +20,7 @@ import { registerSelectionCommands } from '../core/commands/selection-cmds';
 import { registerClipboardCommands } from '../core/commands/clipboard';
 import { registerMulticursorCommands } from '../core/commands/multicursor';
 import type { ISyntaxEngine } from '../core/tokenizer/tokenizer-interface';
+import { getLineTokensDirect } from '../core/tokenizer/keyword-syntax-engine';
 
 // Perry-safe: module-level variables for direct tokenization state.
 // Class field mutations aren't visible in getters (Perry captures initial values).
@@ -1213,74 +1214,79 @@ export class EditorViewModel {
       return true;
     }
 
+    // Cursor movement commands (outside Perry mode — use standard cursors)
+    const cursorsF = this.cursorManager.cursors;
+    if (cursorsF.length === 0) return false;
+    const cursorF = cursorsF[0];
+
     if (commandId === 'editor.action.moveCursorLeft') {
-      if (cursor0.column > 0) {
-        cursor0.column = cursor0.column - 1;
-      } else if (cursor0.line > 0) {
-        cursor0.line = cursor0.line - 1;
-        cursor0.column = this.document.buffer.getLineLength(cursor0.line);
+      if (cursorF.column > 0) {
+        cursorF.column = cursorF.column - 1;
+      } else if (cursorF.line > 0) {
+        cursorF.line = cursorF.line - 1;
+        cursorF.column = this.document.buffer.getLineLength(cursorF.line);
       }
-      cursor0.selectionAnchor = null;
-      cursor0.desiredColumn = cursor0.column;
+      cursorF.selectionAnchor = null;
+      cursorF.desiredColumn = cursorF.column;
       this.notifyChange();
       return true;
     }
 
     if (commandId === 'editor.action.moveCursorRight') {
-      const lineLen0 = this.document.buffer.getLineLength(cursor0.line);
-      if (cursor0.column < lineLen0) {
-        cursor0.column = cursor0.column + 1;
-      } else if (cursor0.line < this.document.buffer.getLineCount() - 1) {
-        cursor0.line = cursor0.line + 1;
-        cursor0.column = 0;
+      const lineLen0 = this.document.buffer.getLineLength(cursorF.line);
+      if (cursorF.column < lineLen0) {
+        cursorF.column = cursorF.column + 1;
+      } else if (cursorF.line < this.document.buffer.getLineCount() - 1) {
+        cursorF.line = cursorF.line + 1;
+        cursorF.column = 0;
       }
-      cursor0.selectionAnchor = null;
-      cursor0.desiredColumn = cursor0.column;
+      cursorF.selectionAnchor = null;
+      cursorF.desiredColumn = cursorF.column;
       this.notifyChange();
       return true;
     }
 
     if (commandId === 'editor.action.moveCursorUp') {
-      if (cursor0.line > 0) {
-        cursor0.line = cursor0.line - 1;
-        const lineLen1 = this.document.buffer.getLineLength(cursor0.line);
-        if (cursor0.column > lineLen1) {
-          cursor0.column = lineLen1;
+      if (cursorF.line > 0) {
+        cursorF.line = cursorF.line - 1;
+        const lineLen1 = this.document.buffer.getLineLength(cursorF.line);
+        if (cursorF.column > lineLen1) {
+          cursorF.column = lineLen1;
         }
       }
-      cursor0.selectionAnchor = null;
-      cursor0.desiredColumn = cursor0.column;
+      cursorF.selectionAnchor = null;
+      cursorF.desiredColumn = cursorF.column;
       this.notifyChange();
       return true;
     }
 
     if (commandId === 'editor.action.moveCursorDown') {
       const totalLines = this.document.buffer.getLineCount();
-      if (cursor0.line < totalLines - 1) {
-        cursor0.line = cursor0.line + 1;
-        const lineLen2 = this.document.buffer.getLineLength(cursor0.line);
-        if (cursor0.column > lineLen2) {
-          cursor0.column = lineLen2;
+      if (cursorF.line < totalLines - 1) {
+        cursorF.line = cursorF.line + 1;
+        const lineLen2 = this.document.buffer.getLineLength(cursorF.line);
+        if (cursorF.column > lineLen2) {
+          cursorF.column = lineLen2;
         }
       }
-      cursor0.selectionAnchor = null;
-      cursor0.desiredColumn = cursor0.column;
+      cursorF.selectionAnchor = null;
+      cursorF.desiredColumn = cursorF.column;
       this.notifyChange();
       return true;
     }
 
     if (commandId === 'editor.action.moveCursorToLineStart') {
-      cursor0.column = 0;
-      cursor0.selectionAnchor = null;
-      cursor0.desiredColumn = 0;
+      cursorF.column = 0;
+      cursorF.selectionAnchor = null;
+      cursorF.desiredColumn = 0;
       this.notifyChange();
       return true;
     }
 
     if (commandId === 'editor.action.moveCursorToLineEnd') {
-      cursor0.column = this.document.buffer.getLineLength(cursor0.line);
-      cursor0.selectionAnchor = null;
-      cursor0.desiredColumn = cursor0.column;
+      cursorF.column = this.document.buffer.getLineLength(cursorF.line);
+      cursorF.selectionAnchor = null;
+      cursorF.desiredColumn = cursorF.column;
       this.notifyChange();
       return true;
     }
