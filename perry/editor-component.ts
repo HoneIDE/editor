@@ -10,7 +10,7 @@
 
 import { embedNSView } from 'perry/ui';
 import { EditorDocument } from '../core/document/document';
-import { EditorViewModel, KeyEvent, MouseEvent as EditorMouseEvent, ScrollEvent, setPerryMarkdownState, setPerryLanguageState } from '../view-model/editor-view-model';
+import { EditorViewModel, KeyEvent, MouseEvent as EditorMouseEvent, ScrollEvent, setPerryMarkdownState, setPerryLanguageState, setPerryTokenTheme } from '../view-model/editor-view-model';
 import { NativeRenderCoordinator, RenderCoordinatorConfig } from '../native/render-coordinator';
 import { DARK_THEME, LIGHT_THEME, EditorTheme } from '../view-model/theme';
 import type { NativeEditorFFI, NativeViewHandle } from '../native/ffi-bridge';
@@ -65,6 +65,13 @@ declare function hone_editor_clear_line_cache(handle: number): void;
 // === View size query FFI ===
 declare function hone_editor_get_view_width(handle: number): number;
 declare function hone_editor_get_view_height(handle: number): number;
+
+// === Theme colors FFI ===
+declare function hone_editor_set_bg_color(handle: number, r: number, g: number, b: number): void;
+declare function hone_editor_set_fg_color(handle: number, r: number, g: number, b: number): void;
+declare function hone_editor_set_gutter_fg_color(handle: number, r: number, g: number, b: number): void;
+declare function hone_editor_set_selection_color(handle: number, r: number, g: number, b: number, a: number): void;
+declare function hone_editor_set_cursor_color(handle: number, r: number, g: number, b: number): void;
 
 // === New TS-authoritative render protocol FFI ===
 declare function hone_editor_cache_line(handle: number, lineNumber: number, text: number, packedTokens: number): void;
@@ -804,6 +811,62 @@ export class Editor {
     hone_editor_end_frame(handle as number);
   }
 
+  /**
+   * Switch syntax highlighting token colors between dark (0) and light (1) mode.
+   * Call before setContent or after theme switch.
+   * Also invalidates the line cache so tokens re-render with new colors.
+   */
+  setThemeMode(mode: number): void {
+    setPerryTokenTheme(mode);
+    // Clear Rust line cache so tokens are re-pushed with new colors
+    const handle = this.nativeHandle;
+    if (handle !== null) {
+      hone_editor_clear_line_cache(handle as number);
+    }
+    const coordinator = this._coordinator;
+    coordinator.invalidate();
+  }
+
+  /** Set editor background color (also sets gutter bg to match). Components 0.0–1.0. */
+  setBgColor(r: number, g: number, b: number): void {
+    const handle = this.nativeHandle;
+    if (handle !== null) {
+      hone_editor_set_bg_color(handle as number, r, g, b);
+    }
+  }
+
+  /** Set default text foreground color. Components 0.0–1.0. */
+  setFgColor(r: number, g: number, b: number): void {
+    const handle = this.nativeHandle;
+    if (handle !== null) {
+      hone_editor_set_fg_color(handle as number, r, g, b);
+    }
+  }
+
+  /** Set gutter (line number) foreground color. Components 0.0–1.0. */
+  setGutterFgColor(r: number, g: number, b: number): void {
+    const handle = this.nativeHandle;
+    if (handle !== null) {
+      hone_editor_set_gutter_fg_color(handle as number, r, g, b);
+    }
+  }
+
+  /** Set selection highlight color. Components 0.0–1.0 (a = alpha). */
+  setSelectionColor(r: number, g: number, b: number, a: number): void {
+    const handle = this.nativeHandle;
+    if (handle !== null) {
+      hone_editor_set_selection_color(handle as number, r, g, b, a);
+    }
+  }
+
+  /** Set cursor color. Components 0.0–1.0. */
+  setCursorColor(r: number, g: number, b: number): void {
+    const handle = this.nativeHandle;
+    if (handle !== null) {
+      hone_editor_set_cursor_color(handle as number, r, g, b);
+    }
+  }
+
   /** Free all resources and unregister from multi-instance slots. */
   dispose(): void {
     if (this._disposed) return;
@@ -813,4 +876,30 @@ export class Editor {
     coordinator.detach();
     coordinator.destroy();
   }
+}
+
+// ============================================================
+// Module-level FFI wrappers for theme colors.
+// Perry can reliably call module-level exported functions cross-module.
+// These bypass class method dispatch issues.
+// ============================================================
+
+export function editorSetBgColor(handle: number, r: number, g: number, b: number): void {
+  hone_editor_set_bg_color(handle, r, g, b);
+}
+
+export function editorSetFgColor(handle: number, r: number, g: number, b: number): void {
+  hone_editor_set_fg_color(handle, r, g, b);
+}
+
+export function editorSetGutterFgColor(handle: number, r: number, g: number, b: number): void {
+  hone_editor_set_gutter_fg_color(handle, r, g, b);
+}
+
+export function editorSetSelectionColor(handle: number, r: number, g: number, b: number, a: number): void {
+  hone_editor_set_selection_color(handle, r, g, b, a);
+}
+
+export function editorSetCursorColor(handle: number, r: number, g: number, b: number): void {
+  hone_editor_set_cursor_color(handle, r, g, b);
 }

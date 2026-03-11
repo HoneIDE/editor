@@ -106,3 +106,25 @@ pub fn hone_editor_end_frame(view: *mut EditorView) {
     let view = unsafe { &mut *view };
     view.end_frame();
 }
+
+// === Editor Color Settings (no-op stubs) ===
+
+/// Set the editor background color.
+#[wasm_bindgen]
+pub fn hone_editor_set_bg_color(_view: *mut EditorView, _r: f64, _g: f64, _b: f64) {}
+
+/// Set the default text foreground color.
+#[wasm_bindgen]
+pub fn hone_editor_set_fg_color(_view: *mut EditorView, _r: f64, _g: f64, _b: f64) {}
+
+/// Set the gutter (line number) foreground color.
+#[wasm_bindgen]
+pub fn hone_editor_set_gutter_fg_color(_view: *mut EditorView, _r: f64, _g: f64, _b: f64) {}
+
+/// Set the selection highlight color (with alpha).
+#[wasm_bindgen]
+pub fn hone_editor_set_selection_color(_view: *mut EditorView, _r: f64, _g: f64, _b: f64, _a: f64) {}
+
+/// Set the cursor color.
+#[wasm_bindgen]
+pub fn hone_editor_set_cursor_color(_view: *mut EditorView, _r: f64, _g: f64, _b: f64) {}

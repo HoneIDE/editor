@@ -29,6 +29,60 @@ let _perryLangIsMarkdown: number = 0;
 let _perryFenceCache: string = '';
 let _perryUseDirectTokens: number = 0;
 
+// Perry-safe: module-level theme colors for tokenization.
+// Dark mode defaults (VS Code dark theme).
+let _tKwColor = '#569cd6';
+let _tStrColor = '#ce9178';
+let _tCmtColor = '#6a9955';
+let _tVarColor = '#9cdcfe';
+let _tTypeColor = '#4ec9b0';
+let _tFnColor = '#dcdcaa';
+let _tNumColor = '#b5cea8';
+let _tOpColor = '#d4d4d4';
+let _tFgColor = '#d4d4d4';
+let _tBoolColor = '#569cd6';
+let _tCodeBg = '#282830';
+let _tHeadingColor = '#4fc1ff';
+let _tBoldColor = '#d7ba7d';
+let _tMetaColor = '#569cd6';
+
+/** Switch tokenizer colors between dark and light mode. mode=0 dark, mode=1 light. */
+export function setPerryTokenTheme(mode: number): void {
+  if (mode === 1) {
+    // Light theme colors (VS Code Light+)
+    _tKwColor = '#0000FF';
+    _tStrColor = '#A31515';
+    _tCmtColor = '#008000';
+    _tVarColor = '#001080';
+    _tTypeColor = '#267F99';
+    _tFnColor = '#795E26';
+    _tNumColor = '#098658';
+    _tOpColor = '#000000';
+    _tFgColor = '#333333';
+    _tBoolColor = '#0000FF';
+    _tCodeBg = '#F0F0F0';
+    _tHeadingColor = '#0070C1';
+    _tBoldColor = '#795E26';
+    _tMetaColor = '#0000FF';
+  } else {
+    // Dark theme colors (VS Code dark)
+    _tKwColor = '#569cd6';
+    _tStrColor = '#ce9178';
+    _tCmtColor = '#6a9955';
+    _tVarColor = '#9cdcfe';
+    _tTypeColor = '#4ec9b0';
+    _tFnColor = '#dcdcaa';
+    _tNumColor = '#b5cea8';
+    _tOpColor = '#d4d4d4';
+    _tFgColor = '#d4d4d4';
+    _tBoolColor = '#569cd6';
+    _tCodeBg = '#282830';
+    _tHeadingColor = '#4fc1ff';
+    _tBoldColor = '#d7ba7d';
+    _tMetaColor = '#569cd6';
+  }
+}
+
 // Perry-safe: module-level keyword/comment state for non-markdown tokenization.
 // Keywords stored as delimited STRING (not array) — Perry module-level array
 // reassignment doesn't work reliably. Use indexOf('|word|') for lookup.
@@ -117,12 +171,12 @@ function _tokenizeMdLine(line: string, inFence: number): LineToken[] {
   const len = line.length;
   if (len === 0) return tokens;
 
-  const codeBg = '#282830';
-  const headingColor = '#4fc1ff';
-  const stringColor = '#ce9178';
-  const metaColor = '#569cd6';
-  const boldColor = '#d7ba7d';
-  const fgColor = '#d4d4d4';
+  const codeBg = _tCodeBg;
+  const headingColor = _tHeadingColor;
+  const stringColor = _tStrColor;
+  const metaColor = _tMetaColor;
+  const boldColor = _tBoldColor;
+  const fgColor = _tFgColor;
 
   // Trim leading whitespace for detection
   let trimStart = 0;
@@ -278,18 +332,18 @@ function _tokenizeCodeLine(line: string, inBlockComment: number): LineToken[] {
   const len = line.length;
   if (len === 0) return tokens;
 
-  // Hardcoded VS Code dark theme colors (same as _tokenizeMdLine)
-  const kwColor = '#569cd6';
-  const strColor = '#ce9178';
-  const cmtColor = '#6a9955';
-  const varColor = '#9cdcfe';
-  const typeColor = '#4ec9b0';
-  const fnColor = '#dcdcaa';
-  const numColor = '#b5cea8';
-  const opColor = '#d4d4d4';
-  const puncColor = '#d4d4d4';
-  const boolColor = '#569cd6';
-  const fgColor = '#d4d4d4';
+  // Theme-aware colors from module-level vars (set by setPerryTokenTheme)
+  const kwColor = _tKwColor;
+  const strColor = _tStrColor;
+  const cmtColor = _tCmtColor;
+  const varColor = _tVarColor;
+  const typeColor = _tTypeColor;
+  const fnColor = _tFnColor;
+  const numColor = _tNumColor;
+  const opColor = _tOpColor;
+  const puncColor = _tOpColor;
+  const boolColor = _tBoolColor;
+  const fgColor = _tFgColor;
 
   let i = 0;
   const kwStr = _perryKeywordStr;

@@ -635,3 +635,20 @@ pub extern "C" fn hone_editor_needs_lines(_view: *mut EditorView) -> f64 { 1.0 }
 
 #[no_mangle]
 pub extern "C" fn hone_editor_set_line_background_2(_view: *mut EditorView, _line: f64, _r: f64, _g: f64, _b: f64, _a: f64) {}
+
+// === Editor Color Settings (no-op stubs) ===
+
+#[no_mangle]
+pub extern "C" fn hone_editor_set_bg_color(_view: *mut EditorView, _r: f64, _g: f64, _b: f64) {}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_set_fg_color(_view: *mut EditorView, _r: f64, _g: f64, _b: f64) {}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_set_gutter_fg_color(_view: *mut EditorView, _r: f64, _g: f64, _b: f64) {}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_set_selection_color(_view: *mut EditorView, _r: f64, _g: f64, _b: f64, _a: f64) {}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_set_cursor_color(_view: *mut EditorView, _r: f64, _g: f64, _b: f64) {}

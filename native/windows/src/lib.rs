@@ -389,3 +389,40 @@ pub extern "C" fn hone_editor_nsview(view: *mut EditorView) -> i64 {
     let view = unsafe { &*view };
     view.hwnd().0 as i64
 }
+
+// === Editor Color Settings ===
+
+/// Set the editor background color (also sets gutter bg to match).
+#[no_mangle]
+pub extern "C" fn hone_editor_set_bg_color(view: *mut EditorView, r: f64, g: f64, b: f64) {
+    let view = unsafe { &mut *view };
+    view.set_bg_color(r, g, b);
+}
+
+/// Set the default text foreground color.
+#[no_mangle]
+pub extern "C" fn hone_editor_set_fg_color(view: *mut EditorView, r: f64, g: f64, b: f64) {
+    let view = unsafe { &mut *view };
+    view.set_fg_color(r, g, b);
+}
+
+/// Set the gutter (line number) foreground color.
+#[no_mangle]
+pub extern "C" fn hone_editor_set_gutter_fg_color(view: *mut EditorView, r: f64, g: f64, b: f64) {
+    let view = unsafe { &mut *view };
+    view.set_gutter_fg_color(r, g, b);
+}
+
+/// Set the selection highlight color (with alpha).
+#[no_mangle]
+pub extern "C" fn hone_editor_set_selection_color(view: *mut EditorView, r: f64, g: f64, b: f64, a: f64) {
+    let view = unsafe { &mut *view };
+    view.set_selection_color(r, g, b, a);
+}
+
+/// Set the cursor color.
+#[no_mangle]
+pub extern "C" fn hone_editor_set_cursor_color(view: *mut EditorView, r: f64, g: f64, b: f64) {
+    let view = unsafe { &mut *view };
+    view.set_cursor_color(r, g, b);
+}

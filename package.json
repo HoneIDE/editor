@@ -75,7 +75,12 @@
         { "name": "hone_editor_invalidate_line", "params": ["i64", "f64"], "returns": "void" },
         { "name": "hone_editor_set_viewport", "params": ["i64", "f64", "f64", "f64", "f64", "f64"], "returns": "void" },
         { "name": "hone_editor_begin_selections", "params": ["i64", "f64"], "returns": "void" },
-        { "name": "hone_editor_add_selection_rect", "params": ["i64", "f64", "f64", "f64", "f64"], "returns": "void" }
+        { "name": "hone_editor_add_selection_rect", "params": ["i64", "f64", "f64", "f64", "f64"], "returns": "void" },
+        { "name": "hone_editor_set_bg_color", "params": ["i64", "f64", "f64", "f64"], "returns": "void" },
+        { "name": "hone_editor_set_fg_color", "params": ["i64", "f64", "f64", "f64"], "returns": "void" },
+        { "name": "hone_editor_set_gutter_fg_color", "params": ["i64", "f64", "f64", "f64"], "returns": "void" },
+        { "name": "hone_editor_set_selection_color", "params": ["i64", "f64", "f64", "f64", "f64"], "returns": "void" },
+        { "name": "hone_editor_set_cursor_color", "params": ["i64", "f64", "f64", "f64"], "returns": "void" }
       ],
       "targets": {
         "macos": {
