@@ -130,7 +130,7 @@ export class NativeRenderCoordinator {
     const ffi = this._ffi;
 
     // Begin frame batch
-    ffi.beginFrame(handle);
+    if (ffi.beginFrame) ffi.beginFrame(handle);
 
     const scroll = vm.scrollState;
     const visibleLines = vm.visibleLines;
@@ -184,7 +184,7 @@ export class NativeRenderCoordinator {
     this.renderGhostText(handle, vm);
 
     // End frame batch
-    ffi.endFrame(handle);
+    if (ffi.endFrame) ffi.endFrame(handle);
   }
 
   /**
