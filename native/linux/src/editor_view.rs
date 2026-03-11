@@ -223,6 +223,9 @@ pub struct EditorView {
     // Context menu
     context_menu_items: Vec<ContextMenuItem>,
 
+    // Read-only mode flag
+    pub read_only: bool,
+
     // Theme colors
     background_color: (f64, f64, f64),
     gutter_bg_color: (f64, f64, f64),
@@ -261,6 +264,7 @@ impl EditorView {
             rust_sel_anchor: None,
             user_has_clicked: false,
             initial_top_y: None,
+            read_only: false,
             clipboard_buf: String::new(),
             context_menu_items: Vec::new(),
             // VS Code dark theme defaults
@@ -272,6 +276,17 @@ impl EditorView {
             cursor_color: (0.918, 0.918, 0.918),          // #eaeaea
         }
     }
+
+    /// Update stored dimensions from GTK's allocated size (called from draw handler).
+    pub fn set_dimensions(&mut self, w: f64, h: f64) {
+        self.width = w;
+        self.height = h;
+    }
+
+    /// Return the stored view width (updated each draw frame by GTK allocation).
+    pub fn view_width(&self) -> f64 { self.width }
+    /// Return the stored view height (updated each draw frame by GTK allocation).
+    pub fn view_height(&self) -> f64 { self.height }
 
     /// Called from lib.rs after the EditorView has a stable address.
     pub fn init_widget(&mut self) {

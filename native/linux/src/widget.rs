@@ -49,7 +49,9 @@ pub fn create_editor_widget(
 fn setup_draw_handler(area: &DrawingArea, state: *mut EditorView) {
     let state_ptr = state as usize; // usize is Send + Copy
     area.set_draw_func(move |_area, cr, w, h| {
-        let editor_view = unsafe { &*(state_ptr as *const EditorView) };
+        let editor_view = unsafe { &mut *(state_ptr as *mut EditorView) };
+        // Keep stored dimensions in sync with GTK's allocated size.
+        editor_view.set_dimensions(w as f64, h as f64);
         editor_view.draw(cr, w as f64, h as f64);
     });
 }
