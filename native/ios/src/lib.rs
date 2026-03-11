@@ -335,3 +335,123 @@ pub extern "C" fn hone_editor_clear_events(view: *mut EditorView) {
     let view = unsafe { &mut *view };
     view.pending_events.clear();
 }
+
+// === TS-authoritative render protocol (cache_line + set_viewport) ===
+
+/// Get the actual UIView width.
+#[no_mangle]
+pub extern "C" fn hone_editor_get_view_width(view: *mut EditorView) -> f64 {
+    let view = unsafe { &*view };
+    view.width()
+}
+
+/// Get the actual UIView height.
+#[no_mangle]
+pub extern "C" fn hone_editor_get_view_height(view: *mut EditorView) -> f64 {
+    let view = unsafe { &*view };
+    view.height()
+}
+
+/// Set read-only mode. mode > 0.5 = read-only, mode <= 0.5 = editable.
+#[no_mangle]
+pub extern "C" fn hone_editor_set_read_only(view: *mut EditorView, mode: f64) {
+    let view = unsafe { &mut *view };
+    view.read_only = mode > 0.5;
+}
+
+/// Set a background color for a specific line (1-based).
+#[no_mangle]
+pub extern "C" fn hone_editor_set_line_background(
+    view: *mut EditorView,
+    line: f64,
+    r: f64, g: f64, b: f64, a: f64,
+) {
+    let view = unsafe { &mut *view };
+    view.line_backgrounds.insert(line as i32, (r, g, b, a));
+}
+
+/// Clear all per-line background colors.
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_line_backgrounds(view: *mut EditorView) {
+    let view = unsafe { &mut *view };
+    view.line_backgrounds.clear();
+}
+
+/// Get the accumulated scroll delta (in pixels) since the last clear.
+#[no_mangle]
+pub extern "C" fn hone_editor_get_scroll_delta(view: *mut EditorView) -> f64 {
+    let view = unsafe { &*view };
+    view.rust_scroll_delta
+}
+
+/// Clear the accumulated scroll delta.
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_scroll_delta(view: *mut EditorView) {
+    let view = unsafe { &mut *view };
+    view.rust_scroll_delta = 0.0;
+}
+
+/// Returns 1.0 if Rust needs TypeScript to provide lines, 0.0 otherwise.
+#[no_mangle]
+pub extern "C" fn hone_editor_needs_lines(view: *mut EditorView) -> f64 {
+    let view = unsafe { &*view };
+    if view.needs_lines { 1.0 } else { 0.0 }
+}
+
+/// Clear the line cache.
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_line_cache(view: *mut EditorView) {
+    let view = unsafe { &mut *view };
+    view.clear_line_cache();
+}
+
+/// Cache a line's text and tokens (packed format).
+#[no_mangle]
+pub extern "C" fn hone_editor_cache_line(
+    view: *mut EditorView,
+    line_number: f64,
+    text: *const u8,
+    packed_tokens: *const u8,
+) {
+    let view = unsafe { &mut *view };
+    let text_str = str_from_header(text);
+    let tokens_str = str_from_header(packed_tokens);
+    view.cache_line(line_number as i32, text_str, tokens_str);
+}
+
+/// Build frame_lines from the cache for the visible range.
+#[no_mangle]
+pub extern "C" fn hone_editor_set_viewport(
+    view: *mut EditorView,
+    start_line: f64,
+    end_line: f64,
+    scroll_top: f64,
+    total_lines: f64,
+    line_height: f64,
+) {
+    let view = unsafe { &mut *view };
+    view.set_viewport_from_cache(
+        start_line as i32, end_line as i32,
+        scroll_top, total_lines as i32, line_height,
+    );
+}
+
+/// Clear selections and pre-allocate for `count` new rects.
+#[no_mangle]
+pub extern "C" fn hone_editor_begin_selections(
+    view: *mut EditorView,
+    count: f64,
+) {
+    let view = unsafe { &mut *view };
+    view.begin_selections_new(count as usize);
+}
+
+/// Add a selection highlight rectangle.
+#[no_mangle]
+pub extern "C" fn hone_editor_add_selection_rect(
+    view: *mut EditorView,
+    x: f64, y: f64, w: f64, h: f64,
+) {
+    let view = unsafe { &mut *view };
+    view.add_selection_rect_new(x, y, w, h);
+}

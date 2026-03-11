@@ -14,6 +14,7 @@ use core_graphics::geometry::{CGPoint, CGRect, CGSize};
 use objc::runtime::Object;
 use serde::Deserialize;
 
+use std::collections::HashMap;
 use std::ffi::{c_char, CString};
 use std::ptr::null_mut;
 
@@ -173,6 +174,11 @@ struct GhostTextData {
     color: (f64, f64, f64),
 }
 
+struct CachedLine {
+    text: String,
+    tokens: Vec<RenderToken>,
+}
+
 // ── EditorView ──────────────────────────────────────────────────────────────
 
 pub struct EditorView {
@@ -213,6 +219,19 @@ pub struct EditorView {
     // Gutter width set by TypeScript (overrides computed gutter_width when Some).
     pub ts_gutter_width: Option<f64>,
     initial_top_y: Option<f64>,
+
+    // Read-only mode
+    pub read_only: bool,
+
+    // Per-line background colors for diff highlighting (1-based line number → RGBA)
+    pub line_backgrounds: HashMap<i32, (f64, f64, f64, f64)>,
+
+    // Line cache: stores all lines ever sent by TypeScript, keyed by 1-based line number.
+    line_cache: HashMap<i32, CachedLine>,
+    // Accumulated scroll delta (in pixels) that TypeScript can read.
+    pub rust_scroll_delta: f64,
+    // Set true when scroll reveals lines not present in the cache.
+    pub needs_lines: bool,
 
     // Context menu
     context_menu_items: Vec<ContextMenuItem>,
@@ -257,6 +276,11 @@ impl EditorView {
             ts_handles_events: false,
             ts_gutter_width: None,
             initial_top_y: None,
+            read_only: false,
+            line_backgrounds: HashMap::new(),
+            line_cache: HashMap::new(),
+            rust_scroll_delta: 0.0,
+            needs_lines: false,
             context_menu_items: Vec::new(),
             background_color: (0.118, 0.118, 0.118),
             gutter_bg_color:  (0.118, 0.118, 0.118),
@@ -1342,6 +1366,72 @@ impl EditorView {
 
         if let Some(ref c) = self.cursor { draw_one(c); }
         for c in &self.cursors { draw_one(c); }
+    }
+}
+
+// === TS-authoritative render protocol ===
+
+impl EditorView {
+    pub fn width(&self) -> f64 { self.width }
+    pub fn height(&self) -> f64 { self.height }
+
+    /// Cache a line's text and tokens (packed format). Does NOT add to frame_lines.
+    pub fn cache_line(&mut self, line_number: i32, text: &str, packed_tokens: &str) {
+        let parsed = text_renderer::parse_packed_tokens(packed_tokens);
+        self.line_cache.insert(line_number, CachedLine {
+            text: text.to_string(),
+            tokens: parsed.tokens,
+        });
+    }
+
+    /// Build frame_lines from the cache for the visible range.
+    pub fn set_viewport_from_cache(
+        &mut self,
+        start_line: i32,
+        end_line: i32,
+        scroll_top: f64,
+        total_lines: i32,
+        line_height: f64,
+    ) {
+        self.frame_lines.clear();
+        self.max_line_number = total_lines;
+        self.needs_lines = false;
+
+        for ln in start_line..=end_line {
+            let y = (ln - 1) as f64 * line_height - scroll_top;
+            if let Some(cached) = self.line_cache.get(&ln) {
+                self.frame_lines.push(LineRenderData {
+                    line_number: ln,
+                    text: cached.text.clone(),
+                    tokens: cached.tokens.clone(),
+                    y_offset: y,
+                });
+            } else {
+                self.needs_lines = true;
+                self.frame_lines.push(LineRenderData {
+                    line_number: ln,
+                    text: String::new(),
+                    tokens: Vec::new(),
+                    y_offset: y,
+                });
+            }
+        }
+    }
+
+    /// Clear selections and pre-allocate for `count` new rects.
+    pub fn begin_selections_new(&mut self, count: usize) {
+        self.selections.clear();
+        self.selections.reserve(count);
+    }
+
+    /// Add a selection highlight rectangle.
+    pub fn add_selection_rect_new(&mut self, x: f64, y: f64, w: f64, h: f64) {
+        self.selections.push(SelectionRegion { x, y, w, h });
+    }
+
+    /// Clear the line cache.
+    pub fn clear_line_cache(&mut self) {
+        self.line_cache.clear();
     }
 }
 

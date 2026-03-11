@@ -125,14 +125,14 @@ describe('Full-Stack Integration', () => {
     expect(ffi.getCalls('setFont').length).toBeGreaterThanOrEqual(1);
     expect(ffi.getCalls('measureText').length).toBeGreaterThanOrEqual(1);
 
-    const renderLineCalls = ffi.getCalls('renderLine');
-    expect(renderLineCalls.length).toBeGreaterThan(0);
+    const cacheLineCalls = ffi.getCalls('cacheLine');
+    expect(cacheLineCalls.length).toBeGreaterThan(0);
 
-    // renderLine should include token JSON
-    const firstRender = renderLineCalls[0];
-    expect(firstRender[1]).toBe(1); // line number (1-based in FFI)
-    expect(typeof firstRender[2]).toBe('string'); // text
-    expect(typeof firstRender[3]).toBe('string'); // tokensJson
+    // cacheLine should include packed tokens
+    const firstCache = cacheLineCalls[0];
+    expect(firstCache[1]).toBe(1); // line number (1-based in FFI)
+    expect(typeof firstCache[2]).toBe('string'); // text
+    expect(typeof firstCache[3]).toBe('string'); // packedTokens
 
     // setCursor should have been called
     expect(ffi.getCalls('setCursor').length).toBe(1);
@@ -155,10 +155,10 @@ describe('Full-Stack Integration', () => {
     expect(afterText).toContain('/* INTEGRATION TEST */');
     expect(afterText).not.toBe(beforeText);
 
-    // FFI should have received re-rendered lines
+    // FFI should have received re-cached lines
     coordinator.invalidate();
-    const renderCalls = ffi.getCalls('renderLine');
-    expect(renderCalls.length).toBeGreaterThan(0);
+    const cacheCalls = ffi.getCalls('cacheLine');
+    expect(cacheCalls.length).toBeGreaterThan(0);
   });
 
   // -------------------------------------------------------
@@ -274,11 +274,11 @@ describe('Full-Stack Integration', () => {
     // Render coordinator should skip hidden lines
     ffi.reset();
     coordinator.invalidate();
-    const renderCalls = ffi.getCalls('renderLine');
-    const renderedLineNumbers = renderCalls.map((c: any[]) => c[1]);
+    const cacheCalls = ffi.getCalls('cacheLine');
+    const cachedLineNumbers = cacheCalls.map((c: any[]) => c[1]);
     for (let i = foldLine + 2; i <= foldEnd; i++) {
       // FFI line numbers are 1-based
-      expect(renderedLineNumbers).not.toContain(i + 1);
+      expect(cachedLineNumbers).not.toContain(i + 1);
     }
 
     // Unfold to restore state
@@ -738,35 +738,38 @@ describe('Full-Stack Integration', () => {
     ffi.reset();
     coordinator.invalidate();
 
-    // Verify renderLine calls
-    const renderCalls = ffi.getCalls('renderLine');
-    expect(renderCalls.length).toBeGreaterThan(0);
+    // Verify cacheLine calls
+    const cacheCalls = ffi.getCalls('cacheLine');
+    expect(cacheCalls.length).toBeGreaterThan(0);
 
-    // All renderLine calls should have valid structure:
-    // [handle, lineNumber, text, tokensJson, yOffset]
-    for (const call of renderCalls) {
+    // All cacheLine calls should have valid structure:
+    // [handle, lineNumber, text, packedTokens]
+    for (const call of cacheCalls) {
       expect(typeof call[0]).toBe('number'); // handle
       expect(typeof call[1]).toBe('number'); // lineNumber (1-based)
       expect(call[1]).toBeGreaterThanOrEqual(1);
       expect(typeof call[2]).toBe('string'); // text
-      expect(typeof call[3]).toBe('string'); // tokensJson
+      expect(typeof call[3]).toBe('string'); // packedTokens
 
-      // tokensJson should be valid JSON
-      const tokens = JSON.parse(call[3]);
-      expect(Array.isArray(tokens)).toBe(true);
+      // packedTokens should be pipe-delimited segments
+      const segments = call[3].split('|').filter((s: string) => s.length > 0);
+      for (const seg of segments) {
+        const parts = seg.split(',');
+        expect(parts.length).toBe(4);
+      }
     }
 
     // setCursor should reflect cursor at (0, 0)
     const cursorCalls = ffi.getCalls('setCursor');
     expect(cursorCalls.length).toBe(1);
 
-    // setSelection should be called
-    const selCalls = ffi.getCalls('setSelection');
+    // beginSelections should be called
+    const selCalls = ffi.getCalls('beginSelections');
     expect(selCalls.length).toBe(1);
 
-    // scroll should be called
-    const scrollCalls = ffi.getCalls('scroll');
-    expect(scrollCalls.length).toBeGreaterThanOrEqual(1);
+    // setViewport should be called
+    const vpCalls = ffi.getCalls('setViewport');
+    expect(vpCalls.length).toBeGreaterThanOrEqual(1);
 
     // Total FFI call count
     const totalCalls = ffi.calls.length;

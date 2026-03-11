@@ -95,7 +95,7 @@ export const DARK_THEME: EditorTheme = {
     tagName: '#569cd6',
     attributeName: '#9cdcfe',
     attributeValue: '#ce9178',
-    heading: '#569cd6',
+    heading: '#4fc1ff',
     link: '#3794ff',
     meta: '#569cd6',
     builtin: '#4ec9b0',

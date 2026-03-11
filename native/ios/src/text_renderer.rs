@@ -29,7 +29,7 @@ extern "C" {
 }
 
 /// Token data from the TypeScript layer.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct RenderToken {
     /// Start column.
     pub s: usize,
@@ -290,4 +290,42 @@ fn set_foreground_color(
             &cg_color,
         );
     }
+}
+
+/// Result of parsing packed tokens: tokens + optional per-line background color.
+pub struct ParsedTokens {
+    pub tokens: Vec<RenderToken>,
+    pub line_bg: Option<(f64, f64, f64)>,
+}
+
+/// Parse packed token format: "start,end,hexColor,styleInt|..."
+pub fn parse_packed_tokens(packed: &str) -> ParsedTokens {
+    if packed.is_empty() {
+        return ParsedTokens { tokens: Vec::new(), line_bg: None };
+    }
+    let mut tokens = Vec::new();
+    let mut line_bg: Option<(f64, f64, f64)> = None;
+    for segment in packed.split('|') {
+        if segment.is_empty() { continue; }
+        if segment.len() >= 5 && &segment[..3] == "BG:" {
+            line_bg = Some(parse_hex_color(&segment[3..]));
+            continue;
+        }
+        let mut parts = segment.splitn(4, ',');
+        let s = match parts.next() { Some(v) => v.parse::<usize>().unwrap_or(0), None => continue };
+        let e = match parts.next() { Some(v) => v.parse::<usize>().unwrap_or(0), None => continue };
+        let c = match parts.next() {
+            Some(v) => { let mut hex = String::with_capacity(7); hex.push('#'); hex.push_str(v); hex }
+            None => continue,
+        };
+        let st = match parts.next() {
+            Some("1") => "italic".to_string(),
+            Some("2") => "bold".to_string(),
+            Some("3") => "heading-lg".to_string(),
+            Some("4") => "heading-md".to_string(),
+            _ => "normal".to_string(),
+        };
+        tokens.push(RenderToken { s, e, c, st });
+    }
+    ParsedTokens { tokens, line_bg }
 }

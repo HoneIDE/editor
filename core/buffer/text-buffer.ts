@@ -38,6 +38,11 @@ export class TextBuffer {
   // plain string that's updated via substring + concatenation — operations Perry
   // handles correctly — we bypass rope traversal for all text-read operations.
   private _text: string;
+  // Precomputed line start offsets for O(1) getLine/getLineOffset/getOffsetLine.
+  // _lineStarts[i] = character offset of the first char of line i.
+  // Length = lineCount. Rebuilt on any mutation.
+  private _lineStarts: number[];
+  private _lineCount: number;
 
   constructor(initialContent: string = '') {
     // Normalize line endings to \n (avoid regex — Perry may not support it;
@@ -56,13 +61,25 @@ export class TextBuffer {
       }
     }
     this._text = normalized;
+    this._lineStarts = [];
+    this._lineCount = 0;
+    this._rebuildLineStarts();
     const pieceTable = new PieceTable(normalized);
     this.rope = new Rope(pieceTable);
     this.lineIndex = new LineIndex();
-    // Perry AOT: lineIndex.rebuild uses class-field push which is broken in Perry
-    // codegen. All lineIndex queries are bypassed in _text scanning above, so
-    // skip the rebuild — lineStarts stays at [0] (unused in Perry mode).
-    // this.lineIndex.rebuild(this.rope);
+  }
+
+  /** Rebuild the line start offset index from _text. */
+  private _rebuildLineStarts(): void {
+    const text = this._text;
+    const starts: number[] = [0]; // line 0 always starts at offset 0
+    for (let i = 0; i < text.length; i++) {
+      if (text.charCodeAt(i) === 10) {
+        starts.push(i + 1);
+      }
+    }
+    this._lineStarts = starts;
+    this._lineCount = starts.length;
   }
 
   /**
@@ -80,11 +97,7 @@ export class TextBuffer {
     } else {
       this._text = this._text.substring(0, clampedOffset) + text + this._text.substring(clampedOffset);
     }
-    // NOTE: lineIndex.update() intentionally skipped. lineIndex uses splice() on
-    // class-field arrays which Perry AOT does not dispatch correctly. All offset
-    // queries (getLineOffset, getOffsetLine, getLineLength) now scan _text directly.
-    // NOTE: rope.insert() is intentionally skipped. _text is the source of truth
-    // for all reads. Snapshots capture _text directly (see snapshot()).
+    this._rebuildLineStarts();
     return text.length;
   }
 
@@ -95,9 +108,8 @@ export class TextBuffer {
   delete(offset: number, length: number): string {
     if (length <= 0) return '';
     const deletedText = this._text.substring(offset, offset + length);
-    // Update shadow text
     this._text = this._text.substring(0, offset) + this._text.substring(offset + length);
-    // NOTE: lineIndex.update() and rope.delete() intentionally skipped. See insert().
+    this._rebuildLineStarts();
     return deletedText;
   }
 
@@ -111,70 +123,48 @@ export class TextBuffer {
     return this._text.substring(start, end < 0 ? 0 : end);
   }
 
-  /** Get the content of a single line (without line ending). */
+  /** Get the content of a single line (without line ending). O(1) via offset index. */
   getLine(lineNumber: number): string {
-    // Scan _text (Perry-safe plain string) for line boundaries.
-    const fullText = this._text;
-    let currentLine = 0;
-    let lineStart = 0;
-    for (let i = 0; i < fullText.length; i++) {
-      if (fullText.charCodeAt(i) === 10) {
-        if (currentLine === lineNumber) {
-          return fullText.substring(lineStart, i);
-        }
-        currentLine++;
-        lineStart = i + 1;
-      }
+    if (lineNumber < 0 || lineNumber >= this._lineCount) return '';
+    const start = this._lineStarts[lineNumber];
+    if (lineNumber + 1 < this._lineCount) {
+      // Next line start is after the \n, so line end = nextStart - 1
+      return this._text.substring(start, this._lineStarts[lineNumber + 1] - 1);
     }
-    // Last line (no trailing newline) or the requested line
-    if (currentLine === lineNumber) {
-      return fullText.substring(lineStart, fullText.length);
-    }
-    return '';
+    // Last line — goes to end of text
+    return this._text.substring(start);
   }
 
-  /** Total number of lines in the buffer. */
+  /** Total number of lines in the buffer. O(1) via cached count. */
   getLineCount(): number {
-    // Scan _text (Perry-safe plain string).
-    const fullText = this._text;
-    let count = 1;
-    for (let i = 0; i < fullText.length; i++) {
-      if (fullText.charCodeAt(i) === 10) {
-        count++;
-      }
-    }
-    return count;
+    return this._lineCount;
   }
 
-  /** Get the character offset of the start of a line. */
+  /** Get the character offset of the start of a line. O(1) via offset index. */
   getLineOffset(lineNumber: number): number {
-    // Scan _text directly — lineIndex.splice() is broken in Perry AOT.
     if (lineNumber <= 0) return 0;
-    const fullText = this._text;
-    let currentLine = 0;
-    for (let i = 0; i < fullText.length; i++) {
-      if (fullText.charCodeAt(i) === 10) {
-        currentLine++;
-        if (currentLine === lineNumber) {
-          return i + 1;
-        }
-      }
-    }
-    return fullText.length;
+    if (lineNumber >= this._lineCount) return this._text.length;
+    return this._lineStarts[lineNumber];
   }
 
-  /** Get the line number for a given character offset. */
+  /** Get the line number for a given character offset. O(log N) binary search. */
   getOffsetLine(offset: number): number {
-    // Scan _text directly — lineIndex.splice() is broken in Perry AOT.
-    const fullText = this._text;
-    let count = 0;
-    const limit = offset < fullText.length ? offset : fullText.length;
-    for (let i = 0; i < limit; i++) {
-      if (fullText.charCodeAt(i) === 10) {
-        count++;
+    const starts = this._lineStarts;
+    const n = this._lineCount;
+    if (n <= 1) return 0;
+    if (offset >= this._text.length) return n - 1;
+    // Binary search for the last line whose start <= offset
+    let lo = 0;
+    let hi = n - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (starts[mid] <= offset) {
+        lo = mid;
+      } else {
+        hi = mid - 1;
       }
     }
-    return count;
+    return lo;
   }
 
   /** Total number of characters in the buffer. */
@@ -259,21 +249,24 @@ export class TextBuffer {
    * Restore the buffer to a previous snapshot state.
    */
   restoreSnapshot(snapshot: BufferSnapshot): void {
-    // Get the text from the snapshot and rebuild
     const text = snapshot.getText();
     this._text = text;
+    this._rebuildLineStarts();
     const pieceTable = new PieceTable(text);
     this.rope = new Rope(pieceTable);
     this.lineIndex = new LineIndex();
-    // Perry AOT: lineIndex.rebuild uses class-field push (broken). Skip it.
-    // this.lineIndex.rebuild(this.rope);
   }
 
   /**
    * Get the line length (excluding newline character).
    */
+  /** Line length excluding newline. O(1) via offset index. */
   getLineLength(lineNumber: number): number {
-    // Use getLine() which already scans _text directly (Perry-safe).
-    return this.getLine(lineNumber).length;
+    if (lineNumber < 0 || lineNumber >= this._lineCount) return 0;
+    const start = this._lineStarts[lineNumber];
+    if (lineNumber + 1 < this._lineCount) {
+      return this._lineStarts[lineNumber + 1] - 1 - start;
+    }
+    return this._text.length - start;
   }
 }
