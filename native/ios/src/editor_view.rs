@@ -298,6 +298,40 @@ impl EditorView {
 
     pub fn uiview(&self) -> Id { self.uiview }
 
+    pub fn width(&self) -> f64 { self.width }
+    pub fn height(&self) -> f64 { self.height }
+
+    /// Set the editor background color.
+    pub fn set_bg_color(&mut self, r: f64, g: f64, b: f64) {
+        self.background_color = (r, g, b);
+        self.gutter_bg_color = (r, g, b);
+        self.invalidate();
+    }
+
+    /// Set the default text color.
+    pub fn set_fg_color(&mut self, r: f64, g: f64, b: f64) {
+        self.default_text_color = (r, g, b);
+        self.invalidate();
+    }
+
+    /// Set the gutter (line number) foreground color.
+    pub fn set_gutter_fg_color(&mut self, r: f64, g: f64, b: f64) {
+        self.gutter_fg_color = (r, g, b);
+        self.invalidate();
+    }
+
+    /// Set the selection highlight color (with alpha).
+    pub fn set_selection_color(&mut self, r: f64, g: f64, b: f64, a: f64) {
+        self.selection_color = (r, g, b, a);
+        self.invalidate();
+    }
+
+    /// Set the cursor color.
+    pub fn set_cursor_color(&mut self, r: f64, g: f64, b: f64) {
+        self.cursor_color = (r, g, b);
+        self.invalidate();
+    }
+
     pub fn set_text_input_callback(&mut self, cb: TextInputCallback) {
         self.text_input_callback = Some(cb);
     }
