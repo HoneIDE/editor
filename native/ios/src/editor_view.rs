@@ -1406,9 +1406,6 @@ impl EditorView {
 // === TS-authoritative render protocol ===
 
 impl EditorView {
-    pub fn width(&self) -> f64 { self.width }
-    pub fn height(&self) -> f64 { self.height }
-
     /// Cache a line's text and tokens (packed format). Does NOT add to frame_lines.
     pub fn cache_line(&mut self, line_number: i32, text: &str, packed_tokens: &str) {
         let parsed = text_renderer::parse_packed_tokens(packed_tokens);

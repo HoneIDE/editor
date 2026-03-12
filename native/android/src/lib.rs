@@ -386,18 +386,18 @@ pub extern "C" fn hone_editor_set_font(view: *mut EditorView, family: *const u8,
 }
 
 #[no_mangle]
-pub extern "C" fn hone_editor_render_line(view: *mut EditorView, line_number: i32, text: *const u8, tokens_json: *const u8, y_offset: f64) {
+pub extern "C" fn hone_editor_render_line(view: *mut EditorView, line_number: f64, text: *const u8, tokens_json: *const u8, y_offset: f64) {
     let view = unsafe { &mut *view };
     let text_str = str_from_header(text);
     let tokens_str = str_from_header(tokens_json);
     let t = if tokens_str.is_empty() { "[]" } else { tokens_str };
-    view.render_line(line_number, text_str, t, y_offset);
+    view.render_line(line_number as i32, text_str, t, y_offset);
 }
 
 #[no_mangle]
-pub extern "C" fn hone_editor_set_cursor(view: *mut EditorView, x: f64, y: f64, style: i32) {
+pub extern "C" fn hone_editor_set_cursor(view: *mut EditorView, x: f64, y: f64, style: f64) {
     let view = unsafe { &mut *view };
-    view.set_cursor(x, y, style);
+    view.set_cursor(x, y, style as i32);
 }
 
 #[no_mangle]
