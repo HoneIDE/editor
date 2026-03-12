@@ -140,6 +140,14 @@ pub struct EditorView {
 
     // Context menu
     context_menu_items: Vec<ContextMenuItem>,
+
+    // Theme colors (ARGB u32 for direct use in Paint.setColor)
+    pub background_color: u32,
+    pub gutter_bg_color: u32,
+    pub gutter_fg_color: u32,
+    pub default_text_color: u32,
+    pub selection_color: u32,
+    pub cursor_color: u32,
 }
 
 impl EditorView {
@@ -171,6 +179,13 @@ impl EditorView {
             mouse_down_callback: None,
             scroll_callback: None,
             context_menu_items: Vec::new(),
+            // VS Code dark theme defaults
+            background_color: 0xFF1E1E1E,
+            gutter_bg_color: 0xFF252526,
+            gutter_fg_color: 0xFF858585,
+            default_text_color: 0xFFD4D4D4,
+            selection_color: 0x40264F78,
+            cursor_color: 0xFFFFFFFF,
         }
     }
 
@@ -443,6 +458,51 @@ impl EditorView {
 
     pub fn get_max_line_number(&self) -> i32 {
         self.max_line_number
+    }
+
+    // ── Color setters ───────────────────────────────────────────
+
+    /// Convert 0.0–1.0 RGB to ARGB u32 (full opacity).
+    fn rgb_to_argb(r: f64, g: f64, b: f64) -> u32 {
+        let ri = (r * 255.0) as u32;
+        let gi = (g * 255.0) as u32;
+        let bi = (b * 255.0) as u32;
+        0xFF000000 | (ri << 16) | (gi << 8) | bi
+    }
+
+    /// Convert 0.0–1.0 RGBA to ARGB u32.
+    fn rgba_to_argb(r: f64, g: f64, b: f64, a: f64) -> u32 {
+        let ai = (a * 255.0) as u32;
+        let ri = (r * 255.0) as u32;
+        let gi = (g * 255.0) as u32;
+        let bi = (b * 255.0) as u32;
+        (ai << 24) | (ri << 16) | (gi << 8) | bi
+    }
+
+    pub fn set_bg_color(&mut self, r: f64, g: f64, b: f64) {
+        self.background_color = Self::rgb_to_argb(r, g, b);
+        self.gutter_bg_color = self.background_color;
+        self.invalidate();
+    }
+
+    pub fn set_fg_color(&mut self, r: f64, g: f64, b: f64) {
+        self.default_text_color = Self::rgb_to_argb(r, g, b);
+        self.invalidate();
+    }
+
+    pub fn set_gutter_fg_color(&mut self, r: f64, g: f64, b: f64) {
+        self.gutter_fg_color = Self::rgb_to_argb(r, g, b);
+        self.invalidate();
+    }
+
+    pub fn set_selection_color(&mut self, r: f64, g: f64, b: f64, a: f64) {
+        self.selection_color = Self::rgba_to_argb(r, g, b, a);
+        self.invalidate();
+    }
+
+    pub fn set_cursor_color(&mut self, r: f64, g: f64, b: f64) {
+        self.cursor_color = Self::rgb_to_argb(r, g, b);
+        self.invalidate();
     }
 }
 

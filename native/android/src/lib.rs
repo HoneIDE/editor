@@ -219,7 +219,7 @@ fn draw_editor(env: &mut jni::JNIEnv, canvas: &JObject, view: &EditorView) {
         .ok().and_then(|v| v.f().ok()).unwrap_or(text_size_px * 0.6);
 
     // Fill background
-    let _ = env.call_method(canvas, "drawColor", "(I)V", &[JValue::Int(0xFF1E1E1E_u32 as i32)]);
+    let _ = env.call_method(canvas, "drawColor", "(I)V", &[JValue::Int(view.background_color as i32)]);
 
     let lines = view.get_frame_lines();
     if lines.is_empty() {
@@ -233,7 +233,7 @@ fn draw_editor(env: &mut jni::JNIEnv, canvas: &JObject, view: &EditorView) {
     let gutter_width = ((gutter_digits + 1) as f32) * char_width + 8.0;
 
     // Draw gutter background
-    let _ = env.call_method(&paint, "setColor", "(I)V", &[JValue::Int(0xFF252526_u32 as i32)]);
+    let _ = env.call_method(&paint, "setColor", "(I)V", &[JValue::Int(view.gutter_bg_color as i32)]);
     let style_class = env.find_class("android/graphics/Paint$Style").ok();
     if let Some(ref sc) = style_class {
         if let Ok(fill_val) = env.get_static_field(sc, "FILL", "Landroid/graphics/Paint$Style;") {
@@ -272,7 +272,7 @@ fn draw_editor(env: &mut jni::JNIEnv, canvas: &JObject, view: &EditorView) {
         }
 
         // Draw line number
-        let _ = env.call_method(&paint, "setColor", "(I)V", &[JValue::Int(0xFF858585_u32 as i32)]);
+        let _ = env.call_method(&paint, "setColor", "(I)V", &[JValue::Int(view.gutter_fg_color as i32)]);
         let num_str = format!("{}", line.line_number);
         if let Ok(jnum) = env.new_string(&num_str) {
             let num_x = gutter_width - ((num_str.len() as f32) * char_width) - 8.0;
@@ -285,7 +285,7 @@ fn draw_editor(env: &mut jni::JNIEnv, canvas: &JObject, view: &EditorView) {
         // Draw tokens
         if line.tokens.is_empty() {
             // Default color — draw whole line
-            let _ = env.call_method(&paint, "setColor", "(I)V", &[JValue::Int(0xFFD4D4D4_u32 as i32)]);
+            let _ = env.call_method(&paint, "setColor", "(I)V", &[JValue::Int(view.default_text_color as i32)]);
             if let Ok(jtext) = env.new_string(&line.text) {
                 let _ = env.call_method(canvas, "drawText",
                     "(Ljava/lang/String;FFLandroid/graphics/Paint;)V",
@@ -316,7 +316,7 @@ fn draw_editor(env: &mut jni::JNIEnv, canvas: &JObject, view: &EditorView) {
     // Draw selection rects
     let selections = view.get_selections();
     if !selections.is_empty() {
-        let _ = env.call_method(&paint, "setColor", "(I)V", &[JValue::Int(0x40264F78_u32 as i32)]);
+        let _ = env.call_method(&paint, "setColor", "(I)V", &[JValue::Int(view.selection_color as i32)]);
         for sel in selections {
             let sx = (sel.x as f32) * d + gutter_width;
             let sy = (sel.y as f32) * d;
@@ -331,7 +331,7 @@ fn draw_editor(env: &mut jni::JNIEnv, canvas: &JObject, view: &EditorView) {
 
     // Draw cursor
     if let Some(cursor) = view.get_cursor() {
-        let _ = env.call_method(&paint, "setColor", "(I)V", &[JValue::Int(0xFFFFFFFF_u32 as i32)]);
+        let _ = env.call_method(&paint, "setColor", "(I)V", &[JValue::Int(view.cursor_color as i32)]);
         let cx = (cursor.x as f32) * d + gutter_width;
         let cy = (cursor.y as f32) * d;
         let ch = (view.get_line_height() as f32) * d;
@@ -636,19 +636,34 @@ pub extern "C" fn hone_editor_needs_lines(_view: *mut EditorView) -> f64 { 1.0 }
 #[no_mangle]
 pub extern "C" fn hone_editor_set_line_background_2(_view: *mut EditorView, _line: f64, _r: f64, _g: f64, _b: f64, _a: f64) {}
 
-// === Editor Color Settings (no-op stubs) ===
+// === Editor Color Settings ===
 
 #[no_mangle]
-pub extern "C" fn hone_editor_set_bg_color(_view: *mut EditorView, _r: f64, _g: f64, _b: f64) {}
+pub extern "C" fn hone_editor_set_bg_color(view: *mut EditorView, r: f64, g: f64, b: f64) {
+    let view = unsafe { &mut *view };
+    view.set_bg_color(r, g, b);
+}
 
 #[no_mangle]
-pub extern "C" fn hone_editor_set_fg_color(_view: *mut EditorView, _r: f64, _g: f64, _b: f64) {}
+pub extern "C" fn hone_editor_set_fg_color(view: *mut EditorView, r: f64, g: f64, b: f64) {
+    let view = unsafe { &mut *view };
+    view.set_fg_color(r, g, b);
+}
 
 #[no_mangle]
-pub extern "C" fn hone_editor_set_gutter_fg_color(_view: *mut EditorView, _r: f64, _g: f64, _b: f64) {}
+pub extern "C" fn hone_editor_set_gutter_fg_color(view: *mut EditorView, r: f64, g: f64, b: f64) {
+    let view = unsafe { &mut *view };
+    view.set_gutter_fg_color(r, g, b);
+}
 
 #[no_mangle]
-pub extern "C" fn hone_editor_set_selection_color(_view: *mut EditorView, _r: f64, _g: f64, _b: f64, _a: f64) {}
+pub extern "C" fn hone_editor_set_selection_color(view: *mut EditorView, r: f64, g: f64, b: f64, a: f64) {
+    let view = unsafe { &mut *view };
+    view.set_selection_color(r, g, b, a);
+}
 
 #[no_mangle]
-pub extern "C" fn hone_editor_set_cursor_color(_view: *mut EditorView, _r: f64, _g: f64, _b: f64) {}
+pub extern "C" fn hone_editor_set_cursor_color(view: *mut EditorView, r: f64, g: f64, b: f64) {
+    let view = unsafe { &mut *view };
+    view.set_cursor_color(r, g, b);
+}
