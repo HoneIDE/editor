@@ -204,7 +204,16 @@ impl EditorView {
 
     /// Cache a line with packed tokens.
     /// Format: "start,end,hexColor,styleInt|..." optionally prefixed with "BG:hexColor|"
+    /// Skips the update if the line already has the same text (avoids allocations on
+    /// redundant re-renders, which cause OOM on memory-constrained devices like Android).
     pub fn cache_line_packed(&mut self, line_number: i32, text: &str, packed: &str) {
+        // Skip if line already cached with identical text
+        if let Some(existing) = self.line_cache.get(&line_number) {
+            if existing.text == text {
+                return;
+            }
+        }
+
         let mut line_bg = None;
         let mut token_str = packed;
 

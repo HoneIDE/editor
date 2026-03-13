@@ -521,9 +521,6 @@ pub extern "C" fn hone_editor_cache_line(view: *mut EditorView, line: f64, text:
     let view = unsafe { &mut *view };
     let text_str = str_from_header(text);
     let tokens_str = str_from_header(tokens);
-    if line as i32 <= 5 {
-        android_log(&format!("cache_line: line={} text_len={} text='{}'", line as i32, text_str.len(), &text_str[..text_str.len().min(80)]));
-    }
     view.cache_line_packed(line as i32, text_str, tokens_str);
 }
 
@@ -542,9 +539,7 @@ fn android_log(msg: &str) {
 #[no_mangle]
 pub extern "C" fn hone_editor_set_viewport(view: *mut EditorView, start_line: f64, end_line: f64, scroll_top: f64, total_lines: f64, line_height: f64) {
     let view = unsafe { &mut *view };
-    android_log(&format!("set_viewport: start={} end={} scrollTop={} total={} lineH={}", start_line as i32, end_line as i32, scroll_top, total_lines as i32, line_height));
     view.set_viewport_range(start_line as i32, end_line as i32, scroll_top, total_lines as i32, line_height);
-    android_log(&format!("set_viewport: frame_lines count={}", view.get_frame_lines().len()));
 }
 
 #[no_mangle]
@@ -631,7 +626,7 @@ pub extern "C" fn hone_editor_get_scroll_delta(_view: *mut EditorView) -> f64 { 
 pub extern "C" fn hone_editor_clear_scroll_delta(_view: *mut EditorView) {}
 
 #[no_mangle]
-pub extern "C" fn hone_editor_needs_lines(_view: *mut EditorView) -> f64 { 1.0 }
+pub extern "C" fn hone_editor_needs_lines(_view: *mut EditorView) -> f64 { 0.0 }
 
 #[no_mangle]
 pub extern "C" fn hone_editor_set_line_background_2(_view: *mut EditorView, _line: f64, _r: f64, _g: f64, _b: f64, _a: f64) {}
