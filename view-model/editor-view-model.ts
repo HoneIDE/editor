@@ -1476,8 +1476,81 @@ export class EditorViewModel {
     if (cursorsF.length === 0) return false;
     const cursorF = cursorsF[0];
 
+    // --- Selection commands (Shift+Arrow) ---
+    // Use cursorManager.moveToPosition(line, col, true) to set selectionAnchor
+    // and move cursor internally — avoids Perry issues with modifying cursor
+    // properties through external references.
+    if (commandId === 'editor.action.selectLeft') {
+      let newLine = cursorF.line;
+      let newCol = cursorF.column;
+      if (newCol > 0) {
+        newCol = newCol - 1;
+      } else if (newLine > 0) {
+        newLine = newLine - 1;
+        newCol = this.document.buffer.getLineLength(newLine);
+      }
+      this.cursorManager.moveToPosition(newLine, newCol, true);
+      this.notifyChange();
+      return true;
+    }
+
+    if (commandId === 'editor.action.selectRight') {
+      let newLine = cursorF.line;
+      let newCol = cursorF.column;
+      const lineLen0s = this.document.buffer.getLineLength(newLine);
+      if (newCol < lineLen0s) {
+        newCol = newCol + 1;
+      } else if (newLine < this.document.buffer.getLineCount() - 1) {
+        newLine = newLine + 1;
+        newCol = 0;
+      }
+      this.cursorManager.moveToPosition(newLine, newCol, true);
+      this.notifyChange();
+      return true;
+    }
+
+    if (commandId === 'editor.action.selectUp') {
+      let newLine = cursorF.line;
+      let newCol = cursorF.column;
+      if (newLine > 0) {
+        newLine = newLine - 1;
+        const lineLen1s = this.document.buffer.getLineLength(newLine);
+        if (newCol > lineLen1s) {
+          newCol = lineLen1s;
+        }
+      }
+      this.cursorManager.moveToPosition(newLine, newCol, true);
+      this.notifyChange();
+      return true;
+    }
+
+    if (commandId === 'editor.action.selectDown') {
+      let newLine = cursorF.line;
+      let newCol = cursorF.column;
+      const totalLinesS = this.document.buffer.getLineCount();
+      if (newLine < totalLinesS - 1) {
+        newLine = newLine + 1;
+        const lineLen2s = this.document.buffer.getLineLength(newLine);
+        if (newCol > lineLen2s) {
+          newCol = lineLen2s;
+        }
+      }
+      this.cursorManager.moveToPosition(newLine, newCol, true);
+      this.notifyChange();
+      return true;
+    }
+
+    // --- Movement commands (no selection) ---
     if (commandId === 'editor.action.moveCursorLeft') {
-      if (cursorF.column > 0) {
+      if (cursorF.selectionAnchor !== null && cursorF.selectionAnchor !== undefined) {
+        // Collapse selection to the left side
+        const a = cursorF.selectionAnchor;
+        if (a.line < cursorF.line || (a.line === cursorF.line && a.column < cursorF.column)) {
+          cursorF.line = a.line;
+          cursorF.column = a.column;
+        }
+        cursorF.selectionAnchor = null;
+      } else if (cursorF.column > 0) {
         cursorF.column = cursorF.column - 1;
       } else if (cursorF.line > 0) {
         cursorF.line = cursorF.line - 1;
@@ -1490,12 +1563,22 @@ export class EditorViewModel {
     }
 
     if (commandId === 'editor.action.moveCursorRight') {
-      const lineLen0 = this.document.buffer.getLineLength(cursorF.line);
-      if (cursorF.column < lineLen0) {
-        cursorF.column = cursorF.column + 1;
-      } else if (cursorF.line < this.document.buffer.getLineCount() - 1) {
-        cursorF.line = cursorF.line + 1;
-        cursorF.column = 0;
+      if (cursorF.selectionAnchor !== null && cursorF.selectionAnchor !== undefined) {
+        // Collapse selection to the right side
+        const a = cursorF.selectionAnchor;
+        if (a.line > cursorF.line || (a.line === cursorF.line && a.column > cursorF.column)) {
+          cursorF.line = a.line;
+          cursorF.column = a.column;
+        }
+        cursorF.selectionAnchor = null;
+      } else {
+        const lineLen0 = this.document.buffer.getLineLength(cursorF.line);
+        if (cursorF.column < lineLen0) {
+          cursorF.column = cursorF.column + 1;
+        } else if (cursorF.line < this.document.buffer.getLineCount() - 1) {
+          cursorF.line = cursorF.line + 1;
+          cursorF.column = 0;
+        }
       }
       cursorF.selectionAnchor = null;
       cursorF.desiredColumn = cursorF.column;
@@ -1528,6 +1611,19 @@ export class EditorViewModel {
       }
       cursorF.selectionAnchor = null;
       cursorF.desiredColumn = cursorF.column;
+      this.notifyChange();
+      return true;
+    }
+
+    if (commandId === 'editor.action.selectToLineStart') {
+      this.cursorManager.moveToPosition(cursorF.line, 0, true);
+      this.notifyChange();
+      return true;
+    }
+
+    if (commandId === 'editor.action.selectToLineEnd') {
+      const endCol = this.document.buffer.getLineLength(cursorF.line);
+      this.cursorManager.moveToPosition(cursorF.line, endCol, true);
       this.notifyChange();
       return true;
     }

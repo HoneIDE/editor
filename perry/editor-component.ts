@@ -661,6 +661,11 @@ export class Editor {
       hone_editor_set_gutter_width(h, vm.gutterWidth);
       const coordinator = this._coordinator;
       coordinator.render();
+
+      // Perry-safe: push selection rects directly via FFI.
+      // coordinator.render() may skip renderSelections due to caching or
+      // interface dispatch issues — send rects unconditionally here.
+      this._syncSelections(h, vm);
     }
   }
 
@@ -857,6 +862,64 @@ export class Editor {
    * - Cast strings to `any` for FFI pointer params
    * - charCodeAt compared to numeric literal (not variable) — Perry-safe
    */
+  /**
+   * Push selection rects directly via FFI, bypassing coordinator.
+   * Reads cursor0.selectionAnchor and cursor position from the cursor manager.
+   */
+  private _syncSelections(h: number, vm: EditorViewModel): void {
+    const cursors = vm.cursors;
+    if (cursors.length === 0) {
+      hone_editor_begin_selections(h, 0);
+      return;
+    }
+    const c = cursors[0];
+    const anchor = c.selectionAnchor;
+    if (anchor === null || anchor === undefined) {
+      hone_editor_begin_selections(h, 0);
+      return;
+    }
+
+    // Normalize: ensure start <= end
+    let startLine = anchor.line;
+    let startCol = anchor.column;
+    let endLine = c.line;
+    let endCol = c.column;
+    if (startLine > endLine || (startLine === endLine && startCol > endCol)) {
+      const tl = startLine;
+      const tc = startCol;
+      startLine = endLine;
+      startCol = endCol;
+      endLine = tl;
+      endCol = tc;
+    }
+
+    // Skip empty selection
+    if (startLine === endLine && startCol === endCol) {
+      hone_editor_begin_selections(h, 0);
+      return;
+    }
+
+    // Count rects (one per line in range)
+    const rectCount = endLine - startLine + 1;
+    hone_editor_begin_selections(h, rectCount);
+
+    const cw = vm.getCharWidth();
+    const gw = vm.gutterWidth;
+    const sz = 14;
+    const lh = sz + sz / 2;
+    const scrollTop = vm.viewport.scroll.scrollTop;
+
+    for (let line = startLine; line <= endLine; line++) {
+      const sc = line === startLine ? startCol : 0;
+      const lineContent = vm.document.buffer.getLine(line);
+      const ec = line === endLine ? endCol : lineContent.length;
+      const rx = sc * cw + gw;
+      const rw = (ec - sc) * cw;
+      const ry = line * lh - scrollTop;
+      hone_editor_add_selection_rect(h, rx, ry, rw, lh);
+    }
+  }
+
   private _directRenderText(text: string): void {
     const handle = this.nativeHandle;
     // fontSize 14, lineHeight 1.5 → lineHeightPx = 21 (same as coordinator default)
