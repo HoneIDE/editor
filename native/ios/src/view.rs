@@ -171,6 +171,12 @@ fn ensure_class_registered() {
                 requires_keyboard_reset_on_reload
                     as extern "C" fn(&Object, Sel) -> BOOL,
             );
+
+            // -- Tap gesture action (bypasses UIScrollView touch delay) --
+            decl.add_method(
+                objc::sel!(handleTap:),
+                handle_tap as extern "C" fn(&Object, Sel, Id),
+            );
         }
 
         decl.register();
@@ -388,6 +394,25 @@ extern "C" fn requires_keyboard_reset_on_reload(_this: &Object, _sel: Sel) -> BO
 ///
 /// The view has its `honeEditorState` ivar set to point at the given EditorView.
 /// Touch events and drawing are routed to the EditorView.
+/// Tap gesture action: positions cursor and shows keyboard.
+/// UITapGestureRecognizer bypasses UIScrollView's touch delay (`delaysContentTouches`),
+/// ensuring the editor reliably receives taps even when embedded inside a scroll view.
+extern "C" fn handle_tap(this: &Object, _sel: Sel, gesture: Id) {
+    unsafe {
+        let state_ptr: *mut c_void = *this.get_ivar(EDITOR_STATE_IVAR);
+        if state_ptr.is_null() { return; }
+        let editor_view = &mut *(state_ptr as *mut EditorView);
+
+        // Get tap location within this view
+        let point: ObjCPoint = msg_send![gesture, locationInView: this as *const Object as Id];
+        editor_view.on_mouse_down(point.x, point.y);
+
+        // Show the iOS software keyboard
+        let this_mut = this as *const Object as *mut Object;
+        let _: BOOL = msg_send![this_mut, becomeFirstResponder];
+    }
+}
+
 pub fn create_editor_uiview(width: f64, height: f64, state: *mut EditorView) -> Id {
     ensure_class_registered();
 
@@ -412,6 +437,15 @@ pub fn create_editor_uiview(width: f64, height: f64, state: *mut EditorView) -> 
 
         // Set opaque for performance
         let _: () = msg_send![view, setOpaque: YES];
+
+        // Add a UITapGestureRecognizer to reliably receive taps inside a UIScrollView.
+        // UIScrollView's delaysContentTouches prevents touchesBegan: from firing on
+        // embedded views, but gesture recognizers bypass this delay mechanism.
+        let tap_cls = Class::get("UITapGestureRecognizer").unwrap();
+        let tap: Id = msg_send![tap_cls, alloc];
+        let action = objc::sel!(handleTap:);
+        let tap: Id = msg_send![tap, initWithTarget:view action:action];
+        let _: () = msg_send![view, addGestureRecognizer: tap];
 
         view
     }
