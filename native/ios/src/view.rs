@@ -418,13 +418,46 @@ pub fn create_editor_uiview(width: f64, height: f64, state: *mut EditorView) -> 
 }
 
 /// Trigger a redraw on the next display cycle.
+///
+/// UIView.setNeedsDisplay must be called on the main thread. Perry's setInterval
+/// may fire on a background thread (GCD timer), so we dispatch to the main queue
+/// when not already on the main thread. Without this, the view only repaints
+/// during touch events (scrolling) since those come from UIKit on the main thread.
 pub fn invalidate_view(uiview: Id) {
     if uiview != NIL {
         unsafe {
-            // UIView setNeedsDisplay takes no argument (unlike NSView which takes BOOL)
-            let _: () = msg_send![uiview, setNeedsDisplay];
+            let ns_thread = Class::get("NSThread").unwrap();
+            let is_main: BOOL = msg_send![ns_thread, isMainThread];
+            if is_main == YES {
+                let _: () = msg_send![uiview, setNeedsDisplay];
+            } else {
+                // dispatch_async_f doesn't require block support — just a C fn + context.
+                extern "C" fn set_needs_display(ctx: *mut c_void) {
+                    unsafe {
+                        let view = ctx as Id;
+                        let _: () = msg_send![view, setNeedsDisplay];
+                    }
+                }
+                dispatch_async_f(
+                    dispatch_get_main_queue(),
+                    uiview as *mut c_void,
+                    set_needs_display,
+                );
+            }
         }
     }
+}
+
+extern "C" {
+    // dispatch_get_main_queue() is an inline function / macro in <dispatch/queue.h>,
+    // not an exported symbol. Use the underlying global variable directly.
+    static _dispatch_main_q: c_void;
+    fn dispatch_async_f(queue: *mut c_void, context: *mut c_void, work: extern "C" fn(*mut c_void));
+}
+
+#[inline(always)]
+unsafe fn dispatch_get_main_queue() -> *mut c_void {
+    &raw const _dispatch_main_q as *mut c_void
 }
 
 /// Update the ivar pointer (used if EditorView is moved/recreated).
