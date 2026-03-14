@@ -464,12 +464,23 @@ pub fn invalidate_view(uiview: Id) {
             let is_main: BOOL = msg_send![ns_thread, isMainThread];
             if is_main == YES {
                 let _: () = msg_send![uiview, setNeedsDisplay];
+                // Force synchronous layer redraw — setNeedsDisplay alone is deferred
+                // to UIKit's display cycle, which may not fire reliably when called
+                // from Perry's NSTimer-based setInterval pump.
+                let layer: Id = msg_send![uiview, layer];
+                if layer != NIL {
+                    let _: () = msg_send![layer, displayIfNeeded];
+                }
             } else {
                 // dispatch_async_f doesn't require block support — just a C fn + context.
                 extern "C" fn set_needs_display(ctx: *mut c_void) {
                     unsafe {
                         let view = ctx as Id;
                         let _: () = msg_send![view, setNeedsDisplay];
+                        let layer: Id = msg_send![view, layer];
+                        if layer != NIL {
+                            let _: () = msg_send![layer, displayIfNeeded];
+                        }
                     }
                 }
                 dispatch_async_f(
