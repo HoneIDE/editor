@@ -400,16 +400,15 @@ extern "C" fn requires_keyboard_reset_on_reload(_this: &Object, _sel: Sel) -> BO
 ///
 /// The view has its `honeEditorState` ivar set to point at the given EditorView.
 /// Touch events and drawing are routed to the EditorView.
-/// Called when the view is added to (or removed from) a window hierarchy.
-/// Triggers an initial redraw — invalidate_view() during init is a no-op
-/// because the view has no window yet, so content wouldn't render until
-/// the first user interaction.
+/// Called when the view enters a window hierarchy. Starts the CADisplayLink
+/// render loop so the editor repaints every frame when dirty.
 extern "C" fn did_move_to_window(this: &Object, _sel: Sel) {
     unsafe {
         let window: Id = msg_send![this, window];
         if window != NIL {
             let this_id = this as *const Object as Id;
-            invalidate_view(this_id);
+            display_link_ensure_started(this_id);
+            mark_dirty(this_id);
         }
     }
 }
@@ -471,48 +470,100 @@ pub fn create_editor_uiview(width: f64, height: f64, state: *mut EditorView) -> 
     }
 }
 
-/// Trigger a redraw on the next display cycle.
-///
-/// UIView.setNeedsDisplay must be called on the main thread. Perry's setInterval
-/// may fire on a background thread (GCD timer), so we dispatch to the main queue
-/// when not already on the main thread. Without this, the view only repaints
-/// during touch events (scrolling) since those come from UIKit on the main thread.
+// =============================================================================
+// CADisplayLink-driven rendering
+// =============================================================================
+// setNeedsDisplay from Perry's NSTimer does NOT produce visible screen updates
+// on iOS. The only reliable approach: use a CADisplayLink (synced with the
+// display refresh) that checks a dirty flag and calls setNeedsDisplay in the
+// correct frame context.
+
+use std::sync::Mutex;
+
+/// Set of UIView pointers that need a redraw on the next display frame.
+static DIRTY_VIEWS: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+
+/// Whether the shared CADisplayLink has been started.
+static DISPLAY_LINK_STARTED: Once = Once::new();
+
+/// Mark a view as needing redraw. The CADisplayLink callback will call
+/// setNeedsDisplay on it at the next display refresh.
+fn mark_dirty(uiview: Id) {
+    if uiview != NIL {
+        let ptr = uiview as usize;
+        let mut dirty = DIRTY_VIEWS.lock().unwrap();
+        // Avoid duplicates
+        for existing in dirty.iter() {
+            if *existing == ptr { return; }
+        }
+        dirty.push(ptr);
+    }
+}
+
+/// CADisplayLink callback: called every frame (~60/120Hz).
+/// Drains the dirty list and calls setNeedsDisplay on each view.
+extern "C" fn display_link_tick(_target: &Object, _sel: Sel, _display_link: Id) {
+    let views: Vec<usize> = {
+        let mut dirty = DIRTY_VIEWS.lock().unwrap();
+        let v = dirty.clone();
+        dirty.clear();
+        v
+    };
+    for ptr in views {
+        unsafe {
+            let view = ptr as Id;
+            let _: () = msg_send![view, setNeedsDisplay];
+        }
+    }
+}
+
+/// Register the CADisplayLink target class (once).
+static REGISTER_DL_TARGET: Once = Once::new();
+
+fn ensure_dl_target_registered() {
+    REGISTER_DL_TARGET.call_once(|| {
+        let superclass = Class::get("NSObject").expect("NSObject");
+        let mut decl = ClassDecl::new("HoneDisplayLinkTarget", superclass)
+            .expect("Failed to create HoneDisplayLinkTarget");
+        unsafe {
+            decl.add_method(
+                objc::sel!(tick:),
+                display_link_tick as extern "C" fn(&Object, Sel, Id),
+            );
+        }
+        decl.register();
+    });
+}
+
+/// Start the shared CADisplayLink if not already running.
+fn display_link_ensure_started(uiview: Id) {
+    DISPLAY_LINK_STARTED.call_once(|| {
+        ensure_dl_target_registered();
+        unsafe {
+            let target_cls = Class::get("HoneDisplayLinkTarget").unwrap();
+            let target: Id = msg_send![target_cls, new];
+            let dl_cls = Class::get("CADisplayLink").unwrap();
+            let dl: Id = msg_send![dl_cls, displayLinkWithTarget:target selector:objc::sel!(tick:)];
+            // Add to NSRunLoopCommonModes so it fires during scrolling too.
+            let run_loop_cls = Class::get("NSRunLoop").unwrap();
+            let main_loop: Id = msg_send![run_loop_cls, mainRunLoop];
+            let common_modes: Id = msg_send![
+                Class::get("NSString").unwrap(),
+                stringWithUTF8String: b"kCFRunLoopCommonModes\0".as_ptr()
+            ];
+            let _: () = msg_send![dl, addToRunLoop:main_loop forMode:common_modes];
+            // Keep target alive
+            std::mem::forget(target);
+        }
+    });
+}
+
+/// Public API: mark a view for redraw on the next display frame.
+/// This replaces setNeedsDisplay calls — the CADisplayLink callback
+/// handles the actual setNeedsDisplay in the correct frame context.
 pub fn invalidate_view(uiview: Id) {
     if uiview != NIL {
-        unsafe {
-            let ns_thread = Class::get("NSThread").unwrap();
-            let is_main: BOOL = msg_send![ns_thread, isMainThread];
-            if is_main == YES {
-                let _: () = msg_send![uiview, setNeedsDisplay];
-                // Force synchronous layer redraw + commit to render server.
-                // Perry's NSTimer pump may not align with UIKit's display cycle,
-                // so we force the layer to draw and commit immediately.
-                let layer: Id = msg_send![uiview, layer];
-                if layer != NIL {
-                    let _: () = msg_send![layer, displayIfNeeded];
-                }
-                let ca_transaction = Class::get("CATransaction").unwrap();
-                let _: () = msg_send![ca_transaction, flush];
-            } else {
-                extern "C" fn set_needs_display(ctx: *mut c_void) {
-                    unsafe {
-                        let view = ctx as Id;
-                        let _: () = msg_send![view, setNeedsDisplay];
-                        let layer: Id = msg_send![view, layer];
-                        if layer != NIL {
-                            let _: () = msg_send![layer, displayIfNeeded];
-                        }
-                        let ca_transaction = Class::get("CATransaction").unwrap();
-                        let _: () = msg_send![ca_transaction, flush];
-                    }
-                }
-                dispatch_async_f(
-                    dispatch_get_main_queue(),
-                    uiview as *mut c_void,
-                    set_needs_display,
-                );
-            }
-        }
+        mark_dirty(uiview);
     }
 }
 
