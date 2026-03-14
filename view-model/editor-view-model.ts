@@ -30,6 +30,45 @@ let _perryLangIsMarkdown: number = 0;
 let _perryFenceCache: string = '';
 let _perryUseDirectTokens: number = 0;
 
+// ---------------------------------------------------------------------------
+// Perry-safe snapshot undo/redo (module-level, no class-field arrays).
+// Each entry stores: full buffer text, cursor line, cursor column.
+// Coalescing: single-char edits within 500ms share one snapshot.
+// ---------------------------------------------------------------------------
+let _undoTexts: string[] = [];
+let _undoLines: number[] = [];
+let _undoCols: number[] = [];
+let _undoCount = 0;
+let _lastUndoTime = 0;
+let _lastUndoWasSingleChar = 0;
+
+let _redoTexts: string[] = [];
+let _redoLines: number[] = [];
+let _redoCols: number[] = [];
+let _redoCount = 0;
+
+function _pushUndoSnapshot(text: string, line: number, col: number, isSingleChar: number, isNewline: number): void {
+  const now = Date.now();
+  const shouldCoalesce = isSingleChar === 1 && isNewline === 0 &&
+                          _lastUndoWasSingleChar === 1 &&
+                          _undoCount > 0 &&
+                          (now - _lastUndoTime) < 500;
+  _lastUndoTime = now;
+  _lastUndoWasSingleChar = isSingleChar;
+
+  if (shouldCoalesce) {
+    // Don't push — previous snapshot is still the correct "before" state.
+    return;
+  }
+  // New undo group
+  _undoTexts[_undoCount] = text;
+  _undoLines[_undoCount] = line;
+  _undoCols[_undoCount] = col;
+  _undoCount = _undoCount + 1;
+  // Clear redo stack on new edit
+  _redoCount = 0;
+}
+
 // Perry-safe: module-level theme colors for tokenization.
 // Dark mode defaults (VS Code dark theme).
 let _tKwColor = '#569cd6';
@@ -1070,9 +1109,60 @@ export class EditorViewModel {
     if (cursors0.length === 0) return false;
     const cursor0 = cursors0[0];
 
+    // Perry-safe undo/redo using module-level snapshot stacks.
+    if (commandId === 'editor.action.undo') {
+      if (_undoCount <= 0) return true;
+      _undoCount = _undoCount - 1;
+      // Save current state for redo
+      _redoTexts[_redoCount] = this.document.buffer.getText();
+      _redoLines[_redoCount] = cursor0.line;
+      _redoCols[_redoCount] = cursor0.column;
+      _redoCount = _redoCount + 1;
+      // Restore buffer from snapshot
+      const buf = this.document.buffer;
+      const len = buf.getLength();
+      if (len > 0) { buf.delete(0, len); }
+      buf.insert(0, _undoTexts[_undoCount]);
+      cursor0.line = _undoLines[_undoCount];
+      cursor0.column = _undoCols[_undoCount];
+      cursor0.desiredColumn = cursor0.column;
+      cursor0.selectionAnchor = null;
+      // Reset coalescing so next edit starts a new group
+      _lastUndoWasSingleChar = 0;
+      this.afterEdit();
+      return true;
+    }
+
+    if (commandId === 'editor.action.redo') {
+      if (_redoCount <= 0) return true;
+      _redoCount = _redoCount - 1;
+      // Save current state for undo (no coalescing for redo-then-edit)
+      _undoTexts[_undoCount] = this.document.buffer.getText();
+      _undoLines[_undoCount] = cursor0.line;
+      _undoCols[_undoCount] = cursor0.column;
+      _undoCount = _undoCount + 1;
+      // Restore buffer from redo snapshot
+      const buf = this.document.buffer;
+      const len = buf.getLength();
+      if (len > 0) { buf.delete(0, len); }
+      buf.insert(0, _redoTexts[_redoCount]);
+      cursor0.line = _redoLines[_redoCount];
+      cursor0.column = _redoCols[_redoCount];
+      cursor0.desiredColumn = cursor0.column;
+      cursor0.selectionAnchor = null;
+      _lastUndoWasSingleChar = 0;
+      this.afterEdit();
+      return true;
+    }
+
     if (commandId === 'editor.action.type') {
       const text = args !== null && args !== undefined ? args.text : '';
       if (text === null || text === undefined || text.length === 0) return false;
+
+      // Record undo snapshot before edit
+      const isSingle = text.length === 1 ? 1 : 0;
+      const isNl = text === '\n' ? 1 : 0;
+      _pushUndoSnapshot(this.document.buffer.getText(), cursor0.line, cursor0.column, isSingle, isNl);
 
       const lineContent = this.document.buffer.getLine(cursor0.line);
       const lineOffset = this.document.buffer.getLineOffset(cursor0.line);
@@ -1142,6 +1232,7 @@ export class EditorViewModel {
     }
 
     if (commandId === 'editor.action.insertLineAfter') {
+      _pushUndoSnapshot(this.document.buffer.getText(), cursor0.line, cursor0.column, 0, 1);
       const currentLine = this.document.buffer.getLine(cursor0.line);
       // Get leading whitespace (Perry-safe: no regex)
       let indentEnd = 0;
@@ -1201,6 +1292,7 @@ export class EditorViewModel {
     }
 
     if (commandId === 'editor.action.deleteLeft') {
+      _pushUndoSnapshot(this.document.buffer.getText(), cursor0.line, cursor0.column, 1, 0);
       if (cursor0.selectionAnchor !== null && cursor0.selectionAnchor !== undefined) {
         // Delete selection
         const anchorLine = cursor0.selectionAnchor.line;
@@ -1331,6 +1423,7 @@ export class EditorViewModel {
     }
 
     if (commandId === 'editor.action.cut') {
+      // deleteLeft below will push its own undo snapshot
       this.executeCommand('editor.action.copy');
       if (cursor0.selectionAnchor) {
         this.executeCommand('editor.action.deleteLeft');
@@ -1341,6 +1434,7 @@ export class EditorViewModel {
     if (commandId === 'editor.action.paste') {
       const pasteText = this._clipboardText;
       if (pasteText.length === 0) return true;
+      _pushUndoSnapshot(this.document.buffer.getText(), cursor0.line, cursor0.column, 0, 0);
       // Delete selection first if any
       if (cursor0.selectionAnchor) {
         this.executeCommand('editor.action.deleteLeft');
