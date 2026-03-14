@@ -598,6 +598,7 @@ export class Editor {
     // Sync actual view dimensions from Rust (auto layout may have resized).
     const actualW = hone_editor_get_view_width(h);
     const actualH = hone_editor_get_view_height(h);
+    let sizeChanged = 0;
     if (actualW > 1 && actualH > 1) {
       const vm = this._vm;
       const curW = this._width;
@@ -606,6 +607,7 @@ export class Editor {
         this._width = actualW;
         this._height = actualH;
         vm.onResize(actualW, actualH);
+        sizeChanged = 1;
       }
     }
 
@@ -623,9 +625,10 @@ export class Editor {
       scrollChanged = 1;
     }
 
-    // If Rust needs lines (cache miss during scroll), do a full render to provide them.
+    // Re-render when size changed (Auto Layout gave the view its real dimensions),
+    // when Rust needs lines (cache miss during scroll), or when scroll delta changed.
     const rustNeedsLines = hone_editor_needs_lines(h);
-    if (rustNeedsLines > 0 || scrollChanged > 0) {
+    if (rustNeedsLines > 0 || scrollChanged > 0 || sizeChanged > 0) {
       const coordinator = this._coordinator;
       coordinator.render();
     }

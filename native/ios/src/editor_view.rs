@@ -305,6 +305,11 @@ impl EditorView {
     pub fn set_bg_color(&mut self, r: f64, g: f64, b: f64) {
         self.background_color = (r, g, b);
         self.gutter_bg_color = (r, g, b);
+        // Also set the UIView's backgroundColor so undrawn areas match
+        // (opaque views show black for pixels not covered by drawRect:).
+        if self.uiview != view::NIL {
+            view::set_view_background_color(self.uiview, r, g, b);
+        }
         self.invalidate();
     }
 

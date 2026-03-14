@@ -20,7 +20,7 @@ use crate::editor_view::EditorView;
 type Id = *mut Object;
 
 /// Null Objective-C pointer.
-const NIL: Id = null_mut();
+pub const NIL: Id = null_mut();
 
 static REGISTER_CLASS: Once = Once::new();
 
@@ -100,6 +100,12 @@ fn ensure_class_registered() {
             decl.add_method(
                 objc::sel!(drawRect:),
                 draw_rect as extern "C" fn(&Object, Sel, ObjCRect),
+            );
+            // Trigger initial redraw when the view enters a window hierarchy.
+            // invalidate_view() during init is ignored because the view has no window yet.
+            decl.add_method(
+                objc::sel!(didMoveToWindow),
+                did_move_to_window as extern "C" fn(&Object, Sel),
             );
 
             // -- First responder (needed for keyboard input) --
@@ -394,6 +400,20 @@ extern "C" fn requires_keyboard_reset_on_reload(_this: &Object, _sel: Sel) -> BO
 ///
 /// The view has its `honeEditorState` ivar set to point at the given EditorView.
 /// Touch events and drawing are routed to the EditorView.
+/// Called when the view is added to (or removed from) a window hierarchy.
+/// Triggers an initial redraw — invalidate_view() during init is a no-op
+/// because the view has no window yet, so content wouldn't render until
+/// the first user interaction.
+extern "C" fn did_move_to_window(this: &Object, _sel: Sel) {
+    unsafe {
+        let window: Id = msg_send![this, window];
+        if window != NIL {
+            let this_id = this as *const Object as Id;
+            invalidate_view(this_id);
+        }
+    }
+}
+
 /// Tap gesture action: positions cursor and shows keyboard.
 /// UITapGestureRecognizer bypasses UIScrollView's touch delay (`delaysContentTouches`),
 /// ensuring the editor reliably receives taps even when embedded inside a scroll view.
@@ -492,6 +512,17 @@ pub fn invalidate_view(uiview: Id) {
                     set_needs_display,
                 );
             }
+        }
+    }
+}
+
+/// Set the UIView's backgroundColor property (so undrawn areas aren't black).
+pub fn set_view_background_color(uiview: Id, r: f64, g: f64, b: f64) {
+    if uiview != NIL {
+        unsafe {
+            let color_cls = Class::get("UIColor").unwrap();
+            let color: Id = msg_send![color_cls, colorWithRed:r green:g blue:b alpha:1.0f64];
+            let _: () = msg_send![uiview, setBackgroundColor: color];
         }
     }
 }
