@@ -273,6 +273,7 @@ export class Editor {
   private _readOnly: boolean;
   private _editorSlot: number;
   private _isMd: number;
+  private _needsInitialRender: number;
   nativeHandle: number | null;
 
   constructor(width: number, height: number, opts?: EditorOptions) {
@@ -280,6 +281,7 @@ export class Editor {
     this._readOnly = false;
     this._editorSlot = -1;
     this._isMd = 0;
+    this._needsInitialRender = 1;
     this._width = width;
     this._height = height;
     this.nativeHandle = null;
@@ -625,10 +627,18 @@ export class Editor {
       scrollChanged = 1;
     }
 
+    // Force a full render on first poll cycle so the editor displays with correct
+    // font metrics and dimensions (the initial _directRenderText uses hardcoded values).
+    let needsRender = 0;
+    if (this._needsInitialRender > 0) {
+      this._needsInitialRender = 0;
+      needsRender = 1;
+    }
+
     // Re-render when size changed (Auto Layout gave the view its real dimensions),
     // when Rust needs lines (cache miss during scroll), or when scroll delta changed.
     const rustNeedsLines = hone_editor_needs_lines(h);
-    if (rustNeedsLines > 0 || scrollChanged > 0 || sizeChanged > 0) {
+    if (rustNeedsLines > 0 || scrollChanged > 0 || sizeChanged > 0 || needsRender > 0) {
       const coordinator = this._coordinator;
       coordinator.render();
     }
