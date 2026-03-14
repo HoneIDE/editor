@@ -1321,7 +1321,7 @@ export class EditorViewModel {
         }
         const startOff = this.document.buffer.getLineOffset(startLine) + startCol;
         const endOff = this.document.buffer.getLineOffset(endLine) + endCol;
-        const text = this.document.buffer.getText(startOff, endOff - startOff);
+        const text = this.document.buffer.getTextRange(startOff, endOff);
         this._clipboardText = text;
       } else {
         const lineText = this.document.buffer.getLine(cursor0.line);

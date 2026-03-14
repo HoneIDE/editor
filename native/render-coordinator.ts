@@ -216,6 +216,16 @@ export class NativeRenderCoordinator {
   }
 
   /**
+   * Clear the TS-side line cache so the next render() re-sends all lines.
+   * Does NOT call ffi.invalidate or trigger a render — use when the Rust
+   * cache was modified externally (e.g. by _directRenderText).
+   */
+  clearLineCache(): void {
+    this._lineCacheContent.clear();
+    this._lineCacheTokens.clear();
+  }
+
+  /**
    * Explicitly set the computed line height in pixels.
    */
   setLineHeightPx(px: number): void {

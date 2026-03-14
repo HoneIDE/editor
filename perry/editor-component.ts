@@ -389,6 +389,12 @@ export class Editor {
     // Call direct render with initialContent to populate frame_lines in the Rust view.
     this._directRenderText(initialContent);
 
+    // _directRenderText sends empty '[]' tokens via render_line, which overwrites
+    // the Rust line_cache. But the coordinator's TS-side cache still thinks those
+    // lines are clean (from the render() in attach/onResize). Clear it so the next
+    // coordinator.render() (in flushEvents) re-sends lines with proper tokens.
+    coordinator.clearLineCache();
+
     // Register in a multi-instance slot.
     this._editorSlot = _registerEditor(this);
 
@@ -464,6 +470,8 @@ export class Editor {
     // Perry AOT: coordinator.invalidate() calls _ffi.* via interface dispatch → fails on GTK4/Linux.
     // Use direct render with the text parameter (already in scope) to push to Rust.
     this._directRenderText(text);
+    // Clear coordinator's TS-side cache so the next render() re-sends tokens.
+    this._coordinator.clearLineCache();
   }
 
   /** Switch the syntax highlighting language. */
@@ -795,7 +803,7 @@ export class Editor {
       vm.executeCommand('editor.action.cut');
       const cutText = vm.getClipboardText();
       if (cutText.length > 0) {
-        hone_editor_copy_to_clipboard(handle as number, cutText as any);
+        hone_editor_copy_to_clipboard(this.nativeHandle as number, cutText as any);
       }
       return;
     }
@@ -803,11 +811,15 @@ export class Editor {
       vm.executeCommand('editor.action.copy');
       const copiedText = vm.getClipboardText();
       if (copiedText.length > 0) {
-        hone_editor_copy_to_clipboard(handle as number, copiedText as any);
+        hone_editor_copy_to_clipboard(this.nativeHandle as number, copiedText as any);
       }
       return;
     }
     else if (aid === ACTION_PASTE) {
+      // Read system clipboard into internal clipboard via Rust FFI.
+      // hone_editor_paste_from_clipboard pushes each char as TEXT events,
+      // but we need bulk insert. Instead, use the internal clipboard directly.
+      // If internal clipboard is empty, the paste is a no-op (expected for now).
       vm.executeCommand('editor.action.paste');
       return;
     }
