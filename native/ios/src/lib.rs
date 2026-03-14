@@ -492,3 +492,53 @@ pub extern "C" fn hone_editor_add_selection_rect(
     let view = unsafe { &mut *view };
     view.add_selection_rect_new(x, y, w, h);
 }
+
+/// Copy text to the iOS system clipboard (UIPasteboard).
+#[no_mangle]
+pub extern "C" fn hone_editor_copy_to_clipboard(
+    _view: *mut EditorView,
+    text_ptr: *const u8,
+) {
+    let text = str_from_header(text_ptr);
+    if text.is_empty() {
+        return;
+    }
+    unsafe {
+        let pb: *mut objc::runtime::Object = msg_send![class!(UIPasteboard), generalPasteboard];
+        let ns_string: *mut objc::runtime::Object = msg_send![class!(NSString), alloc];
+        let ns_string: *mut objc::runtime::Object = msg_send![ns_string, initWithBytes: text.as_ptr()
+                                                               length: text.len()
+                                                             encoding: 4u64]; // NSUTF8StringEncoding
+        let _: () = msg_send![pb, setString: ns_string];
+        let _: () = msg_send![ns_string, release];
+    }
+}
+
+/// Read text from iOS system clipboard and push it as text events.
+#[no_mangle]
+pub extern "C" fn hone_editor_paste_from_clipboard(
+    view: *mut EditorView,
+) {
+    let view = unsafe { &mut *view };
+    unsafe {
+        let pb: *mut objc::runtime::Object = msg_send![class!(UIPasteboard), generalPasteboard];
+        let ns_string: *mut objc::runtime::Object = msg_send![pb, string];
+        if ns_string.is_null() {
+            return;
+        }
+        let cstr: *const std::os::raw::c_char = msg_send![ns_string, UTF8String];
+        if cstr.is_null() {
+            return;
+        }
+        let rust_str = std::ffi::CStr::from_ptr(cstr).to_str().unwrap_or("");
+        for ch in rust_str.chars() {
+            view.pending_events.push(editor_view::PendingEvent {
+                event_type: 1, // TEXT
+                char_code: ch as u32,
+                action_id: 0,
+                x: 0.0,
+                y: 0.0,
+            });
+        }
+    }
+}

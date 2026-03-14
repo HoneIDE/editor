@@ -18,6 +18,7 @@ pub use editor_view::EditorView;
 use editor_view::{ActionCallback, MouseDownCallback, ScrollCallback, TextInputCallback};
 use string_header::str_from_header;
 
+use cocoa::base::id;
 use std::sync::Once;
 
 static INSTALL_SIGNAL_HANDLER: Once = Once::new();
@@ -552,6 +553,59 @@ pub extern "C" fn hone_editor_set_selection_color(view: *mut EditorView, r: f64,
 pub extern "C" fn hone_editor_set_cursor_color(view: *mut EditorView, r: f64, g: f64, b: f64) {
     let view = unsafe { &mut *view };
     view.set_cursor_color(r, g, b);
+}
+
+/// Copy text to the macOS system clipboard (NSPasteboard).
+#[no_mangle]
+pub extern "C" fn hone_editor_copy_to_clipboard(
+    _view: *mut EditorView,
+    text_ptr: *const u8,
+) {
+    let text = str_from_header(text_ptr);
+    if text.is_empty() {
+        return;
+    }
+    unsafe {
+        let pb: id = msg_send![class!(NSPasteboard), generalPasteboard];
+        let _: () = msg_send![pb, clearContents];
+        let ns_string: id = msg_send![class!(NSString), alloc];
+        let ns_string: id = msg_send![ns_string, initWithBytes: text.as_ptr()
+                                                       length: text.len()
+                                                     encoding: 4u64]; // NSUTF8StringEncoding
+        let _: cocoa::base::BOOL = msg_send![pb, setString: ns_string forType: cocoa::appkit::NSPasteboardTypeString];
+        let _: () = msg_send![ns_string, release];
+    }
+}
+
+/// Read text from macOS system clipboard and push it as text events.
+/// Each character becomes a TEXT event so TypeScript can process it normally.
+#[no_mangle]
+pub extern "C" fn hone_editor_paste_from_clipboard(
+    view: *mut EditorView,
+) {
+    let view = unsafe { &mut *view };
+    unsafe {
+        let pb: id = msg_send![class!(NSPasteboard), generalPasteboard];
+        let ns_string: id = msg_send![pb, stringForType: cocoa::appkit::NSPasteboardTypeString];
+        if ns_string.is_null() {
+            return;
+        }
+        let cstr: *const std::os::raw::c_char = msg_send![ns_string, UTF8String];
+        if cstr.is_null() {
+            return;
+        }
+        let rust_str = std::ffi::CStr::from_ptr(cstr).to_str().unwrap_or("");
+        // Push each char as a TEXT event
+        for ch in rust_str.chars() {
+            view.pending_events.push(editor_view::PendingEvent {
+                event_type: 1, // TEXT
+                char_code: ch as u32,
+                action_id: 0,
+                x: 0.0,
+                y: 0.0,
+            });
+        }
+    }
 }
 
 /// Add a selection highlight rectangle.

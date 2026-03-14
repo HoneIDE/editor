@@ -5,6 +5,10 @@
 //! - Per-token color via Paint.setColor()
 //! - Canvas.drawText() for each token span
 //! - TS-authoritative cache-line protocol: TS caches lines, Rust renders
+//!
+//! In Perry AOT mode, TypeScript's RAF loop never fires after startup.
+//! Input events are queued in pending_events and polled by TypeScript's
+//! setInterval loop via the event polling FFI.
 
 use std::collections::HashMap;
 use std::ffi::{c_char, CString};
@@ -17,12 +21,103 @@ pub type ActionCallback = extern "C" fn(view: *mut EditorView, action: *const c_
 pub type MouseDownCallback = extern "C" fn(view: *mut EditorView, x: f64, y: f64);
 pub type ScrollCallback = extern "C" fn(view: *mut EditorView, dx: f64, dy: f64);
 
+// ── Event queue (for TypeScript polling) ────────────────────────
+
+pub mod event_type {
+    pub const TEXT: i32 = 1;
+    pub const ACTION: i32 = 2;
+    pub const SCROLL: i32 = 3;
+    pub const MOUSE_DOWN: i32 = 4;
+    pub const MOUSE_DRAG: i32 = 5;
+}
+
+pub mod action_id {
+    pub const MOVE_LEFT: i32 = 1;
+    pub const MOVE_RIGHT: i32 = 2;
+    pub const MOVE_UP: i32 = 3;
+    pub const MOVE_DOWN: i32 = 4;
+    pub const MOVE_BOL: i32 = 5;
+    pub const MOVE_EOL: i32 = 6;
+    pub const MOVE_BOD: i32 = 7;
+    pub const MOVE_EOD: i32 = 8;
+    pub const INSERT_NEWLINE: i32 = 9;
+    pub const DELETE_BACKWARD: i32 = 10;
+    pub const DELETE_FORWARD: i32 = 11;
+    pub const INSERT_TAB: i32 = 12;
+    pub const MOVE_WORD_LEFT: i32 = 13;
+    pub const MOVE_WORD_RIGHT: i32 = 14;
+    pub const MOVE_LEFT_SEL: i32 = 15;
+    pub const MOVE_RIGHT_SEL: i32 = 16;
+    pub const MOVE_UP_SEL: i32 = 17;
+    pub const MOVE_DOWN_SEL: i32 = 18;
+    pub const MOVE_BOL_SEL: i32 = 19;
+    pub const MOVE_EOL_SEL: i32 = 20;
+    pub const SELECT_ALL: i32 = 21;
+    pub const CUT: i32 = 22;
+    pub const COPY: i32 = 23;
+    pub const PASTE: i32 = 24;
+    pub const UNDO: i32 = 25;
+    pub const REDO: i32 = 26;
+    pub const DELETE_WORD_BACKWARD: i32 = 27;
+    pub const PAGE_UP: i32 = 28;
+    pub const PAGE_DOWN: i32 = 29;
+}
+
+pub struct PendingEvent {
+    pub event_type: i32,
+    pub char_code: u32,
+    pub action_id: i32,
+    pub x: f64,
+    pub y: f64,
+}
+
+/// Map an action string to an action ID.
+/// Accepts both iOS-style ObjC selectors and Android-style action names.
+fn action_string_to_id(action: &str) -> i32 {
+    match action {
+        "moveLeft:" | "moveLeft"                             => action_id::MOVE_LEFT,
+        "moveRight:" | "moveRight"                           => action_id::MOVE_RIGHT,
+        "moveUp:" | "moveUp"                                 => action_id::MOVE_UP,
+        "moveDown:" | "moveDown"                             => action_id::MOVE_DOWN,
+        "moveToBeginningOfLine:" | "moveToLeftEndOfLine:"
+        | "moveToBeginningOfLine" | "home"                   => action_id::MOVE_BOL,
+        "moveToEndOfLine:" | "moveToRightEndOfLine:"
+        | "moveToEndOfLine" | "end"                          => action_id::MOVE_EOL,
+        "moveToBeginningOfDocument:" | "moveToBeginningOfDocument" => action_id::MOVE_BOD,
+        "moveToEndOfDocument:" | "moveToEndOfDocument"       => action_id::MOVE_EOD,
+        "insertNewline:" | "insertNewline" | "enter"         => action_id::INSERT_NEWLINE,
+        "deleteBackward:" | "deleteBackward" | "backspace"   => action_id::DELETE_BACKWARD,
+        "deleteForward:" | "deleteForward" | "delete"        => action_id::DELETE_FORWARD,
+        "insertTab:" | "insertTab" | "tab"                   => action_id::INSERT_TAB,
+        "moveWordLeft:" | "moveWordBackward:"
+        | "moveWordLeft" | "moveWordBackward"                => action_id::MOVE_WORD_LEFT,
+        "moveWordRight:" | "moveWordForward:"
+        | "moveWordRight" | "moveWordForward"                => action_id::MOVE_WORD_RIGHT,
+        "moveLeftAndModifySelection:" | "moveLeftAndModifySelection" => action_id::MOVE_LEFT_SEL,
+        "moveRightAndModifySelection:" | "moveRightAndModifySelection" => action_id::MOVE_RIGHT_SEL,
+        "moveUpAndModifySelection:" | "moveUpAndModifySelection" => action_id::MOVE_UP_SEL,
+        "moveDownAndModifySelection:" | "moveDownAndModifySelection" => action_id::MOVE_DOWN_SEL,
+        "moveToBeginningOfLineAndModifySelection:" | "moveToBeginningOfLineAndModifySelection" => action_id::MOVE_BOL_SEL,
+        "moveToEndOfLineAndModifySelection:" | "moveToEndOfLineAndModifySelection" => action_id::MOVE_EOL_SEL,
+        "selectAll:" | "selectAll"                           => action_id::SELECT_ALL,
+        "cut:" | "cut"                                       => action_id::CUT,
+        "copy:" | "copy"                                     => action_id::COPY,
+        "paste:" | "paste"                                   => action_id::PASTE,
+        "undo:" | "undo"                                     => action_id::UNDO,
+        "redo:" | "redo"                                     => action_id::REDO,
+        "deleteWordBackward:" | "deleteWordBackward"         => action_id::DELETE_WORD_BACKWARD,
+        "pageUp:" | "scrollPageUp:" | "pageUp"               => action_id::PAGE_UP,
+        "pageDown:" | "scrollPageDown:" | "pageDown"         => action_id::PAGE_DOWN,
+        _                                                    => 0,
+    }
+}
+
+// ── Data structures ──────────────────────────────────────────────
+
 pub struct ContextMenuItem {
     pub title: String,
     pub action_id: String,
 }
-
-// ── Data structures ──────────────────────────────────────────────
 
 /// A parsed token span for rendering.
 #[derive(Debug, Clone)]
@@ -132,11 +227,31 @@ pub struct EditorView {
     ghost_text: Option<GhostTextData>,
     max_line_number: i32,
 
-    // Input callbacks
+    // Input callbacks (used by standalone demo / non-Perry mode)
     text_input_callback: Option<TextInputCallback>,
     action_callback: Option<ActionCallback>,
     mouse_down_callback: Option<MouseDownCallback>,
     scroll_callback: Option<ScrollCallback>,
+
+    // Event queue (for TypeScript polling in Perry mode)
+    pub pending_events: Vec<PendingEvent>,
+    pub event_callback: Option<extern "C" fn()>,
+
+    // When true, event handlers only queue events — TypeScript handles all state changes.
+    pub ts_handles_events: bool,
+    // Gutter width set by TypeScript (overrides computed gutter_width when Some).
+    pub ts_gutter_width: Option<f64>,
+
+    // Read-only mode
+    pub read_only: bool,
+
+    // Per-line background colors for diff highlighting (1-based line number → RGBA)
+    pub line_backgrounds: HashMap<i32, (f64, f64, f64, f64)>,
+
+    // Accumulated scroll delta (in pixels) that TypeScript can read.
+    pub rust_scroll_delta: f64,
+    // Set true when scroll reveals lines not present in the cache.
+    pub needs_lines: bool,
 
     // Context menu
     context_menu_items: Vec<ContextMenuItem>,
@@ -178,6 +293,14 @@ impl EditorView {
             action_callback: None,
             mouse_down_callback: None,
             scroll_callback: None,
+            pending_events: Vec::new(),
+            event_callback: None,
+            ts_handles_events: false,
+            ts_gutter_width: None,
+            read_only: false,
+            line_backgrounds: HashMap::new(),
+            rust_scroll_delta: 0.0,
+            needs_lines: false,
             context_menu_items: Vec::new(),
             // VS Code dark theme defaults
             background_color: 0xFF1E1E1E,
@@ -360,6 +483,17 @@ impl EditorView {
         self.needs_display = true;
     }
 
+    /// Clear selections and pre-allocate for new rects.
+    pub fn begin_selections_new(&mut self, count: usize) {
+        self.selections.clear();
+        self.selections.reserve(count);
+    }
+
+    /// Add a selection highlight rectangle.
+    pub fn add_selection_rect_new(&mut self, x: f64, y: f64, w: f64, h: f64) {
+        self.selections.push(SelectionRegion { x, y, w, h });
+    }
+
     // ── Callbacks ────────────────────────────────────────────────
 
     pub fn set_text_input_callback(&mut self, cb: TextInputCallback) {
@@ -378,13 +512,27 @@ impl EditorView {
         self.scroll_callback = Some(cb);
     }
 
+    // ── Event handlers ──────────────────────────────────────────
+
     pub fn on_text_input(&mut self, text: &str) {
         if let Some(cb) = self.text_input_callback {
             if let Ok(c_text) = CString::new(text) {
                 let self_ptr = self as *mut EditorView;
                 cb(self_ptr, c_text.as_ptr());
             }
+            return;
         }
+        // Queue events for TypeScript's polling loop.
+        for ch in text.chars() {
+            self.pending_events.push(PendingEvent {
+                event_type: event_type::TEXT,
+                char_code: ch as u32,
+                action_id: 0,
+                x: 0.0,
+                y: 0.0,
+            });
+        }
+        // In ts_mode, TypeScript handles the edit and re-renders via FFI.
     }
 
     pub fn on_action(&mut self, action: &str) {
@@ -393,6 +541,18 @@ impl EditorView {
                 let self_ptr = self as *mut EditorView;
                 cb(self_ptr, c_action.as_ptr());
             }
+            return;
+        }
+        // Queue the action event for TypeScript's polling loop.
+        let aid = action_string_to_id(action);
+        if aid != 0 {
+            self.pending_events.push(PendingEvent {
+                event_type: event_type::ACTION,
+                char_code: 0,
+                action_id: aid,
+                x: 0.0,
+                y: 0.0,
+            });
         }
     }
 
@@ -400,14 +560,44 @@ impl EditorView {
         if let Some(cb) = self.mouse_down_callback {
             let self_ptr = self as *mut EditorView;
             cb(self_ptr, x, y);
+            return;
         }
+        // Queue for TypeScript's polling loop.
+        self.pending_events.push(PendingEvent {
+            event_type: event_type::MOUSE_DOWN,
+            char_code: 0,
+            action_id: 0,
+            x,
+            y,
+        });
+    }
+
+    pub fn on_mouse_drag(&mut self, x: f64, y: f64) {
+        self.pending_events.push(PendingEvent {
+            event_type: event_type::MOUSE_DRAG,
+            char_code: 0,
+            action_id: 0,
+            x,
+            y,
+        });
     }
 
     pub fn on_scroll(&mut self, dx: f64, dy: f64) {
         if let Some(cb) = self.scroll_callback {
             let self_ptr = self as *mut EditorView;
             cb(self_ptr, dx, dy);
+            return;
         }
+        // Queue for TypeScript's polling loop.
+        self.pending_events.push(PendingEvent {
+            event_type: event_type::SCROLL,
+            char_code: 0,
+            action_id: 0,
+            x: dx,
+            y: dy,
+        });
+        // Accumulate scroll delta for TypeScript viewport sync.
+        self.rust_scroll_delta += dy;
     }
 
     // ── Context menu ─────────────────────────────────────────────

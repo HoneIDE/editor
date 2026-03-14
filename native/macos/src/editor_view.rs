@@ -415,18 +415,19 @@ impl EditorView {
 
     /// Called from the NSView's mouseDown: handler.
     /// Queues event for TypeScript. TypeScript handles cursor positioning.
-    pub fn on_mouse_down(&mut self, x: f64, y: f64) {
+    /// click_count: 1=single, 2=double (word select), 3=triple (line select)
+    pub fn on_mouse_down(&mut self, x: f64, y: f64, click_count: i32) {
         if let Some(cb) = self.mouse_down_callback {
             let self_ptr = self as *mut EditorView;
             cb(self_ptr, x, y);
             return;
         }
-        // Debug: log click coords and NSView frame
         // Queue for TypeScript's polling loop.
+        // click_count is stored in action_id field (unused for MOUSE_DOWN otherwise).
         self.pending_events.push(PendingEvent {
             event_type: event_type::MOUSE_DOWN,
             char_code: 0,
-            action_id: 0,
+            action_id: click_count,
             x,
             y,
         });

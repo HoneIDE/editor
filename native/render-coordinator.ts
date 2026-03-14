@@ -85,6 +85,11 @@ export class NativeRenderCoordinator {
     this._handle = handle;
   }
 
+  /** Set char width directly (when create() is bypassed in Perry AOT mode). */
+  setCharWidthDirect(width: number): void {
+    this._charWidth = width;
+  }
+
   /**
    * Destroy the native editor view.
    */
@@ -316,8 +321,9 @@ export class NativeRenderCoordinator {
         const startCol = line === sel.startLine ? sel.startColumn : 0;
         const endCol = line === sel.endLine ? sel.endColumn : lineContent.length;
 
-        const rx = this.measureTextWidth(handle, lineContent.substring(0, startCol)) + vm.gutterWidth;
-        const rw = this.measureTextWidth(handle, lineContent.substring(startCol, endCol));
+        const cw = vm.getCharWidth();
+        const rx = startCol * cw + vm.gutterWidth;
+        const rw = (endCol - startCol) * cw;
         const ry = this.computeYOffset(line, scroll.scrollTop);
         const sz2 = this._config.fontSize;
         const rh = sz2 + sz2 / 2;
@@ -342,7 +348,7 @@ export class NativeRenderCoordinator {
     const scroll = vm.scrollState;
     const lineContent = vm.document.buffer.getLine(primary.line);
 
-    const x = this.measureTextWidth(handle, lineContent.substring(0, primary.column)) + vm.gutterWidth;
+    const x = primary.column * vm.getCharWidth() + vm.gutterWidth;
     const y = this.computeYOffset(primary.line, scroll.scrollTop);
 
     this._ffi.renderGhostText(handle, ghost.text, x, y, '#808080');
@@ -358,9 +364,7 @@ export class NativeRenderCoordinator {
   }
 
   private computeCursorX(handle: NativeViewHandle, cursor: CursorState, vm: EditorViewModel): number {
-    const lineContent = vm.document.buffer.getLine(cursor.line);
-    const textBeforeCursor = lineContent.substring(0, cursor.column);
-    return this.measureTextWidth(handle, textBeforeCursor) + vm.gutterWidth;
+    return cursor.column * vm.getCharWidth() + vm.gutterWidth;
   }
 
   private measureTextWidth(handle: NativeViewHandle, text: string): number {

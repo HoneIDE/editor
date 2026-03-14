@@ -20,6 +20,8 @@ const EDITOR_STATE_IVAR: &str = "honeEditorState";
 
 /// NSEventModifierFlagCommand
 const NS_COMMAND_KEY_MASK: u64 = 1 << 20;
+/// NSEventModifierFlagShift
+const NS_SHIFT_KEY_MASK: u64 = 1 << 17;
 
 /// Register the HoneEditorView class (idempotent).
 fn ensure_class_registered() {
@@ -83,6 +85,14 @@ fn ensure_class_registered() {
             );
             decl.add_method(
                 objc::sel!(selectAll:),
+                action_forwarder as extern "C" fn(&Object, Sel, id),
+            );
+            decl.add_method(
+                objc::sel!(undo:),
+                action_forwarder as extern "C" fn(&Object, Sel, id),
+            );
+            decl.add_method(
+                objc::sel!(redo:),
                 action_forwarder as extern "C" fn(&Object, Sel, id),
             );
             decl.add_method(
@@ -166,6 +176,14 @@ extern "C" fn key_down(this: &Object, _sel: Sel, event: id) {
                         "v" => { let _: () = msg_send![this, paste: self_id]; return; }
                         "x" => { let _: () = msg_send![this, cut: self_id]; return; }
                         "a" => { let _: () = msg_send![this, selectAll: self_id]; return; }
+                        "z" => {
+                            if flags & NS_SHIFT_KEY_MASK != 0 {
+                                let _: () = msg_send![this, redo: self_id];
+                            } else {
+                                let _: () = msg_send![this, undo: self_id];
+                            }
+                            return;
+                        }
                         "q" => {
                             let app: id = msg_send![class!(NSApplication), sharedApplication];
                             let _: () = msg_send![app, terminate: nil];
@@ -240,6 +258,12 @@ extern "C" fn do_command_by_selector(this: &Object, _sel: Sel, action: Sel) {
 
 extern "C" fn mouse_down(this: &Object, _sel: Sel, event: id) {
     unsafe {
+        // Make this view the firstResponder so it receives keyDown: events
+        let window: id = msg_send![this, window];
+        if window != nil {
+            let _: BOOL = msg_send![window, makeFirstResponder: this as *const Object as id];
+        }
+
         let state_ptr: *mut c_void = *this.get_ivar(EDITOR_STATE_IVAR);
         if state_ptr.is_null() {
             return;
@@ -251,8 +275,10 @@ extern "C" fn mouse_down(this: &Object, _sel: Sel, event: id) {
             msg_send![this, convertPoint: window_point fromView: nil];
 
 
+        let click_count: isize = msg_send![event, clickCount];
+
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            editor_view.on_mouse_down(view_point.x, view_point.y);
+            editor_view.on_mouse_down(view_point.x, view_point.y, click_count as i32);
         }));
         if let Err(e) = result {
             let msg = if let Some(s) = e.downcast_ref::<&str>() {

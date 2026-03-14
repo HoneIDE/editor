@@ -80,7 +80,9 @@
         { "name": "hone_editor_set_fg_color", "params": ["i64", "f64", "f64", "f64"], "returns": "void" },
         { "name": "hone_editor_set_gutter_fg_color", "params": ["i64", "f64", "f64", "f64"], "returns": "void" },
         { "name": "hone_editor_set_selection_color", "params": ["i64", "f64", "f64", "f64", "f64"], "returns": "void" },
-        { "name": "hone_editor_set_cursor_color", "params": ["i64", "f64", "f64", "f64"], "returns": "void" }
+        { "name": "hone_editor_set_cursor_color", "params": ["i64", "f64", "f64", "f64"], "returns": "void" },
+        { "name": "hone_editor_copy_to_clipboard", "params": ["i64", "i64"], "returns": "void" },
+        { "name": "hone_editor_paste_from_clipboard", "params": ["i64"], "returns": "void" }
       ],
       "targets": {
         "macos": {

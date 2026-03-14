@@ -56,6 +56,10 @@ declare function hone_editor_set_read_only(handle: number, mode: number): void;
 declare function hone_editor_set_line_background(handle: number, line: number, r: number, g: number, b: number, a: number): void;
 declare function hone_editor_clear_line_backgrounds(handle: number): void;
 
+// === Clipboard FFI ===
+declare function hone_editor_copy_to_clipboard(handle: number, text: number): void;
+declare function hone_editor_paste_from_clipboard(handle: number): void;
+
 // === Scroll delta + line cache FFI ===
 declare function hone_editor_get_scroll_delta(handle: number): number;
 declare function hone_editor_clear_scroll_delta(handle: number): void;
@@ -116,6 +120,7 @@ const EVENT_TEXT = 1;
 const EVENT_ACTION = 2;
 const EVENT_SCROLL = 3;
 const EVENT_MOUSE_DOWN = 4;
+const EVENT_MOUSE_DRAG = 5;
 
 // === Multi-instance editor slots (max 3: main + 2 diff editors) ===
 // Perry closures can't be passed as C function pointers on ARM64 (non-executable heap memory).
@@ -352,6 +357,15 @@ export class Editor {
     this.nativeHandle = handle;
 
     coordinator.attach(vm);
+
+    // Measure real char width from native renderer (setHandle bypasses create()
+    // which normally does this). Must be AFTER attach() and set directly on vm —
+    // Perry class field reads return initial values, so coordinator._charWidth
+    // from setCharWidthDirect() would still read as 8 inside attach().
+    const measuredWidth = hone_editor_measure_text(handle, 'M' as any);
+    if (measuredWidth > 0) {
+      vm.setCharWidth(measuredWidth);
+    }
 
     // Sync gutter width to Rust for pixel-perfect cursor/text alignment.
     hone_editor_set_gutter_width(handle, vm.gutterWidth);
@@ -694,8 +708,25 @@ export class Editor {
       } else if (evType === EVENT_MOUSE_DOWN) {
         const x = hone_editor_get_event_x(handle as number, i);
         const y = hone_editor_get_event_y(handle as number, i);
+        // click count is stored in action_id field for MOUSE_DOWN events
+        const clickCount = hone_editor_get_event_action(handle as number, i);
+        const cc = clickCount > 0 ? clickCount : 1;
         // Perry: explicit key: value (no ES6 shorthand)
         const mouseEvent: EditorMouseEvent = {
+          x: x,
+          y: y,
+          button: 0,
+          clickCount: cc,
+          ctrlKey: false,
+          shiftKey: false,
+          altKey: false,
+          metaKey: false,
+        };
+        vm.onMouseDown(mouseEvent);
+      } else if (evType === EVENT_MOUSE_DRAG) {
+        const x = hone_editor_get_event_x(handle as number, i);
+        const y = hone_editor_get_event_y(handle as number, i);
+        const dragEvent: EditorMouseEvent = {
           x: x,
           y: y,
           button: 0,
@@ -705,7 +736,7 @@ export class Editor {
           altKey: false,
           metaKey: false,
         };
-        vm.onMouseDown(mouseEvent);
+        vm.onMouseMove(dragEvent);
       }
     }
 
@@ -747,9 +778,26 @@ export class Editor {
     else if (aid === ACTION_PAGE_UP) { key = 'PageUp'; }
     else if (aid === ACTION_PAGE_DOWN) { key = 'PageDown'; }
     else if (aid === ACTION_SELECT_ALL) { vm.executeCommand('editor.action.selectAll'); return; }
-    else if (aid === ACTION_CUT) { vm.executeCommand('editor.action.cut'); return; }
-    else if (aid === ACTION_COPY) { vm.executeCommand('editor.action.copy'); return; }
-    else if (aid === ACTION_PASTE) { vm.executeCommand('editor.action.paste'); return; }
+    else if (aid === ACTION_CUT) {
+      vm.executeCommand('editor.action.cut');
+      const cutText = vm.getClipboardText();
+      if (cutText.length > 0) {
+        hone_editor_copy_to_clipboard(handle as number, cutText as any);
+      }
+      return;
+    }
+    else if (aid === ACTION_COPY) {
+      vm.executeCommand('editor.action.copy');
+      const copiedText = vm.getClipboardText();
+      if (copiedText.length > 0) {
+        hone_editor_copy_to_clipboard(handle as number, copiedText as any);
+      }
+      return;
+    }
+    else if (aid === ACTION_PASTE) {
+      vm.executeCommand('editor.action.paste');
+      return;
+    }
     else if (aid === ACTION_UNDO) { vm.executeCommand('editor.action.undo'); return; }
     else if (aid === ACTION_REDO) { vm.executeCommand('editor.action.redo'); return; }
 

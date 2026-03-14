@@ -17,6 +17,7 @@ import { CommandRegistry, CommandContext } from '../core/commands/registry';
 import { registerEditingCommands } from '../core/commands/editing';
 import { registerNavigationCommands } from '../core/commands/navigation';
 import { registerSelectionCommands } from '../core/commands/selection-cmds';
+import { getWordAtColumn } from '../core/cursor/word-boundary';
 import { registerClipboardCommands } from '../core/commands/clipboard';
 import { registerMulticursorCommands } from '../core/commands/multicursor';
 import type { ISyntaxEngine } from '../core/tokenizer/tokenizer-interface';
@@ -671,6 +672,7 @@ export class EditorViewModel {
   private _theme: EditorTheme;
   private _charWidth: number = 8; // default, updated by native renderer
   private _perryMode: boolean = false; // set true to use Perry-safe command handlers
+  private _clipboardText: string = ''; // internal clipboard for Perry-safe copy/paste
   // Single listener — Perry-safe (no array push/splice/for...of needed).
   private _listener: ChangeListener | null = null;
 
@@ -764,6 +766,14 @@ export class EditorViewModel {
   setCharWidth(width: number): void {
     this._charWidth = width;
     this._gutter.setCharWidth(width);
+  }
+
+  getCharWidth(): number {
+    return this._charWidth;
+  }
+
+  getClipboardText(): string {
+    return this._clipboardText;
   }
 
   /** Enable Perry-safe command handlers (avoids destructuring, .map(), spread). */
@@ -1256,6 +1266,105 @@ export class EditorViewModel {
         return true;
       }
       return false;
+    }
+
+    // Perry-safe selection commands (avoid destructuring in command registry handlers)
+    if (commandId === 'editor.action.selectWord') {
+      const lineText = this.document.buffer.getLine(cursor0.line);
+      const wordRange = getWordAtColumn(lineText, cursor0.column);
+      const wordStart = wordRange[0];
+      const wordEnd = wordRange[1];
+      cursor0.selectionAnchor = { line: cursor0.line, column: wordStart };
+      cursor0.column = wordEnd;
+      cursor0.desiredColumn = wordEnd;
+      this.notifyChange();
+      return true;
+    }
+
+    if (commandId === 'editor.action.selectLine') {
+      cursor0.selectionAnchor = { line: cursor0.line, column: 0 };
+      if (cursor0.line < this.document.buffer.getLineCount() - 1) {
+        cursor0.line = cursor0.line + 1;
+        cursor0.column = 0;
+      } else {
+        cursor0.column = this.document.buffer.getLineLength(cursor0.line);
+      }
+      cursor0.desiredColumn = cursor0.column;
+      this.notifyChange();
+      return true;
+    }
+
+    if (commandId === 'editor.action.selectAll') {
+      const lastLine = this.document.buffer.getLineCount() - 1;
+      const lastCol = this.document.buffer.getLineLength(lastLine);
+      cursor0.selectionAnchor = { line: 0, column: 0 };
+      cursor0.line = lastLine;
+      cursor0.column = lastCol;
+      cursor0.desiredColumn = lastCol;
+      this.notifyChange();
+      return true;
+    }
+
+    // Perry-safe clipboard: copy/cut store in internal clipboard
+    // The actual system clipboard is handled by editor-component.ts via FFI
+    if (commandId === 'editor.action.copy') {
+      if (cursor0.selectionAnchor) {
+        const anchor = cursor0.selectionAnchor;
+        let startLine = anchor.line;
+        let startCol = anchor.column;
+        let endLine = cursor0.line;
+        let endCol = cursor0.column;
+        if (startLine > endLine || (startLine === endLine && startCol > endCol)) {
+          const tl = startLine; const tc = startCol;
+          startLine = endLine; startCol = endCol;
+          endLine = tl; endCol = tc;
+        }
+        const startOff = this.document.buffer.getLineOffset(startLine) + startCol;
+        const endOff = this.document.buffer.getLineOffset(endLine) + endCol;
+        const text = this.document.buffer.getText(startOff, endOff - startOff);
+        this._clipboardText = text;
+      } else {
+        const lineText = this.document.buffer.getLine(cursor0.line);
+        this._clipboardText = lineText + '\n';
+      }
+      return true;
+    }
+
+    if (commandId === 'editor.action.cut') {
+      this.executeCommand('editor.action.copy');
+      if (cursor0.selectionAnchor) {
+        this.executeCommand('editor.action.deleteLeft');
+      }
+      return true;
+    }
+
+    if (commandId === 'editor.action.paste') {
+      const pasteText = this._clipboardText;
+      if (pasteText.length === 0) return true;
+      // Delete selection first if any
+      if (cursor0.selectionAnchor) {
+        this.executeCommand('editor.action.deleteLeft');
+      }
+      const lineOff = this.document.buffer.getLineOffset(cursor0.line);
+      const insertOff = lineOff + cursor0.column;
+      this.document.buffer.insert(insertOff, pasteText);
+      // Move cursor to end of pasted text
+      let pastedLine = cursor0.line;
+      let pastedCol = cursor0.column;
+      for (let pi = 0; pi < pasteText.length; pi = pi + 1) {
+        if (pasteText.charCodeAt(pi) === 10) {
+          pastedLine = pastedLine + 1;
+          pastedCol = 0;
+        } else {
+          pastedCol = pastedCol + 1;
+        }
+      }
+      cursor0.line = pastedLine;
+      cursor0.column = pastedCol;
+      cursor0.desiredColumn = pastedCol;
+      cursor0.selectionAnchor = null;
+      this.afterEdit();
+      return true;
     }
 
     } // end if (this._perryMode)

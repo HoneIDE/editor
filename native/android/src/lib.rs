@@ -573,63 +573,295 @@ pub extern "C" fn hone_editor_get_view_height(view: *mut EditorView) -> f64 {
 // === TS-mode: selection rects ===
 
 #[no_mangle]
-pub extern "C" fn hone_editor_begin_selections(_view: *mut EditorView, _count: f64) {}
+pub extern "C" fn hone_editor_begin_selections(view: *mut EditorView, count: f64) {
+    let view = unsafe { &mut *view };
+    view.begin_selections_new(count as usize);
+}
 
 #[no_mangle]
-pub extern "C" fn hone_editor_add_selection_rect(_view: *mut EditorView, _x: f64, _y: f64, _w: f64, _h: f64) {}
+pub extern "C" fn hone_editor_add_selection_rect(view: *mut EditorView, x: f64, y: f64, w: f64, h: f64) {
+    let view = unsafe { &mut *view };
+    view.add_selection_rect_new(x, y, w, h);
+}
 
-// === TS-mode: remaining stubs ===
-
-#[no_mangle]
-pub extern "C" fn hone_editor_set_event_callback(_view: *mut EditorView, _callback: i64) {}
-
-#[no_mangle]
-pub extern "C" fn hone_editor_pending_event_count(_view: *mut EditorView) -> f64 { 0.0 }
+// === TypeScript mode control ===
 
 #[no_mangle]
-pub extern "C" fn hone_editor_get_event_type(_view: *mut EditorView, _index: f64) -> f64 { 0.0 }
+pub extern "C" fn hone_editor_set_ts_mode(view: *mut EditorView, mode: f64) {
+    let view = unsafe { &mut *view };
+    view.ts_handles_events = mode > 0.5;
+}
 
 #[no_mangle]
-pub extern "C" fn hone_editor_get_event_char(_view: *mut EditorView, _index: f64) -> f64 { 0.0 }
+pub extern "C" fn hone_editor_set_gutter_width(view: *mut EditorView, width: f64) {
+    let view = unsafe { &mut *view };
+    view.ts_gutter_width = Some(width);
+}
+
+// === TypeScript event polling API (Perry mode) ===
+// All values are f64 for Perry ABI compatibility.
 
 #[no_mangle]
-pub extern "C" fn hone_editor_get_event_action(_view: *mut EditorView, _index: f64) -> f64 { 0.0 }
+pub extern "C" fn hone_editor_set_event_callback(view: *mut EditorView, callback: extern "C" fn()) {
+    let view = unsafe { &mut *view };
+    view.event_callback = Some(callback);
+}
 
 #[no_mangle]
-pub extern "C" fn hone_editor_get_event_x(_view: *mut EditorView, _index: f64) -> f64 { 0.0 }
+pub extern "C" fn hone_editor_pending_event_count(view: *mut EditorView) -> f64 {
+    let view = unsafe { &*view };
+    view.pending_events.len() as f64
+}
 
 #[no_mangle]
-pub extern "C" fn hone_editor_get_event_y(_view: *mut EditorView, _index: f64) -> f64 { 0.0 }
+pub extern "C" fn hone_editor_get_event_type(view: *mut EditorView, index: f64) -> f64 {
+    let view = unsafe { &*view };
+    let i = index as usize;
+    if i < view.pending_events.len() { view.pending_events[i].event_type as f64 } else { 0.0 }
+}
 
 #[no_mangle]
-pub extern "C" fn hone_editor_clear_events(_view: *mut EditorView) {}
+pub extern "C" fn hone_editor_get_event_char(view: *mut EditorView, index: f64) -> f64 {
+    let view = unsafe { &*view };
+    let i = index as usize;
+    if i < view.pending_events.len() { view.pending_events[i].char_code as f64 } else { 0.0 }
+}
 
 #[no_mangle]
-pub extern "C" fn hone_editor_set_ts_mode(_view: *mut EditorView, _mode: f64) {}
+pub extern "C" fn hone_editor_get_event_action(view: *mut EditorView, index: f64) -> f64 {
+    let view = unsafe { &*view };
+    let i = index as usize;
+    if i < view.pending_events.len() { view.pending_events[i].action_id as f64 } else { 0.0 }
+}
 
 #[no_mangle]
-pub extern "C" fn hone_editor_set_gutter_width(_view: *mut EditorView, _width: f64) {}
+pub extern "C" fn hone_editor_get_event_x(view: *mut EditorView, index: f64) -> f64 {
+    let view = unsafe { &*view };
+    let i = index as usize;
+    if i < view.pending_events.len() { view.pending_events[i].x } else { 0.0 }
+}
 
 #[no_mangle]
-pub extern "C" fn hone_editor_set_read_only(_view: *mut EditorView, _flag: f64) {}
+pub extern "C" fn hone_editor_get_event_y(view: *mut EditorView, index: f64) -> f64 {
+    let view = unsafe { &*view };
+    let i = index as usize;
+    if i < view.pending_events.len() { view.pending_events[i].y } else { 0.0 }
+}
 
 #[no_mangle]
-pub extern "C" fn hone_editor_set_line_background(_view: *mut EditorView, _line: f64, _r: f64, _g: f64, _b: f64, _a: f64) {}
+pub extern "C" fn hone_editor_clear_events(view: *mut EditorView) {
+    let view = unsafe { &mut *view };
+    view.pending_events.clear();
+}
+
+// === Read-only mode ===
 
 #[no_mangle]
-pub extern "C" fn hone_editor_clear_line_backgrounds(_view: *mut EditorView) {}
+pub extern "C" fn hone_editor_set_read_only(view: *mut EditorView, flag: f64) {
+    let view = unsafe { &mut *view };
+    view.read_only = flag > 0.5;
+}
+
+// === Per-line background colors (diff highlighting) ===
 
 #[no_mangle]
-pub extern "C" fn hone_editor_get_scroll_delta(_view: *mut EditorView) -> f64 { 0.0 }
+pub extern "C" fn hone_editor_set_line_background(view: *mut EditorView, line: f64, r: f64, g: f64, b: f64, a: f64) {
+    let view = unsafe { &mut *view };
+    view.line_backgrounds.insert(line as i32, (r, g, b, a));
+}
 
 #[no_mangle]
-pub extern "C" fn hone_editor_clear_scroll_delta(_view: *mut EditorView) {}
+pub extern "C" fn hone_editor_clear_line_backgrounds(view: *mut EditorView) {
+    let view = unsafe { &mut *view };
+    view.line_backgrounds.clear();
+}
+
+// === Scroll delta + line needs ===
 
 #[no_mangle]
-pub extern "C" fn hone_editor_needs_lines(_view: *mut EditorView) -> f64 { 0.0 }
+pub extern "C" fn hone_editor_get_scroll_delta(view: *mut EditorView) -> f64 {
+    let view = unsafe { &*view };
+    view.rust_scroll_delta
+}
 
 #[no_mangle]
-pub extern "C" fn hone_editor_set_line_background_2(_view: *mut EditorView, _line: f64, _r: f64, _g: f64, _b: f64, _a: f64) {}
+pub extern "C" fn hone_editor_clear_scroll_delta(view: *mut EditorView) {
+    let view = unsafe { &mut *view };
+    view.rust_scroll_delta = 0.0;
+}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_needs_lines(view: *mut EditorView) -> f64 {
+    let view = unsafe { &*view };
+    if view.needs_lines { 1.0 } else { 0.0 }
+}
+
+// === Clipboard ===
+
+#[no_mangle]
+pub extern "C" fn hone_editor_copy_to_clipboard(_view: *mut EditorView, text_ptr: *const u8) {
+    let text = str_from_header(text_ptr);
+    if text.is_empty() { return; }
+    let vm = match JAVA_VM.get() {
+        Some(vm) => vm,
+        None => return,
+    };
+    let mut env = match vm.attach_current_thread() {
+        Ok(env) => env,
+        Err(_) => return,
+    };
+    let _ = env.push_local_frame(8);
+    let _ = (|| -> Option<()> {
+        let cm = get_clipboard_manager(&mut env)?;
+        let jtext = env.new_string(text).ok()?;
+        let clip = env.call_static_method(
+            "android/content/ClipData", "newPlainText",
+            "(Ljava/lang/CharSequence;Ljava/lang/CharSequence;)Landroid/content/ClipData;",
+            &[JValue::Object(&jtext), JValue::Object(&jtext)],
+        ).ok()?.l().ok()?;
+        env.call_method(&cm, "setPrimaryClip",
+            "(Landroid/content/ClipData;)V",
+            &[JValue::Object(&clip)]).ok()?;
+        Some(())
+    })();
+    unsafe { env.pop_local_frame(&JObject::null()); }
+}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_paste_from_clipboard(view: *mut EditorView) {
+    let view = unsafe { &mut *view };
+    let vm = match JAVA_VM.get() {
+        Some(vm) => vm,
+        None => return,
+    };
+    let mut env = match vm.attach_current_thread() {
+        Ok(env) => env,
+        Err(_) => return,
+    };
+    let _ = env.push_local_frame(16);
+    let text = (|| -> Option<String> {
+        let cm = get_clipboard_manager(&mut env)?;
+        let clip = env.call_method(&cm, "getPrimaryClip",
+            "()Landroid/content/ClipData;", &[]).ok()?.l().ok()?;
+        if clip.is_null() { return None; }
+        let count: i32 = env.call_method(&clip, "getItemCount", "()I", &[]).ok()?.i().ok()?;
+        if count <= 0 { return None; }
+        let item = env.call_method(&clip, "getItemAt",
+            "(I)Landroid/content/ClipData$Item;",
+            &[JValue::Int(0)]).ok()?.l().ok()?;
+        let cs = env.call_method(&item, "getText",
+            "()Ljava/lang/CharSequence;", &[]).ok()?.l().ok()?;
+        if cs.is_null() { return None; }
+        let jstr: jni::objects::JString = cs.into();
+        let s: String = env.get_string(&jstr).ok()?.into();
+        Some(s)
+    })();
+    unsafe { env.pop_local_frame(&JObject::null()); }
+    if let Some(t) = text {
+        for ch in t.chars() {
+            view.pending_events.push(editor_view::PendingEvent {
+                event_type: 1, // TEXT
+                char_code: ch as u32,
+                action_id: 0,
+                x: 0.0,
+                y: 0.0,
+            });
+        }
+    }
+}
+
+fn get_clipboard_manager<'a>(env: &mut jni::JNIEnv<'a>) -> Option<JObject<'a>> {
+    let app = env.call_static_method(
+        "android/app/ActivityThread", "currentApplication",
+        "()Landroid/app/Application;", &[],
+    ).ok()?.l().ok()?;
+    if app.is_null() { return None; }
+    let svc_name = env.new_string("clipboard").ok()?;
+    let cm = env.call_method(&app, "getSystemService",
+        "(Ljava/lang/String;)Ljava/lang/Object;",
+        &[JValue::Object(&svc_name)]).ok()?.l().ok()?;
+    if cm.is_null() { None } else { Some(cm) }
+}
+
+// === JNI Input Event Handlers ===
+// Called from HoneEditorView in Java/Kotlin when touch/key events occur.
+
+/// Called from HoneEditorView.onTouchEvent(ACTION_DOWN).
+#[no_mangle]
+pub extern "C" fn Java_com_perry_app_HoneEditorView_nativeOnTouchDown(
+    _env: jni::JNIEnv,
+    _this: JObject,
+    handle: jni::sys::jlong,
+    x: jni::sys::jfloat,
+    y: jni::sys::jfloat,
+) {
+    if handle == 0 { return; }
+    let view = unsafe { &mut *(handle as *mut EditorView) };
+    let density = get_density_cached();
+    view.on_mouse_down((x as f64) / density, (y as f64) / density);
+}
+
+/// Called from HoneEditorView.onTouchEvent(ACTION_MOVE).
+#[no_mangle]
+pub extern "C" fn Java_com_perry_app_HoneEditorView_nativeOnTouchMove(
+    _env: jni::JNIEnv,
+    _this: JObject,
+    handle: jni::sys::jlong,
+    x: jni::sys::jfloat,
+    y: jni::sys::jfloat,
+) {
+    if handle == 0 { return; }
+    let view = unsafe { &mut *(handle as *mut EditorView) };
+    let density = get_density_cached();
+    view.on_mouse_drag((x as f64) / density, (y as f64) / density);
+}
+
+/// Called from HoneEditorView when the user scrolls (fling/pan gesture).
+#[no_mangle]
+pub extern "C" fn Java_com_perry_app_HoneEditorView_nativeOnScroll(
+    _env: jni::JNIEnv,
+    _this: JObject,
+    handle: jni::sys::jlong,
+    dx: jni::sys::jfloat,
+    dy: jni::sys::jfloat,
+) {
+    if handle == 0 { return; }
+    let view = unsafe { &mut *(handle as *mut EditorView) };
+    let density = get_density_cached();
+    view.on_scroll((dx as f64) / density, (dy as f64) / density);
+}
+
+/// Called from HoneEditorView when the user types text (IME commitText).
+#[no_mangle]
+pub extern "C" fn Java_com_perry_app_HoneEditorView_nativeOnTextInput(
+    mut env: jni::JNIEnv,
+    _this: JObject,
+    handle: jni::sys::jlong,
+    text: jni::objects::JString,
+) {
+    if handle == 0 { return; }
+    let view = unsafe { &mut *(handle as *mut EditorView) };
+    let text_str: String = env.get_string(&text).map(|s| s.into()).unwrap_or_default();
+    if !text_str.is_empty() {
+        view.on_text_input(&text_str);
+    }
+}
+
+/// Called from HoneEditorView when a key action occurs (backspace, enter, arrows, etc.).
+#[no_mangle]
+pub extern "C" fn Java_com_perry_app_HoneEditorView_nativeOnAction(
+    mut env: jni::JNIEnv,
+    _this: JObject,
+    handle: jni::sys::jlong,
+    action: jni::objects::JString,
+) {
+    if handle == 0 { return; }
+    let view = unsafe { &mut *(handle as *mut EditorView) };
+    let action_str: String = env.get_string(&action).map(|s| s.into()).unwrap_or_default();
+    if !action_str.is_empty() {
+        view.on_action(&action_str);
+    }
+}
 
 // === Editor Color Settings ===
 
