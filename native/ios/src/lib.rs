@@ -329,7 +329,11 @@ pub extern "C" fn hone_editor_set_event_callback(
 #[no_mangle]
 pub extern "C" fn hone_editor_pending_event_count(view: *mut EditorView) -> f64 {
     let view = unsafe { &*view };
-    view.pending_events.len() as f64
+    let count = view.pending_events.len();
+    if count > 0 {
+        eprintln!("[hone-ios] pending_event_count polled: {} events waiting", count);
+    }
+    count as f64
 }
 
 #[no_mangle]

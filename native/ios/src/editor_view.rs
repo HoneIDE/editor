@@ -361,6 +361,7 @@ impl EditorView {
         }
         // In ts_mode, TypeScript handles the edit and re-renders via FFI.
         if self.ts_handles_events {
+            eprintln!("[hone-ios] on_text_input ts_mode: queued {} events, pending={}", text.len(), self.pending_events.len());
             return;
         }
         // Rust-side editing: insert into the cursor line in frame_lines directly.
@@ -995,7 +996,10 @@ impl EditorView {
             }
         }
         if self.uiview != NIL {
+            eprintln!("[hone-ios] end_frame: calling invalidate_view, lines={}", self.frame_lines.len());
             view::invalidate_view(self.uiview);
+        } else {
+            eprintln!("[hone-ios] end_frame: uiview is NIL!");
         }
     }
 

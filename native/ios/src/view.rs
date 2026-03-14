@@ -464,15 +464,16 @@ pub fn invalidate_view(uiview: Id) {
             let is_main: BOOL = msg_send![ns_thread, isMainThread];
             if is_main == YES {
                 let _: () = msg_send![uiview, setNeedsDisplay];
-                // Force synchronous layer redraw — setNeedsDisplay alone is deferred
-                // to UIKit's display cycle, which may not fire reliably when called
-                // from Perry's NSTimer-based setInterval pump.
+                // Force synchronous layer redraw + commit to render server.
+                // Perry's NSTimer pump may not align with UIKit's display cycle,
+                // so we force the layer to draw and commit immediately.
                 let layer: Id = msg_send![uiview, layer];
                 if layer != NIL {
                     let _: () = msg_send![layer, displayIfNeeded];
                 }
+                let ca_transaction = Class::get("CATransaction").unwrap();
+                let _: () = msg_send![ca_transaction, flush];
             } else {
-                // dispatch_async_f doesn't require block support — just a C fn + context.
                 extern "C" fn set_needs_display(ctx: *mut c_void) {
                     unsafe {
                         let view = ctx as Id;
@@ -481,6 +482,8 @@ pub fn invalidate_view(uiview: Id) {
                         if layer != NIL {
                             let _: () = msg_send![layer, displayIfNeeded];
                         }
+                        let ca_transaction = Class::get("CATransaction").unwrap();
+                        let _: () = msg_send![ca_transaction, flush];
                     }
                 }
                 dispatch_async_f(
