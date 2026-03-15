@@ -366,7 +366,7 @@ impl EditorView {
         }
         // In ts_mode, TypeScript handles the edit and re-renders via FFI.
         if self.ts_handles_events {
-            eprintln!("[hone-ios] on_text_input ts_mode: queued {} events, pending={}", text.len(), self.pending_events.len());
+            // [debug removed]
             return;
         }
         // Rust-side editing: insert into the cursor line in frame_lines directly.
@@ -729,6 +729,7 @@ impl EditorView {
 
     /// Called from UIView touchesBegan: — tap to position cursor.
     pub fn on_mouse_down(&mut self, x: f64, y: f64) {
+        // [debug removed]
         if let Some(cb) = self.mouse_down_callback {
             let self_ptr = self as *mut EditorView;
             cb(self_ptr, x, y);
@@ -950,6 +951,7 @@ impl EditorView {
     }
 
     pub fn set_cursor(&mut self, x: f64, y: f64, style: i32) {
+        // [debug removed]
         if !self.ts_handles_events && self.user_has_clicked {
             // User manually positioned cursor via click — don't let TypeScript override.
             // (In ts_mode, TypeScript is authoritative — always accept its cursor.)
@@ -1005,10 +1007,10 @@ impl EditorView {
             }
         }
         if self.uiview != NIL {
-            eprintln!("[hone-ios] end_frame: calling invalidate_view, lines={}", self.frame_lines.len());
+            // [debug removed]
             view::invalidate_view(self.uiview);
         } else {
-            eprintln!("[hone-ios] end_frame: uiview is NIL!");
+            // [debug removed]
         }
     }
 

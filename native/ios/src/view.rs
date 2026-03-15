@@ -114,6 +114,12 @@ fn ensure_class_registered() {
                 can_become_first_responder as extern "C" fn(&Object, Sel) -> BOOL,
             );
 
+            // -- Hit testing (debug: ensure view participates in touch routing) --
+            decl.add_method(
+                objc::sel!(hitTest:withEvent:),
+                hit_test as extern "C" fn(&Object, Sel, ObjCPoint, Id) -> Id,
+            );
+
             // -- Touch handling --
             decl.add_method(
                 objc::sel!(touchesBegan:withEvent:),
@@ -237,10 +243,33 @@ unsafe fn first_touch_point(this: &Object, touches: Id) -> Option<(f64, f64)> {
     Some((point.x, point.y))
 }
 
+extern "C" fn hit_test(this: &Object, _sel: Sel, point: ObjCPoint, event: Id) -> Id {
+    unsafe {
+        // Call super's hitTest:withEvent: to get the default result
+        let superclass = class!(UIView);
+        let result: Id = msg_send![super(this, superclass), hitTest: point withEvent: event];
+        let bounds: ObjCRect = msg_send![this, bounds];
+        let ui_enabled: BOOL = msg_send![this, isUserInteractionEnabled];
+        let _ = (bounds, ui_enabled);
+        // If super returned nil but point is inside bounds, force return self
+        if result.is_null() {
+            let in_bounds = point.x >= 0.0 && point.y >= 0.0
+                && point.x <= bounds.size.width && point.y <= bounds.size.height;
+            if in_bounds {
+                // Force self when super returns nil but point is in bounds
+                return this as *const Object as Id;
+            }
+        }
+        result
+    }
+}
+
 extern "C" fn touches_began(this: &Object, _sel: Sel, touches: Id, _event: Id) {
+    // touches_began
     unsafe {
         let state_ptr: *mut c_void = *this.get_ivar(EDITOR_STATE_IVAR);
         if state_ptr.is_null() {
+            // state_ptr null
             return;
         }
         let editor_view = &mut *(state_ptr as *mut EditorView);
@@ -409,6 +438,28 @@ extern "C" fn did_move_to_window(this: &Object, _sel: Sel) {
             let this_id = this as *const Object as Id;
             display_link_ensure_started(this_id);
             mark_dirty(this_id);
+
+            // Register for continuous parent-frame fixing on display link tick.
+            let ptr = this_id as usize;
+            let mut editors = EDITOR_VIEWS.lock().unwrap();
+            let mut found = false;
+            for e in editors.iter() { if *e == ptr { found = true; break; } }
+            if !found { editors.push(ptr); }
+
+            // Also fix parent frames immediately (Perry's UIStackView has 0x0 frame).
+            let editor_frame: ObjCRect = msg_send![this, frame];
+            let mut parent: Id = msg_send![this, superview];
+            while parent != NIL {
+                let pframe: ObjCRect = msg_send![parent, frame];
+                if pframe.size.width < 1.0 || pframe.size.height < 1.0 {
+                    let fixed = ObjCRect {
+                        origin: pframe.origin,
+                        size: editor_frame.size,
+                    };
+                    let _: () = msg_send![parent, setFrame: fixed];
+                }
+                parent = msg_send![parent, superview];
+            }
         }
     }
 }
@@ -417,6 +468,7 @@ extern "C" fn did_move_to_window(this: &Object, _sel: Sel) {
 /// UITapGestureRecognizer bypasses UIScrollView's touch delay (`delaysContentTouches`),
 /// ensuring the editor reliably receives taps even when embedded inside a scroll view.
 extern "C" fn handle_tap(this: &Object, _sel: Sel, gesture: Id) {
+    // handle_tap
     unsafe {
         let state_ptr: *mut c_void = *this.get_ivar(EDITOR_STATE_IVAR);
         if state_ptr.is_null() { return; }
@@ -483,6 +535,9 @@ use std::sync::Mutex;
 /// Set of UIView pointers that need a redraw on the next display frame.
 static DIRTY_VIEWS: Mutex<Vec<usize>> = Mutex::new(Vec::new());
 
+/// Editor views that need parent frame fixing (Perry's UIStackView has 0x0 frame).
+static EDITOR_VIEWS: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+
 /// Whether the shared CADisplayLink has been started.
 static DISPLAY_LINK_STARTED: Once = Once::new();
 
@@ -513,6 +568,33 @@ extern "C" fn display_link_tick(_target: &Object, _sel: Sel, _display_link: Id) 
         unsafe {
             let view = ptr as Id;
             let _: () = msg_send![view, setNeedsDisplay];
+        }
+    }
+
+    // Fix zero-sized parent frames so hit-testing works.
+    // Perry's UIStackView container gets 0x0 frame from Auto Layout,
+    // blocking all touch delivery. Propagate editor frame to ancestors.
+    let editors: Vec<usize> = {
+        let e = EDITOR_VIEWS.lock().unwrap();
+        e.clone()
+    };
+    for ptr in editors {
+        unsafe {
+            let view = ptr as Id;
+            let editor_frame: ObjCRect = msg_send![view, frame];
+            if editor_frame.size.width < 1.0 { continue; }
+            let mut parent: Id = msg_send![view, superview];
+            while parent != NIL {
+                let pframe: ObjCRect = msg_send![parent, frame];
+                if pframe.size.width < 1.0 || pframe.size.height < 1.0 {
+                    let fixed = ObjCRect {
+                        origin: pframe.origin,
+                        size: editor_frame.size,
+                    };
+                    let _: () = msg_send![parent, setFrame: fixed];
+                }
+                parent = msg_send![parent, superview];
+            }
         }
     }
 }

@@ -662,9 +662,10 @@ export class Editor {
       const coordinator = this._coordinator;
       coordinator.render();
 
-      // Perry-safe: push selection rects directly via FFI.
-      // coordinator.render() may skip renderSelections due to caching or
-      // interface dispatch issues — send rects unconditionally here.
+      // Perry-safe: push cursor and selection rects directly via FFI.
+      // coordinator.render() may fail on getters (cursorRenderState, selections)
+      // in Perry AOT — send unconditionally here.
+      this._syncCursor(h, vm);
       this._syncSelections(h, vm);
     }
   }
@@ -862,6 +863,25 @@ export class Editor {
    * - Cast strings to `any` for FFI pointer params
    * - charCodeAt compared to numeric literal (not variable) — Perry-safe
    */
+  /**
+   * Push cursor position directly via FFI, bypassing coordinator.
+   * The coordinator's renderCursors relies on vm.cursorRenderState getter
+   * which Perry AOT may not dispatch correctly.
+   */
+  private _syncCursor(h: number, vm: EditorViewModel): void {
+    const cursors = vm.cursors;
+    if (cursors.length === 0) return;
+    const c = cursors[0];
+    const cw = vm.getCharWidth();
+    const gw = vm.gutterWidth;
+    const sz = 14;
+    const lh = sz + sz / 2;
+    const scrollTop = vm.viewport.scroll.scrollTop;
+    const x = c.column * cw + gw;
+    const y = c.line * lh - scrollTop;
+    hone_editor_set_cursor(h, x, y, 0);
+  }
+
   /**
    * Push selection rects directly via FFI, bypassing coordinator.
    * Reads cursor0.selectionAnchor and cursor position from the cursor manager.
