@@ -336,15 +336,11 @@ extern "C" fn touches_moved(this: &Object, _sel: Sel, touches: Id, event: Id) {
             (*this_mut).set_ivar::<f64>(PREV_TOUCH_X_IVAR, x);
             (*this_mut).set_ivar::<f64>(PREV_TOUCH_Y_IVAR, y);
 
-            if touch_count >= 2 {
-                // Two-finger drag: scroll. Negate dy so finger-down = content-up.
-                let dx = x - prev_x;
-                let dy = y - prev_y;
-                editor_view.on_scroll(-dx, -dy);
-            } else {
-                // Single-finger drag: extend text selection.
-                editor_view.on_mouse_drag(x, y);
-            }
+            // On phone: 1-finger drag = scroll, 2-finger drag = also scroll.
+            // Selection is done via Shift+arrow keys or long-press (TODO).
+            let dx = x - prev_x;
+            let dy = y - prev_y;
+            editor_view.on_scroll(-dx, -dy);
         }
     }
 }

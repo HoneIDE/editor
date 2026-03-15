@@ -911,6 +911,7 @@ export class Editor {
     // fontSize 14, lineHeight 1.5 → lineHeightPx = 21 (same as coordinator default)
     const sz = 14;
     const lh = sz + sz / 2;
+    const scrollTop = this._vm.viewport.scroll.scrollTop;
 
     hone_editor_begin_frame(handle as number);
 
@@ -922,7 +923,7 @@ export class Editor {
       const ch = i < text.length ? text.charCodeAt(i) : 10;
       if (ch === 10) {
         const lineContent = text.substring(lineStart, i);
-        const yOffset = lineNum * lh;
+        const yOffset = lineNum * lh - scrollTop;
         // Empty tokens "[]": Rust tokenizer retokenizes on each edit in AOT mode.
         hone_editor_render_line(handle as number, lineNum + 1, lineContent as any, '[]' as any, yOffset);
         lineNum++;
