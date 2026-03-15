@@ -31,6 +31,20 @@ let _perryFenceCache: string = '';
 let _perryUseDirectTokens: number = 0;
 
 // ---------------------------------------------------------------------------
+// Perry-safe cursor position (module-level, readable from any context).
+// Updated by all Perry-safe command handlers. Read by _syncCursor in
+// editor-component.ts via exported getter.
+// ---------------------------------------------------------------------------
+let _perryCursorLine = 0;
+let _perryCursorCol = 0;
+let _perryAnchorLine = -1;  // -1 = no selection
+let _perryAnchorCol = 0;
+
+export function getPerryCursorState(): { line: number; col: number; anchorLine: number; anchorCol: number } {
+  return { line: _perryCursorLine, col: _perryCursorCol, anchorLine: _perryAnchorLine, anchorCol: _perryAnchorCol };
+}
+
+// ---------------------------------------------------------------------------
 // Perry-safe snapshot undo/redo (module-level, no class-field arrays).
 // Each entry stores: full buffer text, cursor line, cursor column.
 // Coalescing: single-char edits within 500ms share one snapshot.
@@ -880,6 +894,8 @@ export class EditorViewModel {
   }
 
   private notifyChange(): void {
+    // Always sync cursor to module-level vars before notifying.
+    this._syncPerryCursor();
     // Perry-safe: plain null check on a single field.
     if (this._listener !== null && this._listener !== undefined) {
       this._listener();
@@ -1683,6 +1699,9 @@ export class EditorViewModel {
     } else if (event.shiftKey) {
       // Shift+click: extend selection
       this.cursorManager.moveToPosition(line, column, true);
+      _perryCursorLine = line;
+      _perryCursorCol = column;
+      // anchor stays from before
     } else {
       // Regular click: move cursor
       if (event.clickCount === 2) {
@@ -1696,6 +1715,9 @@ export class EditorViewModel {
       } else {
         this.cursorManager.reset(line, column);
       }
+      _perryCursorLine = line;
+      _perryCursorCol = column;
+      _perryAnchorLine = -1;
     }
 
     this._cursorBlink.resetBlink();
@@ -1757,6 +1779,23 @@ export class EditorViewModel {
 
   // === Private ===
 
+  /** Sync cursor to module-level vars before afterEdit/notifyChange. */
+  private _syncPerryCursor(): void {
+    const _spcCursors = this.cursorManager.cursors;
+    if (_spcCursors.length > 0) {
+      const _spc0 = _spcCursors[0];
+      // Direct field reads on the cursor object (not via getter)
+      _perryCursorLine = _spc0.line;
+      _perryCursorCol = _spc0.column;
+      if (_spc0.selectionAnchor !== null && _spc0.selectionAnchor !== undefined) {
+        _perryAnchorLine = _spc0.selectionAnchor.line;
+        _perryAnchorCol = _spc0.selectionAnchor.column;
+      } else {
+        _perryAnchorLine = -1;
+      }
+    }
+  }
+
   /** Called after any edit or cursor change. */
   private afterEdit(): void {
     this.viewport.setTotalLines(this.document.buffer.getLineCount());
@@ -1771,11 +1810,9 @@ export class EditorViewModel {
     // Dismiss ghost text on edit
     this.ghostText.markStale();
 
-    // Ensure cursor is visible — use cursors[0] directly (Perry-safe, avoids getter dispatch).
-    const _afterEditCursors = this.cursorManager.cursors;
-    if (_afterEditCursors.length > 0) {
-      this.viewport.ensureLineVisible(_afterEditCursors[0].line);
-    }
+    // Perry-safe: sync cursor to module-level vars and ensure visible.
+    this._syncPerryCursor();
+    this.viewport.ensureLineVisible(_perryCursorLine);
     this._cursorBlink.resetBlink();
     this.notifyChange();
   }

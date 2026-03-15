@@ -237,6 +237,7 @@ pub struct EditorView {
     context_menu_items: Vec<ContextMenuItem>,
 
     // Theme colors
+    pub debug_touch_count: i32,
     background_color: (f64, f64, f64),
     gutter_bg_color: (f64, f64, f64),
     gutter_fg_color: (f64, f64, f64),
@@ -250,6 +251,7 @@ impl EditorView {
         let renderer = FontSet::new("Menlo", 14.0);
 
         EditorView {
+            debug_touch_count: 0,
             renderer,
             uiview: NIL,
             parent_view: null_mut(),
@@ -729,7 +731,10 @@ impl EditorView {
 
     /// Called from UIView touchesBegan: — tap to position cursor.
     pub fn on_mouse_down(&mut self, x: f64, y: f64) {
-        // [debug removed]
+        // Track touch count for debug display
+        static mut TOUCH_COUNT: i32 = 0;
+        unsafe { TOUCH_COUNT += 1; }
+        self.debug_touch_count = unsafe { TOUCH_COUNT };
         if let Some(cb) = self.mouse_down_callback {
             let self_ptr = self as *mut EditorView;
             cb(self_ptr, x, y);
@@ -913,6 +918,9 @@ impl EditorView {
         }
     }
 
+    pub fn get_width(&self) -> f64 { self.width }
+    pub fn get_height(&self) -> f64 { self.height }
+
     pub fn measure_text(&self, text: &str) -> f64 {
         self.renderer.measure_text(text)
     }
@@ -921,13 +929,11 @@ impl EditorView {
 
     pub fn begin_frame(&mut self) {
         self.frame_lines.clear();
-        // In ts_mode, TypeScript manages all state — always accept its cursor.
-        // Without ts_mode, only clear cursor if user hasn't manually clicked.
-        if self.ts_handles_events || !self.user_has_clicked {
-            self.cursor = None;
-        }
+        // Do NOT clear cursor or selections here — they are managed by
+        // TypeScript's _syncCursor/_syncSelections which run asynchronously.
+        // Clearing them causes a race where drawRect sees None between
+        // begin_frame and the next _syncCursor call.
         self.cursors.clear();
-        self.selections.clear();
         self.decorations.clear();
         self.ghost_text = None;
         self.max_line_number = 0;
@@ -1388,6 +1394,38 @@ impl EditorView {
             text_renderer::draw_text(
                 ctx, &ghost.text, ghost.x, ghost.y,
                 &self.renderer.normal, self.renderer.ascent, ghost.color,
+            );
+        }
+
+        // DEBUG: draw status bar at bottom showing cursor state + frame count
+        {
+            // Static frame counter — proves the app is alive and redrawing
+            static mut FRAME_COUNT: u64 = 0;
+            let frame = unsafe { FRAME_COUNT += 1; FRAME_COUNT };
+
+            let cursor_info = if let Some(ref c) = self.cursor {
+                format!("CUR({:.0},{:.0}) ", c.x, c.y)
+            } else {
+                "CUR(none) ".to_string()
+            };
+            let debug_text = format!(
+                "{}F={} ev={} tap={}",
+                cursor_info,
+                frame,
+                self.pending_events.len(),
+                self.debug_touch_count,
+            );
+            let debug_y = bounds.size.height - 20.0;
+            // Black background for debug bar
+            ctx.set_rgb_fill_color(0.0, 0.0, 0.0, 0.8);
+            ctx.fill_rect(CGRect::new(
+                &CGPoint::new(0.0, debug_y),
+                &CGSize::new(bounds.size.width, 20.0),
+            ));
+            text_renderer::draw_text(
+                ctx, &debug_text, 10.0, debug_y,
+                &self.renderer.normal, self.renderer.ascent,
+                (1.0, 1.0, 0.0), // yellow
             );
         }
 

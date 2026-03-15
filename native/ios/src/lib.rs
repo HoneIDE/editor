@@ -26,6 +26,12 @@ use string_header::str_from_header;
 
 // === FFI Contract Implementation ===
 
+/// Platform detection: returns 1.0 on iOS, 0.0 (stub) on macOS.
+#[no_mangle]
+pub extern "C" fn hone_editor_is_ios() -> f64 {
+    1.0
+}
+
 /// Create a new editor view with the given dimensions.
 #[no_mangle]
 pub extern "C" fn hone_editor_create(width: f64, height: f64) -> *mut EditorView {
@@ -330,9 +336,6 @@ pub extern "C" fn hone_editor_set_event_callback(
 pub extern "C" fn hone_editor_pending_event_count(view: *mut EditorView) -> f64 {
     let view = unsafe { &*view };
     let count = view.pending_events.len();
-    if count > 0 {
-        eprintln!("[hone-ios] pending_event_count polled: {} events waiting", count);
-    }
     count as f64
 }
 

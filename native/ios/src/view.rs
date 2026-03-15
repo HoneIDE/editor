@@ -108,6 +108,12 @@ fn ensure_class_registered() {
                 did_move_to_window as extern "C" fn(&Object, Sel),
             );
 
+            // -- Intrinsic content size (needed for Auto Layout in Perry's UIStackView) --
+            decl.add_method(
+                objc::sel!(intrinsicContentSize),
+                intrinsic_content_size as extern "C" fn(&Object, Sel) -> ObjCPoint,
+            );
+
             // -- First responder (needed for keyboard input) --
             decl.add_method(
                 objc::sel!(canBecomeFirstResponder),
@@ -196,6 +202,19 @@ fn ensure_class_registered() {
 }
 
 // -- Drawing -----------------------------------------------------------------
+
+// Return intrinsic content size as two f64 values packed in ObjCPoint
+// (CGSize and ObjCPoint have the same layout: two f64s).
+extern "C" fn intrinsic_content_size(this: &Object, _sel: Sel) -> ObjCPoint {
+    unsafe {
+        let state_ptr: *mut c_void = *this.get_ivar(EDITOR_STATE_IVAR);
+        if state_ptr.is_null() {
+            return ObjCPoint { x: 300.0, y: 400.0 };
+        }
+        let editor_view = &*(state_ptr as *const EditorView);
+        ObjCPoint { x: editor_view.get_width(), y: editor_view.get_height() }
+    }
+}
 
 extern "C" fn draw_rect(this: &Object, _sel: Sel, dirty_rect: ObjCRect) {
     unsafe {
@@ -446,19 +465,29 @@ extern "C" fn did_move_to_window(this: &Object, _sel: Sel) {
             for e in editors.iter() { if *e == ptr { found = true; break; } }
             if !found { editors.push(ptr); }
 
-            // Also fix parent frames immediately (Perry's UIStackView has 0x0 frame).
-            let editor_frame: ObjCRect = msg_send![this, frame];
-            let mut parent: Id = msg_send![this, superview];
-            while parent != NIL {
-                let pframe: ObjCRect = msg_send![parent, frame];
-                if pframe.size.width < 1.0 || pframe.size.height < 1.0 {
-                    let fixed = ObjCRect {
-                        origin: pframe.origin,
-                        size: editor_frame.size,
-                    };
-                    let _: () = msg_send![parent, setFrame: fixed];
-                }
-                parent = msg_send![parent, superview];
+            // Perry's UIStackView has 0x0 frame which blocks ALL hit-testing.
+            // Fix: add a transparent overlay UIView to the window that captures
+            // touches and forwards them to the editor.
+            ensure_overlay_class_registered();
+            let state_ptr: *mut c_void = *this.get_ivar(EDITOR_STATE_IVAR);
+            GLOBAL_EDITOR_VIEW.store(state_ptr as usize, std::sync::atomic::Ordering::Relaxed);
+            GLOBAL_EDITOR_UIVIEW.store(this_id as usize, std::sync::atomic::Ordering::Relaxed);
+            let window_id: Id = msg_send![this, window];
+            if window_id != NIL {
+                let window_bounds: ObjCRect = msg_send![window_id, bounds];
+                let overlay_cls = Class::get("HoneTouchOverlay").unwrap();
+                let overlay: Id = msg_send![overlay_cls, alloc];
+                let overlay: Id = msg_send![overlay, initWithFrame: window_bounds];
+                let clear: Id = msg_send![class!(UIColor), clearColor];
+                let _: () = msg_send![overlay, setBackgroundColor: clear];
+                let _: () = msg_send![overlay, setUserInteractionEnabled: YES];
+                // Tap gesture on the overlay
+                let tap_cls = Class::get("UITapGestureRecognizer").unwrap();
+                let tap: Id = msg_send![tap_cls, alloc];
+                let action = objc::sel!(overlayTapped:);
+                let tap: Id = msg_send![tap, initWithTarget: overlay action: action];
+                let _: () = msg_send![overlay, addGestureRecognizer: tap];
+                let _: () = msg_send![window_id, addSubview: overlay];
             }
         }
     }
@@ -499,6 +528,10 @@ pub fn create_editor_uiview(width: f64, height: f64, state: *mut EditorView) -> 
         // Set the editor state ivar
         (*(view as *mut Object)).set_ivar(EDITOR_STATE_IVAR, state as *mut c_void);
 
+        // Store global pointers for the touch overlay (display_link_tick will create it)
+        GLOBAL_EDITOR_VIEW.store(state as usize, std::sync::atomic::Ordering::Relaxed);
+        GLOBAL_EDITOR_UIVIEW.store(view as usize, std::sync::atomic::Ordering::Relaxed);
+
         // Initialize touch tracking ivars
         (*(view as *mut Object)).set_ivar::<f64>(PREV_TOUCH_X_IVAR, 0.0);
         (*(view as *mut Object)).set_ivar::<f64>(PREV_TOUCH_Y_IVAR, 0.0);
@@ -510,13 +543,15 @@ pub fn create_editor_uiview(width: f64, height: f64, state: *mut EditorView) -> 
         let _: () = msg_send![view, setOpaque: YES];
 
         // Add a UITapGestureRecognizer to reliably receive taps inside a UIScrollView.
-        // UIScrollView's delaysContentTouches prevents touchesBegan: from firing on
-        // embedded views, but gesture recognizers bypass this delay mechanism.
         let tap_cls = Class::get("UITapGestureRecognizer").unwrap();
         let tap: Id = msg_send![tap_cls, alloc];
         let action = objc::sel!(handleTap:);
         let tap: Id = msg_send![tap, initWithTarget:view action:action];
         let _: () = msg_send![view, addGestureRecognizer: tap];
+
+        // Start the CADisplayLink render loop.
+        display_link_ensure_started(view);
+        mark_dirty(view);
 
         view
     }
@@ -537,6 +572,103 @@ static DIRTY_VIEWS: Mutex<Vec<usize>> = Mutex::new(Vec::new());
 
 /// Editor views that need parent frame fixing (Perry's UIStackView has 0x0 frame).
 static EDITOR_VIEWS: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+
+/// Global editor view pointer for the touch overlay to forward touches to.
+static GLOBAL_EDITOR_VIEW: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Global HoneEditorView UIView pointer for coordinate conversion.
+static GLOBAL_EDITOR_UIVIEW: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+static REGISTER_OVERLAY: Once = Once::new();
+
+fn ensure_overlay_class_registered() {
+    REGISTER_OVERLAY.call_once(|| {
+        let superclass = Class::get("UIView").expect("UIView");
+        let mut decl = ClassDecl::new("HoneTouchOverlay", superclass)
+            .expect("Failed to create HoneTouchOverlay");
+        unsafe {
+            decl.add_method(
+                objc::sel!(overlayTapped:),
+                overlay_tapped as extern "C" fn(&Object, Sel, Id),
+            );
+        }
+        decl.register();
+    });
+}
+
+// Swizzle UIWindow.sendEvent: to intercept ALL touches at the lowest level.
+static mut ORIGINAL_SEND_EVENT: Option<extern "C" fn(&Object, Sel, Id)> = None;
+
+unsafe fn swizzle_send_event() {
+    let cls = Class::get("UIWindow").expect("UIWindow");
+    let sel = objc::sel!(sendEvent:);
+    let method = class_getInstanceMethod(cls as *const _ as *mut _, sel);
+    if method.is_null() { return; }
+    let orig_imp = method_getImplementation(method);
+    ORIGINAL_SEND_EVENT = Some(std::mem::transmute(orig_imp));
+    let new_imp: extern "C" fn(&Object, Sel, Id) = hooked_send_event;
+    method_setImplementation(method, new_imp as *mut _);
+}
+
+extern "C" {
+    fn class_getInstanceMethod(cls: *mut std::ffi::c_void, sel: Sel) -> *mut std::ffi::c_void;
+    fn method_getImplementation(method: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+    fn method_setImplementation(method: *mut std::ffi::c_void, imp: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+}
+
+extern "C" fn hooked_send_event(this: &Object, sel: Sel, event: Id) {
+    unsafe {
+        // Forward to original first
+        if let Some(orig) = ORIGINAL_SEND_EVENT {
+            orig(this, sel, event);
+        }
+        // Check if this is a touch event
+        let event_type: i64 = msg_send![event, type];
+        if event_type == 0 { // UIEventTypeTouches
+            let all_touches: Id = msg_send![event, allTouches];
+            if all_touches != NIL {
+                let count: usize = msg_send![all_touches, count];
+                if count > 0 {
+                    let enumerator: Id = msg_send![all_touches, objectEnumerator];
+                    let touch: Id = msg_send![enumerator, nextObject];
+                    if touch != NIL {
+                        let phase: i64 = msg_send![touch, phase];
+                        if phase == 0 { // UITouchPhaseBegan
+                            let ev_ptr = GLOBAL_EDITOR_VIEW.load(std::sync::atomic::Ordering::Relaxed);
+                            if ev_ptr != 0 {
+                                // Get touch location in window coordinates
+                                let window_point: ObjCPoint = msg_send![touch, locationInView: NIL];
+                                let editor_view = &mut *(ev_ptr as *mut EditorView);
+                                // Convert: subtract editor view's origin in window
+                                // For now use raw window coordinates (editor is full-width)
+                                editor_view.on_mouse_down(window_point.x, window_point.y);
+                                let uiview_ptr = GLOBAL_EDITOR_UIVIEW.load(std::sync::atomic::Ordering::Relaxed);
+                                if uiview_ptr != 0 {
+                                    mark_dirty(uiview_ptr as Id);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+extern "C" fn overlay_tapped(_this: &Object, _sel: Sel, gesture: Id) {
+    unsafe {
+        let ev_ptr = GLOBAL_EDITOR_VIEW.load(std::sync::atomic::Ordering::Relaxed);
+        let uiview_ptr = GLOBAL_EDITOR_UIVIEW.load(std::sync::atomic::Ordering::Relaxed);
+        if ev_ptr == 0 || uiview_ptr == 0 { return; }
+        let editor_view = &mut *(ev_ptr as *mut EditorView);
+        let uiview = uiview_ptr as Id;
+        // Get tap location relative to the editor view
+        let point: ObjCPoint = msg_send![gesture, locationInView: uiview];
+        editor_view.on_mouse_down(point.x, point.y);
+        // Show keyboard
+        let _: BOOL = msg_send![uiview, becomeFirstResponder];
+        mark_dirty(uiview);
+    }
+}
 
 /// Whether the shared CADisplayLink has been started.
 static DISPLAY_LINK_STARTED: Once = Once::new();
@@ -568,6 +700,15 @@ extern "C" fn display_link_tick(_target: &Object, _sel: Sel, _display_link: Id) 
         unsafe {
             let view = ptr as Id;
             let _: () = msg_send![view, setNeedsDisplay];
+        }
+    }
+
+    // Swizzle UIWindow.sendEvent: to intercept all touches (once).
+    static SWIZZLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !SWIZZLED.load(std::sync::atomic::Ordering::Relaxed) {
+        if GLOBAL_EDITOR_VIEW.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+            unsafe { swizzle_send_event(); }
+            SWIZZLED.store(true, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
@@ -640,12 +781,14 @@ fn display_link_ensure_started(uiview: Id) {
     });
 }
 
-/// Public API: mark a view for redraw on the next display frame.
-/// This replaces setNeedsDisplay calls — the CADisplayLink callback
-/// handles the actual setNeedsDisplay in the correct frame context.
+/// Public API: directly call setNeedsDisplay on the view.
+/// Previously routed through CADisplayLink, but Perry's embedding
+/// doesn't give the view a window, so the display link never fires.
 pub fn invalidate_view(uiview: Id) {
     if uiview != NIL {
-        mark_dirty(uiview);
+        unsafe {
+            let _: () = msg_send![uiview, setNeedsDisplay];
+        }
     }
 }
 

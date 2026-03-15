@@ -55,6 +55,12 @@ extern "C" fn crash_signal_handler(sig: libc::c_int) {
 
 // === FFI Contract Implementation ===
 
+/// Platform detection: returns 0.0 on macOS (iOS returns 1.0).
+#[no_mangle]
+pub extern "C" fn hone_editor_is_ios() -> f64 {
+    0.0
+}
+
 /// Create a new editor view with the given dimensions.
 #[no_mangle]
 pub extern "C" fn hone_editor_create(width: f64, height: f64) -> *mut EditorView {
