@@ -933,7 +933,11 @@ impl EditorView {
     }
 
     pub fn render_line(&mut self, line_number: i32, text: &str, tokens_json: &str, y_offset: f64) {
-        let tokens: Vec<RenderToken> = serde_json::from_str(tokens_json).unwrap_or_default();
+        let mut tokens: Vec<RenderToken> = serde_json::from_str(tokens_json).unwrap_or_default();
+        // Auto-tokenize if TypeScript sent empty tokens (e.g. initial _directRenderText).
+        if tokens.is_empty() && !text.is_empty() {
+            tokens = crate::tokenizer::tokenize_line(text);
+        }
         if line_number > self.max_line_number {
             self.max_line_number = line_number;
         }
