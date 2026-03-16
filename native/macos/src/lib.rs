@@ -627,6 +627,53 @@ pub extern "C" fn hone_editor_add_selection_rect(
     view.add_selection_rect_entry(x, y, w, h);
 }
 
+/// Set line diagnostics for Error Lens rendering.
+/// `packed_data` is a Perry StringHeader: "line:severity:color:message\n..." (1-based lines).
+/// severity: 1=error, 2=warning, 3=info, 4=hint
+#[no_mangle]
+pub extern "C" fn hone_editor_set_line_diagnostics(
+    view: *mut EditorView,
+    packed_data: *const u8,
+) {
+    let view = unsafe { &mut *view };
+    let data = str_from_header(packed_data);
+
+    view.line_diagnostics.clear();
+    view.gutter_diagnostics.clear();
+
+    if data.is_empty() { return; }
+
+    for line_str in data.split('\n') {
+        if line_str.is_empty() { continue; }
+        // Format: line:severity:color:message
+        let mut parts = line_str.splitn(4, ':');
+        let line_num: i32 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+        let severity: i32 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(3);
+        let color: &str = parts.next().unwrap_or("#888888");
+        let message: &str = parts.next().unwrap_or("");
+
+        if line_num > 0 && !message.is_empty() {
+            view.line_diagnostics.insert(line_num, (severity, message.to_string(), color.to_string()));
+            // Also set gutter diagnostic (take the highest severity per line)
+            let existing = view.gutter_diagnostics.get(&line_num).copied().unwrap_or(99);
+            if severity < existing {
+                view.gutter_diagnostics.insert(line_num, severity);
+            }
+        }
+    }
+
+    view.invalidate();
+}
+
+/// Clear all line diagnostics.
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_diagnostics(view: *mut EditorView) {
+    let view = unsafe { &mut *view };
+    view.line_diagnostics.clear();
+    view.gutter_diagnostics.clear();
+    view.invalidate();
+}
+
 /// Poll touch events (iOS only — no-op on macOS).
 #[no_mangle]
 pub extern "C" fn hone_editor_poll_touch(_view: *mut EditorView) -> f64 {

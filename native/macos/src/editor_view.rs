@@ -244,6 +244,12 @@ pub struct EditorView {
     // Set true when scroll reveals lines not present in the cache — TypeScript should provide them.
     pub needs_lines: bool,
 
+    // Line diagnostics for Error Lens-style inline messages.
+    // Key = 1-based line number, Value = (severity 1-4, message, color hex).
+    pub line_diagnostics: HashMap<i32, (i32, String, String)>,
+    // Gutter diagnostics: Key = 1-based line number, Value = severity (1=error, 2=warning, 3=info).
+    pub gutter_diagnostics: HashMap<i32, i32>,
+
     // Context menu
     context_menu_items: Vec<ContextMenuItem>,
 
@@ -289,6 +295,8 @@ impl EditorView {
             line_cache: HashMap::new(),
             rust_scroll_delta: 0.0,
             needs_lines: false,
+            line_diagnostics: HashMap::new(),
+            gutter_diagnostics: HashMap::new(),
             context_menu_items: Vec::new(),
             // VS Code dark theme defaults
             background_color: (0.118, 0.118, 0.118),     // #1e1e1e
@@ -901,6 +909,25 @@ impl EditorView {
                 ctx.fill_rect(line_rect);
             }
 
+            // Draw gutter diagnostic icon (colored circle for errors/warnings)
+            if let Some(&severity) = self.gutter_diagnostics.get(&line.line_number) {
+                let (dr, dg, db) = match severity {
+                    1 => (0.957, 0.278, 0.278), // error: red #f44747
+                    2 => (0.800, 0.655, 0.0),   // warning: yellow #cca700
+                    3 => (0.310, 0.757, 1.0),   // info: blue #4fc1ff
+                    _ => (0.5, 0.5, 0.5),       // hint: gray
+                };
+                ctx.set_rgb_fill_color(dr, dg, db, 1.0);
+                let icon_size = 8.0;
+                let icon_x = 4.0;
+                let icon_y = line.y_offset + (ts_line_h - icon_size) / 2.0;
+                let icon_rect = CGRect::new(
+                    &CGPoint::new(icon_x, icon_y),
+                    &CGSize::new(icon_size, icon_size),
+                );
+                ctx.fill_ellipse_in_rect(icon_rect);
+            }
+
             // Draw line number in gutter (right-aligned)
             let num_str = format!("{}", line.line_number);
             let num_width = self.renderer.char_width * num_str.len() as f64;
@@ -927,6 +954,22 @@ impl EditorView {
                 &self.renderer,
                 self.default_text_color,
             );
+
+            // Draw Error Lens-style inline diagnostic message after the line text
+            if let Some((severity, ref message, ref color_hex)) = self.line_diagnostics.get(&line.line_number) {
+                let text_end_x = gutter_w + self.renderer.char_width * line.text.len() as f64 + 16.0;
+                let (mr, mg, mb) = text_renderer::parse_hex_color(color_hex);
+                // Draw message with reduced opacity
+                text_renderer::draw_text(
+                    ctx,
+                    message,
+                    text_end_x,
+                    line.y_offset,
+                    &self.renderer.normal,
+                    self.renderer.ascent,
+                    (mr, mg, mb),
+                );
+            }
         }
 
         // 4. Draw decorations (underlines, backgrounds)
