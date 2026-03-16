@@ -10,7 +10,7 @@
 
 import { embedNSView } from 'perry/ui';
 import { EditorDocument } from '../core/document/document';
-import { EditorViewModel, KeyEvent, MouseEvent as EditorMouseEvent, ScrollEvent, setPerryMarkdownState, setPerryLanguageState, setPerryTokenTheme } from '../view-model/editor-view-model';
+import { EditorViewModel, KeyEvent, MouseEvent as EditorMouseEvent, ScrollEvent, setPerryMarkdownState, setPerryLanguageState, setPerryTokenTheme, getPerryCursorState } from '../view-model/editor-view-model';
 import { NativeRenderCoordinator, RenderCoordinatorConfig } from '../native/render-coordinator';
 import { DARK_THEME, LIGHT_THEME, EditorTheme } from '../view-model/theme';
 import type { NativeEditorFFI, NativeViewHandle } from '../native/ffi-bridge';
@@ -49,12 +49,16 @@ declare function hone_editor_get_event_x(handle: number, index: number): number;
 declare function hone_editor_get_event_y(handle: number, index: number): number;
 declare function hone_editor_clear_events(handle: number): void;
 declare function hone_editor_set_ts_mode(handle: number, mode: number): void;
+declare function hone_editor_is_ios(): number;
+declare function hone_editor_poll_touch(handle: number): number;
 declare function hone_editor_set_gutter_width(handle: number, width: number): void;
 
 // === Read-only + line background FFI ===
 declare function hone_editor_set_read_only(handle: number, mode: number): void;
 declare function hone_editor_set_line_background(handle: number, line: number, r: number, g: number, b: number, a: number): void;
 declare function hone_editor_clear_line_backgrounds(handle: number): void;
+declare function hone_editor_set_line_diagnostics(handle: number, packedData: number): void;
+declare function hone_editor_clear_diagnostics(handle: number): void;
 
 // === Clipboard FFI ===
 declare function hone_editor_copy_to_clipboard(handle: number, text: number): void;
@@ -130,6 +134,8 @@ let _editor1: Editor | null = null;
 let _editor2: Editor | null = null;
 let _editorCount: number = 0;
 let _pollStarted: number = 0;
+let _debugCounter: number = 0;
+let _debugHandle: number = 0;
 
 function _registerEditor(ed: Editor): number {
   if (_editor0 === null) { _editor0 = ed; _editorCount = _editorCount + 1; return 0; }
@@ -146,8 +152,14 @@ function _unregisterEditor(slot: number): void {
   if (_editorCount < 0) _editorCount = 0;
 }
 
-/** Module-level poll function for setInterval. Polls all registered editors. */
+/** Module-level poll function for setInterval. */
 function _pollAllEditors(): void {
+  // DEBUG: bypass class method dispatch — call FFI directly with module-level handle
+  if (_debugHandle > 0) {
+    _debugCounter = _debugCounter + 1;
+    hone_editor_set_cursor(_debugHandle, 52 + (_debugCounter % 20) * 8, 42, 0);
+    hone_editor_invalidate(_debugHandle);
+  }
   if (_editor0 !== null && _editor0 !== undefined) _editor0.flushEvents();
   if (_editor1 !== null && _editor1 !== undefined) _editor1.flushEvents();
   if (_editor2 !== null && _editor2 !== undefined) _editor2.flushEvents();
@@ -273,6 +285,7 @@ export class Editor {
   private _readOnly: boolean;
   private _editorSlot: number;
   private _isMd: number;
+  private _isIOS: number;
   private _needsInitialRender: number;
   nativeHandle: number | null;
 
@@ -281,6 +294,7 @@ export class Editor {
     this._readOnly = false;
     this._editorSlot = -1;
     this._isMd = 0;
+    this._isIOS = 0;
     this._needsInitialRender = 1;
     this._width = width;
     this._height = height;
@@ -357,6 +371,7 @@ export class Editor {
     const handle = hone_editor_create(width, height);
     coordinator.setHandle(handle);
     this.nativeHandle = handle;
+    _debugHandle = handle as number;
 
     coordinator.attach(vm);
 
@@ -373,6 +388,9 @@ export class Editor {
     hone_editor_set_gutter_width(handle, vm.gutterWidth);
 
     vm.onResize(width, height);
+
+    // Detect platform
+    this._isIOS = hone_editor_is_ios() > 0 ? 1 : 0;
 
     // Enable ts_mode: Rust only queues events, TypeScript handles all state.
     hone_editor_set_ts_mode(handle, 1);
@@ -436,6 +454,9 @@ export class Editor {
     }
     const vm = this._vm;
     vm.viewport.setTotalLines(lineCount);
+    // Reset scroll and cursor to top of new content
+    vm.viewport.scroll.scrollTo(0, 0);
+    vm.cursorManager.reset(0, 0);
     // Rebuild block comment depth cache for new content
     const engine = vm.syntaxEngine;
     engine.parse(buf);
@@ -518,6 +539,69 @@ export class Editor {
    * Skip the null guard and cast directly — the constructor always sets
    * nativeHandle to a valid value before this method is called.
    */
+
+  /**
+   * Push decoration overlays to the Rust renderer.
+   * JSON array of { x, y, w, h, color, type } objects.
+   * Must be called each frame — decorations are appended (cleared on next draw cycle).
+   */
+  pushDecorations(decorationsJson: string): void {
+    const handle = this.nativeHandle;
+    if (handle !== null) {
+      hone_editor_render_decorations(handle as number, decorationsJson as any);
+    }
+  }
+
+  /**
+   * Set line diagnostics for Error Lens rendering.
+   * packedData format: "line:severity:color:message\n..." (1-based lines)
+   * severity: 1=error, 2=warning, 3=info, 4=hint
+   */
+  setLineDiagnostics(packedData: string): void {
+    const handle = this.nativeHandle;
+    if (handle !== null) {
+      hone_editor_set_line_diagnostics(handle as number, packedData as any);
+    }
+  }
+
+  /** Clear all line diagnostics. */
+  clearDiagnostics(): void {
+    const handle = this.nativeHandle;
+    if (handle !== null) {
+      hone_editor_clear_diagnostics(handle as number);
+    }
+  }
+
+  /**
+   * Get the character width in pixels (for column→pixel conversion).
+   */
+  getCharWidth(): number {
+    return this._vm.getCharWidth();
+  }
+
+  /**
+   * Get the viewport start/end line numbers (0-based).
+   */
+  getViewportRange(): { startLine: number; endLine: number } {
+    return this._vm.viewport.getVisibleRange();
+  }
+
+  /**
+   * Get the cursor line number (0-based).
+   */
+  getCursorLine(): number {
+    const state = getPerryCursorState();
+    return state.line;
+  }
+
+  /**
+   * Get the cursor column (0-based).
+   */
+  getCursorColumn(): number {
+    const state = getPerryCursorState();
+    return state.col;
+  }
+
   createPerryWidget(): unknown {
     return embedNSView(hone_editor_nsview(this.nativeHandle as number));
   }
@@ -605,67 +689,57 @@ export class Editor {
     if (handle === null) return;
     const h = handle as number;
 
-    // Sync actual view dimensions from Rust (auto layout may have resized).
+    // Sync view dimensions
+    let sizeChanged = 0;
     const actualW = hone_editor_get_view_width(h);
     const actualH = hone_editor_get_view_height(h);
-    let sizeChanged = 0;
     if (actualW > 1 && actualH > 1) {
-      const vm = this._vm;
-      const curW = this._width;
-      const curH = this._height;
-      if (Math.abs(actualW - curW) > 1 || Math.abs(actualH - curH) > 1) {
+      if (Math.abs(actualW - this._width) > 1 || Math.abs(actualH - this._height) > 1) {
         this._width = actualW;
         this._height = actualH;
-        vm.onResize(actualW, actualH);
+        this._vm.onResize(actualW, actualH);
         sizeChanged = 1;
       }
     }
 
-    // Sync Rust scroll delta into TS viewport (Rust handles scroll directly —
-    // no scroll events are queued). This keeps TS viewport in sync for when it
-    // needs to provide lines or process content changes.
+    // Sync scroll delta
     const scrollDelta = hone_editor_get_scroll_delta(h);
     let scrollChanged = 0;
     if (scrollDelta !== 0) {
-      const vm = this._vm;
-      // Rust scroll delta is in pixels (positive = content down).
-      // TS scrollBy expects (dx, dy) where positive dy = scroll down = scrollTop increases.
-      vm.viewport.scroll.scrollBy(0, -scrollDelta);
+      this._vm.viewport.scroll.scrollBy(0, -scrollDelta);
       hone_editor_clear_scroll_delta(h);
       scrollChanged = 1;
     }
 
-    // Force a full render on first poll cycle so the editor displays with correct
-    // font metrics and dimensions (the initial _directRenderText uses hardcoded values).
+    // Initial render flag
     let needsRender = 0;
     if (this._needsInitialRender > 0) {
       this._needsInitialRender = 0;
       needsRender = 1;
     }
 
-    // Re-render when size changed (Auto Layout gave the view its real dimensions),
-    // when Rust needs lines (cache miss during scroll), or when scroll delta changed.
-    const rustNeedsLines = hone_editor_needs_lines(h);
-    if (rustNeedsLines > 0 || scrollChanged > 0 || sizeChanged > 0 || needsRender > 0) {
-      const coordinator = this._coordinator;
-      coordinator.render();
-    }
-
+    // Process input events
     const hadEvents = this._pollEvents();
-    // Perry: onChange closure (() => { this.render(); }) in coordinator.attach()
-    // silently fails — Perry closures capture `this` by value. Explicitly
-    // re-render here after processing events to bypass the broken closure.
-    if (hadEvents > 0) {
-      // Sync gutter width (may change as line count grows/shrinks).
-      const vm = this._vm;
-      hone_editor_set_gutter_width(h, vm.gutterWidth);
-      const coordinator = this._coordinator;
-      coordinator.render();
 
-      // Perry-safe: push selection rects directly via FFI.
-      // coordinator.render() may skip renderSelections due to caching or
-      // interface dispatch issues — send rects unconditionally here.
-      this._syncSelections(h, vm);
+    if (this._isIOS > 0) {
+      // iOS path
+      hone_editor_poll_touch(h);
+      if (hadEvents > 1 || needsRender > 0) {
+        hone_editor_set_gutter_width(h, this._vm.gutterWidth);
+        this._directRenderText(this._doc.buffer.getText());
+      }
+      this._syncCursor(h, this._vm);
+      this._syncSelections(h, this._vm);
+      hone_editor_invalidate(h);
+    } else {
+      // macOS path — coordinator.render() handles everything
+      const rustNeedsLines = hone_editor_needs_lines(h);
+      if (hadEvents > 0 || scrollChanged > 0 || sizeChanged > 0 || needsRender > 0 || rustNeedsLines > 0) {
+        hone_editor_set_gutter_width(h, this._vm.gutterWidth);
+        this._coordinator.render();
+      }
+      this._syncCursor(h, this._vm);
+      this._syncSelections(h, this._vm);
     }
   }
 
@@ -698,6 +772,7 @@ export class Editor {
 
     const vm = this._vm;
     const isReadOnly = this._readOnly;
+    let hadContentChange = 0;
 
     for (let i = 0; i < count; i++) {
       const evType = hone_editor_get_event_type(handle as number, i);
@@ -709,6 +784,7 @@ export class Editor {
         if (code > 0) {
           const ch = String.fromCharCode(code);
           vm.onTextInput(ch);
+          hadContentChange = 1;
         }
       } else if (evType === EVENT_ACTION) {
         const aid = hone_editor_get_event_action(handle as number, i);
@@ -725,6 +801,7 @@ export class Editor {
           if (aid === ACTION_DELETE_WORD_BACKWARD) continue;
         }
         this._dispatchAction(vm, aid);
+        hadContentChange = 1;
       } else if (evType === EVENT_SCROLL) {
         const dx = hone_editor_get_event_x(handle as number, i);
         const dy = hone_editor_get_event_y(handle as number, i);
@@ -767,7 +844,7 @@ export class Editor {
     }
 
     hone_editor_clear_events(handle as number);
-    return 1;
+    return hadContentChange > 0 ? 2 : 1;
   }
 
   /**
@@ -863,27 +940,39 @@ export class Editor {
    * - charCodeAt compared to numeric literal (not variable) — Perry-safe
    */
   /**
+   * Push cursor position directly via FFI, bypassing coordinator.
+   * The coordinator's renderCursors relies on vm.cursorRenderState getter
+   * which Perry AOT may not dispatch correctly.
+   */
+  private _syncCursor(h: number, vm: EditorViewModel): void {
+    const cs = getPerryCursorState();
+    const cw = vm.getCharWidth();
+    const gw = vm.gutterWidth;
+    const sz = 14;
+    const lh = sz + sz / 2;
+    const scrollTop = vm.viewport.scroll.scrollTop;
+    const x = cs.col * cw + gw;
+    const y = cs.line * lh - scrollTop;
+    hone_editor_set_cursor(h, x, y, 0);
+  }
+
+  /**
    * Push selection rects directly via FFI, bypassing coordinator.
    * Reads cursor0.selectionAnchor and cursor position from the cursor manager.
    */
   private _syncSelections(h: number, vm: EditorViewModel): void {
-    const cursors = vm.cursors;
-    if (cursors.length === 0) {
-      hone_editor_begin_selections(h, 0);
-      return;
-    }
-    const c = cursors[0];
-    const anchor = c.selectionAnchor;
-    if (anchor === null || anchor === undefined) {
+    // Use module-level cursor state (Perry-safe: vm.cursors getter fails in AOT).
+    const cs = getPerryCursorState();
+    if (cs.anchorLine < 0) {
       hone_editor_begin_selections(h, 0);
       return;
     }
 
     // Normalize: ensure start <= end
-    let startLine = anchor.line;
-    let startCol = anchor.column;
-    let endLine = c.line;
-    let endCol = c.column;
+    let startLine = cs.anchorLine;
+    let startCol = cs.anchorCol;
+    let endLine = cs.line;
+    let endCol = cs.col;
     if (startLine > endLine || (startLine === endLine && startCol > endCol)) {
       const tl = startLine;
       const tc = startCol;
@@ -925,6 +1014,7 @@ export class Editor {
     // fontSize 14, lineHeight 1.5 → lineHeightPx = 21 (same as coordinator default)
     const sz = 14;
     const lh = sz + sz / 2;
+    const scrollTop = this._vm.viewport.scroll.scrollTop;
 
     hone_editor_begin_frame(handle as number);
 
@@ -936,7 +1026,7 @@ export class Editor {
       const ch = i < text.length ? text.charCodeAt(i) : 10;
       if (ch === 10) {
         const lineContent = text.substring(lineStart, i);
-        const yOffset = lineNum * lh;
+        const yOffset = lineNum * lh - scrollTop;
         // Empty tokens "[]": Rust tokenizer retokenizes on each edit in AOT mode.
         hone_editor_render_line(handle as number, lineNum + 1, lineContent as any, '[]' as any, yOffset);
         lineNum++;
