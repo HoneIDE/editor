@@ -187,6 +187,18 @@ fn ensure_class_registered() {
                 objc::sel!(autocapitalizationType),
                 autocapitalization_type as extern "C" fn(&Object, Sel) -> i64,
             );
+            decl.add_method(
+                objc::sel!(smartQuotesType),
+                smart_quotes_type as extern "C" fn(&Object, Sel) -> i64,
+            );
+            decl.add_method(
+                objc::sel!(smartDashesType),
+                smart_dashes_type as extern "C" fn(&Object, Sel) -> i64,
+            );
+            decl.add_method(
+                objc::sel!(smartInsertDeleteType),
+                smart_insert_delete_type as extern "C" fn(&Object, Sel) -> i64,
+            );
 
             // -- Tell UIKit this responder needs the keyboard --
             decl.add_method(
@@ -485,8 +497,10 @@ extern "C" fn insert_text(this: &Object, _sel: Sel, string: Id) {
         let text = raw_text
             .replace('\u{201C}', "\"") // left double quote → "
             .replace('\u{201D}', "\"") // right double quote → "
+            .replace('\u{201E}', "\"") // double low-9 quote (German „) → "
             .replace('\u{2018}', "'")  // left single quote → '
             .replace('\u{2019}', "'")  // right single quote → '
+            .replace('\u{201A}', "'")  // single low-9 quote (German ‚) → '
             .replace('\u{2013}', "-")  // en dash → -
             .replace('\u{2014}', "-"); // em dash → -
 
@@ -525,6 +539,21 @@ extern "C" fn autocorrection_type(_this: &Object, _sel: Sel) -> i64 {
 /// UITextAutocapitalizationTypeNone = 0
 extern "C" fn autocapitalization_type(_this: &Object, _sel: Sel) -> i64 {
     0
+}
+
+/// UITextSmartQuotesTypeNo = 1 — disable smart quotes for code editing
+extern "C" fn smart_quotes_type(_this: &Object, _sel: Sel) -> i64 {
+    1
+}
+
+/// UITextSmartDashesTypeNo = 1 — disable smart dashes for code editing
+extern "C" fn smart_dashes_type(_this: &Object, _sel: Sel) -> i64 {
+    1
+}
+
+/// UITextSmartInsertDeleteTypeNo = 1
+extern "C" fn smart_insert_delete_type(_this: &Object, _sel: Sel) -> i64 {
+    1
 }
 
 // -- Keyboard activation -----------------------------------------------------
