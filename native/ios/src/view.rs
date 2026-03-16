@@ -479,13 +479,22 @@ extern "C" fn insert_text(this: &Object, _sel: Sel, string: Id) {
         if utf8.is_null() {
             return;
         }
-        let text = CStr::from_ptr(utf8).to_str().unwrap_or("");
+        let raw_text = CStr::from_ptr(utf8).to_str().unwrap_or("");
+
+        // Replace iOS smart quotes with ASCII equivalents for code editing
+        let text = raw_text
+            .replace('\u{201C}', "\"") // left double quote → "
+            .replace('\u{201D}', "\"") // right double quote → "
+            .replace('\u{2018}', "'")  // left single quote → '
+            .replace('\u{2019}', "'")  // right single quote → '
+            .replace('\u{2013}', "-")  // en dash → -
+            .replace('\u{2014}', "-"); // em dash → -
 
         // Newline characters route through action callback
         if text == "\n" || text == "\r" {
             editor_view.on_action("insertNewline:");
         } else if !text.is_empty() {
-            editor_view.on_text_input(text);
+            editor_view.on_text_input(&text);
         }
     }
 }
