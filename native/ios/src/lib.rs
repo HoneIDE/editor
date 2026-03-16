@@ -32,6 +32,13 @@ pub extern "C" fn hone_editor_is_ios() -> f64 {
     1.0
 }
 
+/// Stub: diagnostics not yet implemented on iOS.
+#[no_mangle]
+pub extern "C" fn hone_editor_set_line_diagnostics(_view: *mut EditorView, _data: f64) {}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_diagnostics(_view: *mut EditorView) {}
+
 /// Poll active touch — returns scroll delta Y since last poll.
 /// touchesMoved never fires in Perry's UIView embedding, so TypeScript
 /// polls the saved UITouch's current position via setInterval.

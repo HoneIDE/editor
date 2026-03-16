@@ -599,9 +599,39 @@ fn ensure_overlay_class_registered() {
                 objc::sel!(overlayPanned:),
                 overlay_panned as extern "C" fn(&Object, Sel, Id),
             );
+            decl.add_method(
+                objc::sel!(pointInside:withEvent:),
+                overlay_point_inside as extern "C" fn(&Object, Sel, ObjCPoint, Id) -> BOOL,
+            );
         }
         decl.register();
     });
+}
+
+/// Only claim touches that are within the editor view's visible area.
+/// This lets Perry toolbar/status bar buttons receive their touches.
+extern "C" fn overlay_point_inside(_this: &Object, _sel: Sel, point: ObjCPoint, _event: Id) -> BOOL {
+    unsafe {
+        let uiview_ptr = GLOBAL_EDITOR_UIVIEW.load(std::sync::atomic::Ordering::Relaxed);
+        if uiview_ptr == 0 { return false; }
+        let uiview = uiview_ptr as Id;
+        // Convert point from overlay (window) coords to editor view coords
+        let editor_frame: ObjCRect = msg_send![uiview, frame];
+        // The overlay covers the whole window. Only claim if point is inside editor frame.
+        // Convert from window to superview coords (editor's frame is in its superview's coords)
+        let sv: Id = msg_send![uiview, superview];
+        if sv == NIL { return false; }
+        let sv_frame: ObjCRect = msg_send![sv, frame];
+        // Editor's absolute position in window = superview.origin + editor.origin
+        let editor_y = sv_frame.origin.y + editor_frame.origin.y;
+        let editor_x = sv_frame.origin.x + editor_frame.origin.x;
+        if point.x >= editor_x && point.x <= editor_x + editor_frame.size.width
+            && point.y >= editor_y && point.y <= editor_y + editor_frame.size.height {
+            YES
+        } else {
+            false
+        }
+    }
 }
 
 extern "C" fn overlay_panned(_this: &Object, _sel: Sel, gesture: Id) {
