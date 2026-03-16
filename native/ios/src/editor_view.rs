@@ -238,6 +238,11 @@ pub struct EditorView {
 
     // Theme colors
     pub debug_touch_count: i32,
+    pub debug_scroll_count: i32,
+    pub debug_cancel_count: i32,
+    pub debug_end_count: i32,
+    pub active_touch: usize,  // retained UITouch pointer for scroll polling
+    pub prev_touch_y: f64,
     background_color: (f64, f64, f64),
     gutter_bg_color: (f64, f64, f64),
     gutter_fg_color: (f64, f64, f64),
@@ -252,6 +257,11 @@ impl EditorView {
 
         EditorView {
             debug_touch_count: 0,
+            debug_scroll_count: 0,
+            debug_cancel_count: 0,
+            debug_end_count: 0,
+            active_touch: 0,
+            prev_touch_y: 0.0,
             renderer,
             uiview: NIL,
             parent_view: null_mut(),
@@ -733,8 +743,9 @@ impl EditorView {
     pub fn on_mouse_down(&mut self, x: f64, y: f64) {
         // Track touch count for debug display
         static mut TOUCH_COUNT: i32 = 0;
-        unsafe { TOUCH_COUNT += 1; }
+        unsafe { TOUCH_COUNT += 77; } // +77 proves we have the latest binary
         self.debug_touch_count = unsafe { TOUCH_COUNT };
+        self.debug_end_count = self.active_touch as i32;
         if let Some(cb) = self.mouse_down_callback {
             let self_ptr = self as *mut EditorView;
             cb(self_ptr, x, y);
@@ -845,6 +856,7 @@ impl EditorView {
     /// Called from UIView two-finger pan (scroll).
     /// dy convention: negative = finger moved up = content scrolls up.
     pub fn on_scroll(&mut self, dx: f64, dy: f64) {
+        self.debug_scroll_count = self.debug_scroll_count + 1;
         if let Some(cb) = self.scroll_callback {
             let self_ptr = self as *mut EditorView;
             cb(self_ptr, dx, dy);
@@ -858,12 +870,13 @@ impl EditorView {
             x: dx,
             y: dy,
         });
-        // In ts_mode, also handle scroll directly in Rust for visual responsiveness.
-        // TypeScript will sync its viewport state from the queued event, so the next
-        // full re-render (after text edits) uses the correct scrollTop.
+        // Handle scroll directly in Rust for visual responsiveness.
         if self.frame_lines.is_empty() {
             return;
         }
+
+        // Sync actual view dimensions from UIView frame (Auto Layout may have resized).
+        self.sync_view_size();
 
         let ts_line_h = self.ts_line_height();
         let n = self.frame_lines.len() as f64;
@@ -920,6 +933,17 @@ impl EditorView {
 
     pub fn get_width(&self) -> f64 { self.width }
     pub fn get_height(&self) -> f64 { self.height }
+
+    /// Update self.width/height from the actual UIView frame (Auto Layout may resize).
+    pub fn sync_view_size(&mut self) {
+        if self.uiview != NIL {
+            unsafe {
+                let frame: view::ObjCRect = msg_send![self.uiview, frame];
+                if frame.size.width > 1.0 { self.width = frame.size.width; }
+                if frame.size.height > 1.0 { self.height = frame.size.height; }
+            }
+        }
+    }
 
     pub fn measure_text(&self, text: &str) -> f64 {
         self.renderer.measure_text(text)
@@ -1409,13 +1433,15 @@ impl EditorView {
                 "CUR(none) ".to_string()
             };
             let debug_text = format!(
-                "{}F={} ev={} tap={}",
+                "{}F={} t={} m={} e={} c={}",
                 cursor_info,
                 frame,
-                self.pending_events.len(),
                 self.debug_touch_count,
+                self.debug_scroll_count,
+                self.debug_end_count,
+                self.debug_cancel_count,
             );
-            let debug_y = bounds.size.height - 20.0;
+            let debug_y = 0.0;
             // Black background for debug bar
             ctx.set_rgb_fill_color(0.0, 0.0, 0.0, 0.8);
             ctx.fill_rect(CGRect::new(

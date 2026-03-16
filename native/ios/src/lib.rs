@@ -32,6 +32,48 @@ pub extern "C" fn hone_editor_is_ios() -> f64 {
     1.0
 }
 
+/// Poll active touch — returns scroll delta Y since last poll.
+/// touchesMoved never fires in Perry's UIView embedding, so TypeScript
+/// polls the saved UITouch's current position via setInterval.
+#[no_mangle]
+pub extern "C" fn hone_editor_poll_touch(ev_ptr: *mut EditorView) -> f64 {
+    if ev_ptr.is_null() { return 0.0; }
+    let ev = unsafe { &mut *ev_ptr };
+
+    // Store our ptr low bits for comparison
+    ev.debug_cancel_count = (ev_ptr as usize & 0xFFFF) as i32;
+    if ev.active_touch == 0 {
+        ev.debug_scroll_count = -1;
+        return 0.0;
+    }
+
+    unsafe {
+        let touch = ev.active_touch as *mut objc::runtime::Object;
+        let phase: i64 = msg_send![touch, phase];
+        ev.debug_scroll_count = (phase as i32) * 1000;
+
+        if phase >= 3 {
+            ev.active_touch = 0;
+            ev.prev_touch_y = 0.0;
+            return 0.0;
+        }
+
+        let nil_view: *mut objc::runtime::Object = std::ptr::null_mut();
+        let point: view::ObjCPoint = msg_send![touch, locationInView: nil_view];
+        let cur_y = point.y;
+        let prev_y = ev.prev_touch_y;
+        ev.prev_touch_y = cur_y;
+
+        if prev_y == 0.0 { return 0.0; }
+        let delta = cur_y - prev_y;
+
+        if delta.abs() > 0.5 {
+            ev.on_scroll(0.0, delta);
+        }
+        delta
+    }
+}
+
 /// Create a new editor view with the given dimensions.
 #[no_mangle]
 pub extern "C" fn hone_editor_create(width: f64, height: f64) -> *mut EditorView {

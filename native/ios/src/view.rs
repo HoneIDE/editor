@@ -37,9 +37,9 @@ const PREV_TOUCH_Y_IVAR: &str = "honePrevTouchY";
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
-struct ObjCPoint {
-    x: f64,
-    y: f64,
+pub struct ObjCPoint {
+    pub x: f64,
+    pub y: f64,
 }
 
 unsafe impl Encode for ObjCPoint {
@@ -50,9 +50,9 @@ unsafe impl Encode for ObjCPoint {
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
-struct ObjCSize {
-    width: f64,
-    height: f64,
+pub struct ObjCSize {
+    pub width: f64,
+    pub height: f64,
 }
 
 unsafe impl Encode for ObjCSize {
@@ -63,9 +63,9 @@ unsafe impl Encode for ObjCSize {
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
-struct ObjCRect {
-    origin: ObjCPoint,
-    size: ObjCSize,
+pub struct ObjCRect {
+    pub origin: ObjCPoint,
+    pub size: ObjCSize,
 }
 
 unsafe impl Encode for ObjCRect {
@@ -205,15 +205,9 @@ fn ensure_class_registered() {
 
 // Return intrinsic content size as two f64 values packed in ObjCPoint
 // (CGSize and ObjCPoint have the same layout: two f64s).
-extern "C" fn intrinsic_content_size(this: &Object, _sel: Sel) -> ObjCPoint {
-    unsafe {
-        let state_ptr: *mut c_void = *this.get_ivar(EDITOR_STATE_IVAR);
-        if state_ptr.is_null() {
-            return ObjCPoint { x: 300.0, y: 400.0 };
-        }
-        let editor_view = &*(state_ptr as *const EditorView);
-        ObjCPoint { x: editor_view.get_width(), y: editor_view.get_height() }
-    }
+extern "C" fn intrinsic_content_size(_this: &Object, _sel: Sel) -> ObjCPoint {
+    // Return UIViewNoIntrinsicMetric (-1, -1) so UIStackView fills remaining space.
+    ObjCPoint { x: -1.0, y: -1.0 }
 }
 
 extern "C" fn draw_rect(this: &Object, _sel: Sel, dirty_rect: ObjCRect) {
@@ -477,12 +471,22 @@ extern "C" fn did_move_to_window(this: &Object, _sel: Sel) {
                 let clear: Id = msg_send![class!(UIColor), clearColor];
                 let _: () = msg_send![overlay, setBackgroundColor: clear];
                 let _: () = msg_send![overlay, setUserInteractionEnabled: YES];
-                // Tap gesture on the overlay
+                // Pan gesture for scrolling
+                let pan_cls = Class::get("UIPanGestureRecognizer").unwrap();
+                let pan: Id = msg_send![pan_cls, alloc];
+                let pan_action = objc::sel!(overlayPanned:);
+                let pan: Id = msg_send![pan, initWithTarget: overlay action: pan_action];
+                let _: () = msg_send![overlay, addGestureRecognizer: pan];
+
+                // Tap gesture for cursor positioning
                 let tap_cls = Class::get("UITapGestureRecognizer").unwrap();
                 let tap: Id = msg_send![tap_cls, alloc];
                 let action = objc::sel!(overlayTapped:);
                 let tap: Id = msg_send![tap, initWithTarget: overlay action: action];
+                // Tap waits for pan to fail (so drag doesn't trigger tap)
+                let _: () = msg_send![tap, requireGestureRecognizerToFail: pan];
                 let _: () = msg_send![overlay, addGestureRecognizer: tap];
+
                 let _: () = msg_send![window_id, addSubview: overlay];
             }
         }
@@ -538,6 +542,11 @@ pub fn create_editor_uiview(width: f64, height: f64, state: *mut EditorView) -> 
         // Set opaque for performance
         let _: () = msg_send![view, setOpaque: YES];
 
+        // Low content hugging/compression resistance so UIStackView fills this view.
+        let _: () = msg_send![view, setContentHuggingPriority: 1.0f64 forAxis: 0i64];
+        let _: () = msg_send![view, setContentHuggingPriority: 1.0f64 forAxis: 1i64];
+        let _: () = msg_send![view, setContentCompressionResistancePriority: 1.0f64 forAxis: 1i64];
+
         // Add a UITapGestureRecognizer to reliably receive taps inside a UIScrollView.
         let tap_cls = Class::get("UITapGestureRecognizer").unwrap();
         let tap: Id = msg_send![tap_cls, alloc];
@@ -586,9 +595,33 @@ fn ensure_overlay_class_registered() {
                 objc::sel!(overlayTapped:),
                 overlay_tapped as extern "C" fn(&Object, Sel, Id),
             );
+            decl.add_method(
+                objc::sel!(overlayPanned:),
+                overlay_panned as extern "C" fn(&Object, Sel, Id),
+            );
         }
         decl.register();
     });
+}
+
+extern "C" fn overlay_panned(_this: &Object, _sel: Sel, gesture: Id) {
+    unsafe {
+        let ev_ptr = GLOBAL_EDITOR_VIEW.load(std::sync::atomic::Ordering::Relaxed);
+        let uiview_ptr = GLOBAL_EDITOR_UIVIEW.load(std::sync::atomic::Ordering::Relaxed);
+        if ev_ptr == 0 || uiview_ptr == 0 { return; }
+        let editor_view = &mut *(ev_ptr as *mut EditorView);
+        let uiview = uiview_ptr as Id;
+
+        // Use translationInView for delta, reset after each call
+        let translation: ObjCPoint = msg_send![gesture, translationInView: uiview];
+        let zero = ObjCPoint { x: 0.0, y: 0.0 };
+        let _: () = msg_send![gesture, setTranslation: zero inView: uiview];
+
+        if translation.y.abs() > 0.5 {
+            editor_view.on_scroll(0.0, translation.y);
+        }
+        mark_dirty(uiview);
+    }
 }
 
 // Swizzle UIWindow.sendEvent: to intercept ALL touches at the lowest level.

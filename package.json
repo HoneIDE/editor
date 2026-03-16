@@ -62,6 +62,7 @@
         { "name": "hone_editor_clear_events", "params": ["i64"], "returns": "void" },
         { "name": "hone_editor_set_ts_mode", "params": ["i64", "f64"], "returns": "void" },
         { "name": "hone_editor_is_ios", "params": [], "returns": "f64" },
+        { "name": "hone_editor_poll_touch", "params": ["i64"], "returns": "f64" },
         { "name": "hone_editor_set_gutter_width", "params": ["i64", "f64"], "returns": "void" },
         { "name": "hone_editor_set_read_only", "params": ["i64", "f64"], "returns": "void" },
         { "name": "hone_editor_set_line_background", "params": ["i64", "f64", "f64", "f64", "f64", "f64"], "returns": "void" },
