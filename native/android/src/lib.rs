@@ -8,7 +8,9 @@ use jni::objects::{JObject, JValue};
 
 mod editor_view;
 mod input_handler;
+#[cfg(feature = "demo")]
 mod demo_jni;
+pub mod tokenizer;
 
 pub use editor_view::EditorView;
 
@@ -894,3 +896,25 @@ pub extern "C" fn hone_editor_set_cursor_color(view: *mut EditorView, r: f64, g:
     let view = unsafe { &mut *view };
     view.set_cursor_color(r, g, b);
 }
+
+// === Platform detection + stubs ===
+
+#[no_mangle]
+pub extern "C" fn hone_editor_is_ios() -> f64 {
+    0.0 // Not iOS
+}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_poll_touch(_view: *mut EditorView) -> f64 {
+    0.0 // No-op on Android (touch handled by JNI)
+}
+
+// Stubs for features not yet implemented on Android
+#[no_mangle]
+pub extern "C" fn hone_editor_set_line_diagnostics(_view: *mut EditorView, _data: f64) {}
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_diagnostics(_view: *mut EditorView) {}
+#[no_mangle]
+pub extern "C" fn hone_editor_set_breakpoints(_view: *mut EditorView, _data: f64) {}
+#[no_mangle]
+pub extern "C" fn hone_editor_set_fold_ranges(_view: *mut EditorView, _data: f64) {}

@@ -421,7 +421,16 @@ impl EditorView {
             self.max_line_number = line_number;
         }
         // Parse JSON tokens into ParsedTokens
-        let parsed: Vec<RenderToken> = serde_json::from_str(tokens_json).unwrap_or_default();
+        let mut parsed: Vec<RenderToken> = serde_json::from_str(tokens_json).unwrap_or_default();
+        // Auto-tokenize if TypeScript sent empty tokens (initial _directRenderText)
+        if parsed.is_empty() && !text.is_empty() {
+            let auto_tokens = crate::tokenizer::tokenize_line(text);
+            for i in 0..auto_tokens.len() {
+                let t = &auto_tokens[i];
+                let rt = RenderToken { s: t.start, e: t.end, c: t.color.clone(), st: t.style.clone() };
+                parsed.push(rt);
+            }
+        }
         let tokens: Vec<ParsedToken> = parsed.iter().map(|t| ParsedToken {
             start: t.s,
             end: t.e,
