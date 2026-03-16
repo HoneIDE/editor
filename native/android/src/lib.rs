@@ -555,11 +555,10 @@ pub extern "C" fn hone_editor_clear_context_menu_items(view: *mut EditorView) {
 }
 
 #[no_mangle]
-pub extern "C" fn hone_editor_nsview(view: *mut EditorView) -> i64 {
+pub extern "C" fn hone_editor_nsview(view: *mut EditorView) -> *mut std::ffi::c_void {
     let view = unsafe { &*view };
-    let ptr = view.parent_view as i64;
-    android_log(&format!("hone_editor_nsview: parent_view={} has_ref={}", ptr, view.android_view_ref.is_some()));
-    ptr
+    android_log(&format!("hone_editor_nsview: parent_view={:?} has_ref={}", view.parent_view, view.android_view_ref.is_some()));
+    view.parent_view
 }
 
 // === TS-mode cache protocol (IMPLEMENTED) ===
