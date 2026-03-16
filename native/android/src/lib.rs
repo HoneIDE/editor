@@ -97,6 +97,15 @@ fn set_editor_native_handle(view_ref: &jni::objects::GlobalRef, handle: i64) {
     let _ = env.set_field(view_ref.as_obj(), "nativeHandle", "J", JValue::Long(handle));
 }
 
+/// Trigger a redraw on the HoneEditorView via postInvalidate (thread-safe).
+fn post_invalidate_view(android_ref: &jni::objects::GlobalRef) {
+    if let Some(vm) = JAVA_VM.get() {
+        if let Ok(mut env) = vm.attach_current_thread() {
+            let _ = env.call_method(android_ref.as_obj(), "postInvalidate", "()V", &[]);
+        }
+    }
+}
+
 /// Trigger a redraw on the HoneEditorView (thread-safe).
 fn post_invalidate(view_ref: &jni::objects::GlobalRef) {
     let vm = match JAVA_VM.get() {
@@ -427,6 +436,12 @@ pub extern "C" fn hone_editor_measure_text(view: *mut EditorView, text: *const u
 pub extern "C" fn hone_editor_invalidate(view: *mut EditorView) {
     let view = unsafe { &mut *view };
     view.invalidate();
+    // Call postInvalidate on the Android View to trigger onDraw
+    if let Some(ref android_ref) = view.android_view_ref {
+        post_invalidate_view(android_ref);
+    } else {
+        android_log("hone_editor_invalidate: android_view_ref is None!");
+    }
 }
 
 #[no_mangle]
@@ -901,7 +916,9 @@ pub extern "C" fn hone_editor_set_cursor_color(view: *mut EditorView, r: f64, g:
 
 #[no_mangle]
 pub extern "C" fn hone_editor_is_ios() -> f64 {
-    0.0 // Not iOS
+    // Return 1.0 to use _directRenderText path (coordinator.render doesn't work
+    // on mobile platforms — only macOS supports the coordinator path).
+    1.0
 }
 
 #[no_mangle]
