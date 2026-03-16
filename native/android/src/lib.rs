@@ -75,6 +75,17 @@ fn create_editor_android_view(_width: f64, _height: f64) -> Option<(jni::objects
         let bg_color: i32 = 0xFF1E1E1E_u32 as i32;
         let _ = env.call_method(&editor_view, "setBackgroundColor", "(I)V", &[JValue::Int(bg_color)]);
 
+        // Set layout params: width=MATCH_PARENT, height=0, weight=1.0
+        // This fills remaining vertical space in Perry's LinearLayout (VStack).
+        let lp = env.new_object(
+            "android/widget/LinearLayout$LayoutParams",
+            "(IIF)V",
+            &[JValue::Int(-1), JValue::Int(0), JValue::Float(1.0)], // MATCH_PARENT, 0, weight=1
+        ).ok()?;
+        let _ = env.call_method(&editor_view, "setLayoutParams",
+            "(Landroid/view/ViewGroup$LayoutParams;)V",
+            &[JValue::Object(&lp)]);
+
         let global = env.new_global_ref(&editor_view).ok()?;
         let raw = global.as_obj().as_raw() as *mut std::ffi::c_void;
         Some((global, raw))
@@ -129,6 +140,13 @@ pub extern "C" fn Java_com_perry_app_HoneEditorView_nativeDrawEditor(
     handle: jni::sys::jlong,
     canvas: JObject,
 ) {
+    static mut DRAW_COUNT: i32 = 0;
+    unsafe {
+        DRAW_COUNT += 1;
+        if DRAW_COUNT <= 3 || DRAW_COUNT % 100 == 0 {
+            android_log(&format!("nativeDrawEditor #{} handle={}", DRAW_COUNT, handle));
+        }
+    }
     if handle == 0 { return; }
     let view = unsafe { &*(handle as *const EditorView) };
     draw_editor(&mut env, &canvas, view);
@@ -143,6 +161,7 @@ pub extern "C" fn Java_com_perry_app_HoneEditorView_nativeOnSizeChanged(
     width_px: jni::sys::jfloat,
     height_px: jni::sys::jfloat,
 ) {
+    android_log(&format!("onSizeChanged: {}x{}", width_px, height_px));
     if handle == 0 { return; }
     let view = unsafe { &mut *(handle as *mut EditorView) };
     let density = get_density_cached();
@@ -359,11 +378,15 @@ fn draw_editor(env: &mut jni::JNIEnv, canvas: &JObject, view: &EditorView) {
 
 #[no_mangle]
 pub extern "C" fn hone_editor_create(width: f64, height: f64) -> *mut EditorView {
+    android_log(&format!("hone_editor_create({}, {})", width, height));
     let mut view = EditorView::new(width, height);
 
     if let Some((global_ref, raw_ptr)) = create_editor_android_view(width, height) {
         view.parent_view = raw_ptr;
         view.android_view_ref = Some(global_ref);
+        android_log("hone_editor_create: android view created");
+    } else {
+        android_log("hone_editor_create: android view FAILED");
     }
 
     let ptr = Box::into_raw(Box::new(view));
@@ -398,6 +421,11 @@ pub extern "C" fn hone_editor_set_font(view: *mut EditorView, family: *const u8,
 
 #[no_mangle]
 pub extern "C" fn hone_editor_render_line(view: *mut EditorView, line_number: f64, text: *const u8, tokens_json: *const u8, y_offset: f64) {
+    static mut LOGGED: bool = false;
+    if unsafe { !LOGGED } {
+        android_log(&format!("render_line first call: line={}", line_number));
+        unsafe { LOGGED = true; }
+    }
     let view = unsafe { &mut *view };
     let text_str = str_from_header(text);
     let tokens_str = str_from_header(tokens_json);
@@ -434,13 +462,14 @@ pub extern "C" fn hone_editor_measure_text(view: *mut EditorView, text: *const u
 
 #[no_mangle]
 pub extern "C" fn hone_editor_invalidate(view: *mut EditorView) {
+    static mut INV_COUNT: i32 = 0;
+    unsafe { INV_COUNT += 1; if INV_COUNT <= 3 || INV_COUNT % 500 == 0 {
+        android_log(&format!("invalidate #{}", INV_COUNT));
+    }}
     let view = unsafe { &mut *view };
     view.invalidate();
-    // Call postInvalidate on the Android View to trigger onDraw
     if let Some(ref android_ref) = view.android_view_ref {
         post_invalidate_view(android_ref);
-    } else {
-        android_log("hone_editor_invalidate: android_view_ref is None!");
     }
 }
 
@@ -528,7 +557,9 @@ pub extern "C" fn hone_editor_clear_context_menu_items(view: *mut EditorView) {
 #[no_mangle]
 pub extern "C" fn hone_editor_nsview(view: *mut EditorView) -> i64 {
     let view = unsafe { &*view };
-    view.parent_view as i64
+    let ptr = view.parent_view as i64;
+    android_log(&format!("hone_editor_nsview: parent_view={} has_ref={}", ptr, view.android_view_ref.is_some()));
+    ptr
 }
 
 // === TS-mode cache protocol (IMPLEMENTED) ===
@@ -626,6 +657,13 @@ pub extern "C" fn hone_editor_set_event_callback(view: *mut EditorView, callback
 
 #[no_mangle]
 pub extern "C" fn hone_editor_pending_event_count(view: *mut EditorView) -> f64 {
+    static mut LOG_COUNT: i32 = 0;
+    unsafe {
+        LOG_COUNT += 1;
+        if LOG_COUNT == 1 || LOG_COUNT % 500 == 0 {
+            android_log(&format!("pending_event_count called #{}", LOG_COUNT));
+        }
+    }
     let view = unsafe { &*view };
     view.pending_events.len() as f64
 }

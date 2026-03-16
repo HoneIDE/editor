@@ -894,8 +894,6 @@ export class EditorViewModel {
   }
 
   private notifyChange(): void {
-    // Always sync cursor to module-level vars before notifying.
-    this._syncPerryCursor();
     // Perry-safe: plain null check on a single field.
     if (this._listener !== null && this._listener !== undefined) {
       this._listener();

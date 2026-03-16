@@ -137,6 +137,7 @@ let _editor2: Editor | null = null;
 let _editorCount: number = 0;
 let _pollStarted: number = 0;
 let _currentBufferText: string = '';
+let _isMobilePlatform: number = 0;
 let _debugCounter: number = 0;
 let _debugHandle: number = 0;
 
@@ -393,7 +394,10 @@ export class Editor {
     vm.onResize(width, height);
 
     // Detect platform
-    this._isIOS = hone_editor_is_ios() > 0 ? 1 : 0;
+    // Set module-level platform flag (class field reads return stale values in Perry)
+    const iosCheck = hone_editor_is_ios();
+    if (iosCheck > 0) { _isMobilePlatform = 1; }
+    this._isIOS = _isMobilePlatform;
 
     // Enable ts_mode: Rust only queues events, TypeScript handles all state.
     hone_editor_set_ts_mode(handle, 1);
@@ -706,9 +710,9 @@ export class Editor {
    * Public so the module-level top-level function can reach it without a closure.
    */
   flushEvents(): void {
-    const handle = this.nativeHandle;
-    if (handle === null) return;
-    const h = handle as number;
+    // Perry AOT inverts === null checks on union-typed fields.
+    // Skip null guard — constructor always sets nativeHandle before this runs.
+    const h = this.nativeHandle as number;
 
     // Sync view dimensions
     let sizeChanged = 0;
@@ -742,15 +746,11 @@ export class Editor {
     // Process input events
     const hadEvents = this._pollEvents();
 
-    if (this._isIOS > 0) {
-      // iOS path
+    if (_isMobilePlatform > 0) {
+      // Mobile path (iOS/Android): direct render + invalidate
       hone_editor_poll_touch(h);
-      // Always re-render on iOS using module-level text (Perry class field chains are stale)
-      hone_editor_set_gutter_width(h, this._vm.gutterWidth);
+      hone_editor_set_gutter_width(h, 52);
       this._directRenderText(_currentBufferText);
-      this._syncCursor(h, this._vm);
-      this._syncSelections(h, this._vm);
-      hone_editor_invalidate(h);
     } else {
       // macOS path — coordinator.render() handles everything
       const rustNeedsLines = hone_editor_needs_lines(h);
@@ -758,9 +758,11 @@ export class Editor {
         hone_editor_set_gutter_width(h, this._vm.gutterWidth);
         this._coordinator.render();
       }
-      this._syncCursor(h, this._vm);
-      this._syncSelections(h, this._vm);
     }
+    // Always sync cursor/selection and invalidate on all platforms
+    const cs = getPerryCursorState();
+    hone_editor_set_cursor(h, cs.col * 8.5 + 52, cs.line * 21, 0);
+    hone_editor_invalidate(h);
   }
 
   /** Set the font. */
@@ -782,12 +784,10 @@ export class Editor {
    */
   private _pollEvents(): number {
     if (this._disposed) return 0;
-    const handle = this.nativeHandle;
-    if (handle === null) {
-      return 0;
-    }
+    // Perry AOT inverts === null checks on union-typed fields. Skip guard.
+    const handle = this.nativeHandle as number;
 
-    const count = hone_editor_pending_event_count(handle as number);
+    const count = hone_editor_pending_event_count(handle);
     if (count <= 0) return 0;
 
     const vm = this._vm;
