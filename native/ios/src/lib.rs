@@ -32,12 +32,15 @@ pub extern "C" fn hone_editor_is_ios() -> f64 {
     1.0
 }
 
-/// Stub: diagnostics not yet implemented on iOS.
+/// Stubs: features not yet implemented on iOS.
 #[no_mangle]
 pub extern "C" fn hone_editor_set_line_diagnostics(_view: *mut EditorView, _data: f64) {}
-
 #[no_mangle]
 pub extern "C" fn hone_editor_clear_diagnostics(_view: *mut EditorView) {}
+#[no_mangle]
+pub extern "C" fn hone_editor_set_breakpoints(_view: *mut EditorView, _data: f64) {}
+#[no_mangle]
+pub extern "C" fn hone_editor_set_fold_ranges(_view: *mut EditorView, _data: f64) {}
 
 /// Poll active touch — returns scroll delta Y since last poll.
 /// touchesMoved never fires in Perry's UIView embedding, so TypeScript
@@ -46,6 +49,16 @@ pub extern "C" fn hone_editor_clear_diagnostics(_view: *mut EditorView) {}
 pub extern "C" fn hone_editor_poll_touch(ev_ptr: *mut EditorView) -> f64 {
     if ev_ptr.is_null() { return 0.0; }
     let ev = unsafe { &mut *ev_ptr };
+
+    // Key repeat: if a key is held, fire it again after initial delay (50 cycles = 400ms)
+    // then every 4 cycles (32ms) for continuous repeat.
+    if ev.held_key_code >= 0 {
+        ev.key_repeat_counter += 1;
+        let should_repeat = ev.key_repeat_counter > 50 && (ev.key_repeat_counter % 4 == 0);
+        if should_repeat {
+            view::dispatch_key_action(ev, ev.held_key_code, ev.held_key_shift);
+        }
+    }
 
     // Store our ptr low bits for comparison
     ev.debug_cancel_count = (ev_ptr as usize & 0xFFFF) as i32;

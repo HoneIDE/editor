@@ -150,6 +150,16 @@ fn ensure_class_registered() {
                 do_command_by_selector as extern "C" fn(&Object, Sel, Sel),
             );
 
+            // -- Physical key handling (iPadOS external keyboard) --
+            decl.add_method(
+                objc::sel!(pressesBegan:withEvent:),
+                presses_began as extern "C" fn(&Object, Sel, Id, Id),
+            );
+            decl.add_method(
+                objc::sel!(pressesEnded:withEvent:),
+                presses_ended as extern "C" fn(&Object, Sel, Id, Id),
+            );
+
             // -- UIKeyInput protocol --
             decl.add_method(
                 objc::sel!(hasText),
@@ -360,6 +370,73 @@ extern "C" fn do_command_by_selector(this: &Object, _sel: Sel, action: Sel) {
         let editor_view = &mut *(state_ptr as *mut EditorView);
         let sel_name = action.name();
         editor_view.on_action(sel_name);
+    }
+}
+
+// -- keyCommands for iPadOS external keyboard --------------------------------
+
+/// Handle physical key presses (iPadOS external keyboard).
+/// Arrow keys and Tab don't go through UIKeyInput — must intercept here.
+/// Always call super so Enter and text keys still reach insertText:.
+extern "C" fn presses_began(this: &Object, _sel: Sel, presses: Id, event: Id) {
+    unsafe {
+        let state_ptr: *mut c_void = *this.get_ivar(EDITOR_STATE_IVAR);
+        if !state_ptr.is_null() {
+            let editor_view = &mut *(state_ptr as *mut EditorView);
+            let enumerator: Id = msg_send![presses, objectEnumerator];
+            loop {
+                let press: Id = msg_send![enumerator, nextObject];
+                if press == NIL { break; }
+                let key: Id = msg_send![press, key];
+                if key == NIL { continue; }
+                let code: i64 = msg_send![key, keyCode];
+                let modifiers: u64 = msg_send![key, modifierFlags];
+                let shift = (modifiers & (1 << 17)) != 0; // UIKeyModifierShift
+
+                // UIKeyboardHIDUsage: 79=Right, 80=Left, 81=Down, 82=Up, 43=Tab
+                // Track held key for repeat
+                match code {
+                    79 | 80 | 81 | 82 | 40 | 43 | 88 => {
+                        editor_view.held_key_code = code;
+                        editor_view.held_key_shift = shift;
+                        editor_view.key_repeat_counter = 0;
+                    }
+                    _ => {}
+                }
+                dispatch_key_action(editor_view, code, shift);
+            }
+        }
+        // Always call super so Enter/text keys reach insertText:
+        let superclass = class!(UIView);
+        let _: () = msg_send![super(this, superclass), pressesBegan:presses withEvent:event];
+    }
+}
+
+extern "C" fn presses_ended(this: &Object, _sel: Sel, presses: Id, event: Id) {
+    unsafe {
+        let state_ptr: *mut c_void = *this.get_ivar(EDITOR_STATE_IVAR);
+        if !state_ptr.is_null() {
+            let editor_view = &mut *(state_ptr as *mut EditorView);
+            editor_view.held_key_code = -1;
+        }
+        let superclass = class!(UIView);
+        let _: () = msg_send![super(this, superclass), pressesEnded:presses withEvent:event];
+    }
+}
+
+pub fn dispatch_key_action(ev: &mut EditorView, code: i64, shift: bool) {
+    match code {
+        82 => { if shift { ev.on_action("moveUpAndModifySelection:"); }
+                else { ev.on_action("moveUp:"); } }
+        81 => { if shift { ev.on_action("moveDownAndModifySelection:"); }
+                else { ev.on_action("moveDown:"); } }
+        80 => { if shift { ev.on_action("moveLeftAndModifySelection:"); }
+                else { ev.on_action("moveLeft:"); } }
+        79 => { if shift { ev.on_action("moveRightAndModifySelection:"); }
+                else { ev.on_action("moveRight:"); } }
+        43 => { ev.on_action("insertTab:"); }
+        40 | 88 => { ev.on_action("insertNewline:"); }
+        _ => {}
     }
 }
 

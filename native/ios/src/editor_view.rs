@@ -243,6 +243,9 @@ pub struct EditorView {
     pub debug_end_count: i32,
     pub active_touch: usize,  // retained UITouch pointer for scroll polling
     pub prev_touch_y: f64,
+    pub held_key_code: i64,   // HID key code currently held (-1 = none)
+    pub held_key_shift: bool,
+    pub key_repeat_counter: i32, // counts poll cycles since key was pressed
     background_color: (f64, f64, f64),
     gutter_bg_color: (f64, f64, f64),
     gutter_fg_color: (f64, f64, f64),
@@ -262,6 +265,9 @@ impl EditorView {
             debug_end_count: 0,
             active_touch: 0,
             prev_touch_y: 0.0,
+            held_key_code: -1,
+            held_key_shift: false,
+            key_repeat_counter: 0,
             renderer,
             uiview: NIL,
             parent_view: null_mut(),
