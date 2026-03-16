@@ -141,6 +141,13 @@ let _isMobilePlatform: number = 0;
 let _debugCounter: number = 0;
 let _debugHandle: number = 0;
 
+/** Module-level widget creation — avoids Perry AOT class field access issues. */
+export function createEditorPerryWidget(): unknown {
+  if (_debugHandle === 0) { return 0; }
+  const viewPtr = hone_editor_nsview(_debugHandle);
+  return embedNSView(viewPtr);
+}
+
 function _registerEditor(ed: Editor): number {
   if (_editor0 === null) { _editor0 = ed; _editorCount = _editorCount + 1; return 0; }
   if (_editor1 === null) { _editor1 = ed; _editorCount = _editorCount + 1; return 1; }
@@ -628,7 +635,10 @@ export class Editor {
   }
 
   createPerryWidget(): unknown {
-    return embedNSView(hone_editor_nsview(this.nativeHandle as number));
+    // Use module-level _debugHandle instead of this.nativeHandle —
+    // Perry AOT class field reads may return the initial value (null/0)
+    // rather than the value assigned during the constructor.
+    return embedNSView(hone_editor_nsview(_debugHandle));
   }
 
   /** Attach the editor's native view to a parent view (Perry NSView/UIView/HWND). */

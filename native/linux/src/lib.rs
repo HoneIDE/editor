@@ -574,3 +574,87 @@ pub extern "C" fn hone_editor_add_selection_rect(
 ) {
     // Stub
 }
+
+// === Diagnostics / Breakpoints / Folds (Perry FFI stubs) ===
+
+/// Set per-line diagnostics from packed data string.
+/// Perry params: ["i64", "i64"]
+#[no_mangle]
+pub extern "C" fn hone_editor_set_line_diagnostics(
+    _view: *mut EditorView,
+    _packed_data: i64,
+) {
+    // Stub — diagnostics rendering not yet implemented on Linux
+}
+
+/// Clear all diagnostic indicators.
+/// Perry params: ["i64"]
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_diagnostics(_view: *mut EditorView) {
+    // Stub
+}
+
+/// Set breakpoint lines from packed newline-delimited string.
+/// Perry params: ["i64", "i64"]
+#[no_mangle]
+pub extern "C" fn hone_editor_set_breakpoints(
+    _view: *mut EditorView,
+    _packed_lines: i64,
+) {
+    // Stub — breakpoint rendering not yet implemented on Linux
+}
+
+/// Set fold ranges from packed data string.
+/// Perry params: ["i64", "i64"]
+#[no_mangle]
+pub extern "C" fn hone_editor_set_fold_ranges(
+    _view: *mut EditorView,
+    _packed_data: i64,
+) {
+    // Stub — fold indicators not yet implemented on Linux
+}
+
+/// Copy text to clipboard (called by TypeScript).
+/// Perry params: ["i64", "i64"]
+#[no_mangle]
+pub extern "C" fn hone_editor_copy_to_clipboard(
+    view: *mut EditorView,
+    text: i64,
+) {
+    let text_str = unsafe { perry_str(text) };
+    if text_str.is_empty() { return; }
+    let view = unsafe { &mut *view };
+    view.write_to_clipboard(text_str);
+}
+
+/// Paste from clipboard (called by TypeScript — queues paste text as events).
+/// Perry params: ["i64"]
+#[no_mangle]
+pub extern "C" fn hone_editor_paste_from_clipboard(view: *mut EditorView) {
+    let view = unsafe { &mut *view };
+    let text = view.read_from_clipboard();
+    if !text.is_empty() {
+        // Queue each character as a TEXT event for TypeScript to process
+        for ch in text.chars() {
+            view.pending_events.push(editor_view::PendingEvent {
+                event_type: 1, // TEXT
+                char_code: ch as u32,
+                action_id: 0,
+                x: 0.0,
+                y: 0.0,
+            });
+        }
+    }
+}
+
+/// Returns 0 — this is not iOS.
+#[no_mangle]
+pub extern "C" fn hone_editor_is_ios() -> f64 {
+    0.0
+}
+
+/// Poll touch events (iOS only — no-op on Linux).
+#[no_mangle]
+pub extern "C" fn hone_editor_poll_touch(_view: *mut EditorView) -> f64 {
+    0.0
+}

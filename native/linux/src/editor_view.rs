@@ -931,7 +931,12 @@ impl EditorView {
     }
 
     pub fn render_line(&mut self, line_number: i32, text: &str, tokens_json: &str, y_offset: f64) {
-        let tokens: Vec<RenderToken> = serde_json::from_str(tokens_json).unwrap_or_default();
+        let mut tokens: Vec<RenderToken> = serde_json::from_str(tokens_json).unwrap_or_default();
+        // If TypeScript sent empty tokens (e.g. from _directRenderText), run
+        // Rust-side tokenizer so syntax highlighting is visible immediately.
+        if tokens.is_empty() && !text.is_empty() {
+            tokens = crate::tokenizer::tokenize_line(text);
+        }
         if line_number > self.max_line_number {
             self.max_line_number = line_number;
         }
@@ -1176,7 +1181,7 @@ impl EditorView {
     }
 
     /// Write text to the system clipboard using GTK4's clipboard API.
-    fn write_to_clipboard(&mut self, text: &str) {
+    pub fn write_to_clipboard(&mut self, text: &str) {
         // Cache locally to avoid Wayland deadlock on subsequent paste.
         self.clipboard_buf = text.to_string();
         if let Some(display) = gdk4::Display::default() {
@@ -1190,7 +1195,7 @@ impl EditorView {
     /// wl-paste as a subprocess deadlocks: wl-paste asks the compositor for data,
     /// the compositor asks us, but our event loop is blocked waiting for the subprocess.
     /// Fix: return our cached clipboard_buf when we are the owner.
-    fn read_from_clipboard(&self) -> String {
+    pub fn read_from_clipboard(&self) -> String {
         // If we own the clipboard, return internal buffer (no Wayland deadlock).
         if let Some(display) = gdk4::Display::default() {
             if display.clipboard().is_local() {

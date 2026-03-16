@@ -14,7 +14,7 @@
  *   // Use hed.onChange / hed.executeCommand / hed.setFont for control.
  */
 
-import { Editor } from './editor-component';
+import { Editor, createEditorPerryWidget } from './editor-component';
 import type { EditorOptions } from './editor-component';
 
 /**
@@ -37,7 +37,10 @@ export class HoneCodeEditorWidget {
 
   constructor(width: number, height: number, opts?: EditorOptions) {
     this._editor = new Editor(width, height, opts);
-    this.widget = this._editor.createPerryWidget();
+    // Use module-level createEditorPerryWidget() instead of
+    // this._editor.createPerryWidget() — Perry AOT has issues with
+    // chained class method calls on newly-constructed instances.
+    this.widget = createEditorPerryWidget();
   }
 
   /** The underlying Editor instance — use for commands, callbacks, state. */
