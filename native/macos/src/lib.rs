@@ -665,6 +665,50 @@ pub extern "C" fn hone_editor_set_line_diagnostics(
     view.invalidate();
 }
 
+/// Set breakpoint lines. Packed as "line1\nline2\n..." (1-based).
+#[no_mangle]
+pub extern "C" fn hone_editor_set_breakpoints(
+    view: *mut EditorView,
+    packed_lines: *const u8,
+) {
+    let view = unsafe { &mut *view };
+    let data = str_from_header(packed_lines);
+    view.breakpoint_lines.clear();
+    if !data.is_empty() {
+        for line_str in data.split('\n') {
+            if let Ok(n) = line_str.parse::<i32>() {
+                if n > 0 {
+                    view.breakpoint_lines.insert(n);
+                }
+            }
+        }
+    }
+    view.invalidate();
+}
+
+/// Set fold indicators. Packed as "line:0\nline:1\n..." (1-based, 0=expanded, 1=collapsed).
+#[no_mangle]
+pub extern "C" fn hone_editor_set_fold_ranges(
+    view: *mut EditorView,
+    packed_data: *const u8,
+) {
+    let view = unsafe { &mut *view };
+    let data = str_from_header(packed_data);
+    view.fold_indicators.clear();
+    if !data.is_empty() {
+        for line_str in data.split('\n') {
+            if line_str.is_empty() { continue; }
+            let mut parts = line_str.splitn(2, ':');
+            let line_num: i32 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+            let collapsed: bool = parts.next().map(|s| s == "1").unwrap_or(false);
+            if line_num > 0 {
+                view.fold_indicators.insert(line_num, collapsed);
+            }
+        }
+    }
+    view.invalidate();
+}
+
 /// Clear all line diagnostics.
 #[no_mangle]
 pub extern "C" fn hone_editor_clear_diagnostics(view: *mut EditorView) {

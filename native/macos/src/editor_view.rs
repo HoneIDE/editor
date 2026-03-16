@@ -12,7 +12,7 @@ use core_graphics::context::CGContext;
 use core_graphics::geometry::{CGPoint, CGRect, CGSize};
 use serde::Deserialize;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::{c_char, CString};
 
 use crate::text_renderer::{self, FontSet, RenderToken};
@@ -249,6 +249,10 @@ pub struct EditorView {
     pub line_diagnostics: HashMap<i32, (i32, String, String)>,
     // Gutter diagnostics: Key = 1-based line number, Value = severity (1=error, 2=warning, 3=info).
     pub gutter_diagnostics: HashMap<i32, i32>,
+    // Breakpoint lines (1-based). Red circles in gutter.
+    pub breakpoint_lines: HashSet<i32>,
+    // Fold ranges: start line (1-based) → collapsed (true/false).
+    pub fold_indicators: HashMap<i32, bool>,
 
     // Context menu
     context_menu_items: Vec<ContextMenuItem>,
@@ -297,6 +301,8 @@ impl EditorView {
             needs_lines: false,
             line_diagnostics: HashMap::new(),
             gutter_diagnostics: HashMap::new(),
+            breakpoint_lines: HashSet::new(),
+            fold_indicators: HashMap::new(),
             context_menu_items: Vec::new(),
             // VS Code dark theme defaults
             background_color: (0.118, 0.118, 0.118),     // #1e1e1e
@@ -907,6 +913,41 @@ impl EditorView {
                     &CGSize::new(self.width - gutter_w, ts_line_h),
                 );
                 ctx.fill_rect(line_rect);
+            }
+
+            // Draw breakpoint indicator (red filled circle)
+            if self.breakpoint_lines.contains(&line.line_number) {
+                ctx.set_rgb_fill_color(0.9, 0.2, 0.2, 1.0); // bright red
+                let bp_size = 10.0;
+                let bp_x = 2.0;
+                let bp_y = line.y_offset + (ts_line_h - bp_size) / 2.0;
+                let bp_rect = CGRect::new(
+                    &CGPoint::new(bp_x, bp_y),
+                    &CGSize::new(bp_size, bp_size),
+                );
+                ctx.fill_ellipse_in_rect(bp_rect);
+            }
+
+            // Draw fold indicator (triangle right = collapsed, triangle down = expanded)
+            if let Some(&collapsed) = self.fold_indicators.get(&line.line_number) {
+                let tri_size = 8.0;
+                let tri_x = gutter_w - 16.0;
+                let tri_y = line.y_offset + (ts_line_h - tri_size) / 2.0;
+                ctx.set_rgb_fill_color(0.5, 0.5, 0.5, 0.8);
+                ctx.begin_path();
+                if collapsed {
+                    // Right-pointing triangle ▶
+                    ctx.move_to_point(tri_x, tri_y);
+                    ctx.add_line_to_point(tri_x + tri_size, tri_y + tri_size / 2.0);
+                    ctx.add_line_to_point(tri_x, tri_y + tri_size);
+                } else {
+                    // Down-pointing triangle ▼
+                    ctx.move_to_point(tri_x, tri_y);
+                    ctx.add_line_to_point(tri_x + tri_size, tri_y);
+                    ctx.add_line_to_point(tri_x + tri_size / 2.0, tri_y + tri_size);
+                }
+                ctx.close_path();
+                ctx.fill_path();
             }
 
             // Draw gutter diagnostic icon (colored circle for errors/warnings)

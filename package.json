@@ -69,6 +69,8 @@
         { "name": "hone_editor_clear_line_backgrounds", "params": ["i64"], "returns": "void" },
         { "name": "hone_editor_set_line_diagnostics", "params": ["i64", "i64"], "returns": "void" },
         { "name": "hone_editor_clear_diagnostics", "params": ["i64"], "returns": "void" },
+        { "name": "hone_editor_set_breakpoints", "params": ["i64", "i64"], "returns": "void" },
+        { "name": "hone_editor_set_fold_ranges", "params": ["i64", "i64"], "returns": "void" },
         { "name": "hone_editor_get_scroll_delta", "params": ["i64"], "returns": "f64" },
         { "name": "hone_editor_get_view_width", "params": ["i64"], "returns": "f64" },
         { "name": "hone_editor_get_view_height", "params": ["i64"], "returns": "f64" },

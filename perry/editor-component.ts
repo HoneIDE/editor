@@ -59,6 +59,8 @@ declare function hone_editor_set_line_background(handle: number, line: number, r
 declare function hone_editor_clear_line_backgrounds(handle: number): void;
 declare function hone_editor_set_line_diagnostics(handle: number, packedData: number): void;
 declare function hone_editor_clear_diagnostics(handle: number): void;
+declare function hone_editor_set_breakpoints(handle: number, packedLines: number): void;
+declare function hone_editor_set_fold_ranges(handle: number, packedData: number): void;
 
 // === Clipboard FFI ===
 declare function hone_editor_copy_to_clipboard(handle: number, text: number): void;
@@ -561,6 +563,22 @@ export class Editor {
     const handle = this.nativeHandle;
     if (handle !== null) {
       hone_editor_set_line_diagnostics(handle as number, packedData as any);
+    }
+  }
+
+  /** Set breakpoint lines (1-based, newline-separated). */
+  setBreakpoints(packedLines: string): void {
+    const handle = this.nativeHandle;
+    if (handle !== null) {
+      hone_editor_set_breakpoints(handle as number, packedLines as any);
+    }
+  }
+
+  /** Set fold range indicators (packed "line:collapsed\n..." format). */
+  setFoldRanges(packedData: string): void {
+    const handle = this.nativeHandle;
+    if (handle !== null) {
+      hone_editor_set_fold_ranges(handle as number, packedData as any);
     }
   }
 
