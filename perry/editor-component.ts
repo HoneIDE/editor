@@ -771,7 +771,8 @@ export class Editor {
     }
     // Always sync cursor/selection and invalidate on all platforms
     const cs = getPerryCursorState();
-    hone_editor_set_cursor(h, cs.col * 8.5 + 52, cs.line * 21, 0);
+    const scrollTop = this._vm.viewport.scroll.scrollTop;
+    hone_editor_set_cursor(h, cs.col * 8.5 + 52, cs.line * 21 - scrollTop, 0);
     hone_editor_invalidate(h);
   }
 
