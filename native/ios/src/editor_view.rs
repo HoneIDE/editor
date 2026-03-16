@@ -245,6 +245,7 @@ pub struct EditorView {
     pub prev_touch_y: f64,
     pub held_key_code: i64,   // HID key code currently held (-1 = none)
     pub held_key_shift: bool,
+    pub held_key_cmd: bool,
     pub key_repeat_counter: i32, // counts poll cycles since key was pressed
     background_color: (f64, f64, f64),
     gutter_bg_color: (f64, f64, f64),
@@ -267,6 +268,7 @@ impl EditorView {
             prev_touch_y: 0.0,
             held_key_code: -1,
             held_key_shift: false,
+            held_key_cmd: false,
             key_repeat_counter: 0,
             renderer,
             uiview: NIL,
@@ -1337,7 +1339,9 @@ impl EditorView {
         digits as f64 * self.renderer.char_width + 36.0
     }
 
-    pub fn draw(&self, raw_ctx: core_graphics::sys::CGContextRef, _dirty_rect: CGRect) {
+    pub fn draw(&mut self, raw_ctx: core_graphics::sys::CGContextRef, _dirty_rect: CGRect) {
+        // Sync actual view size from Auto Layout before drawing
+        self.sync_view_size();
         let ctx = unsafe { CGContext::from_existing_context_ptr(raw_ctx) };
         self.draw_with_context(&ctx);
     }
@@ -1439,13 +1443,11 @@ impl EditorView {
                 "CUR(none) ".to_string()
             };
             let debug_text = format!(
-                "{}F={} t={} m={} e={} c={}",
+                "{}F={} L={} t={}",
                 cursor_info,
                 frame,
+                self.frame_lines.len(),
                 self.debug_touch_count,
-                self.debug_scroll_count,
-                self.debug_end_count,
-                self.debug_cancel_count,
             );
             let debug_y = 0.0;
             // Black background for debug bar

@@ -56,7 +56,17 @@ pub extern "C" fn hone_editor_poll_touch(ev_ptr: *mut EditorView) -> f64 {
         ev.key_repeat_counter += 1;
         let should_repeat = ev.key_repeat_counter > 50 && (ev.key_repeat_counter % 4 == 0);
         if should_repeat {
-            view::dispatch_key_action(ev, ev.held_key_code, ev.held_key_shift);
+            if ev.held_key_cmd {
+                // Cmd+key repeat (paste, undo)
+                match ev.held_key_code {
+                    25 => ev.on_action("paste:"),
+                    29 => { if ev.held_key_shift { ev.on_action("redo:"); }
+                            else { ev.on_action("undo:"); } }
+                    _ => {}
+                }
+            } else {
+                view::dispatch_key_action(ev, ev.held_key_code, ev.held_key_shift);
+            }
         }
     }
 

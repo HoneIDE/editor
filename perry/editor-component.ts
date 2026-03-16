@@ -136,6 +136,7 @@ let _editor1: Editor | null = null;
 let _editor2: Editor | null = null;
 let _editorCount: number = 0;
 let _pollStarted: number = 0;
+let _currentBufferText: string = '';
 let _debugCounter: number = 0;
 let _debugHandle: number = 0;
 
@@ -407,6 +408,7 @@ export class Editor {
     // which calls _ffi.* methods via interface dispatch — fails on GTK4/Linux
     // (Perry's js_native_call_method callback is null in AOT mode).
     // Call direct render with initialContent to populate frame_lines in the Rust view.
+    _currentBufferText = initialContent;
     this._directRenderText(initialContent);
 
     // _directRenderText sends empty '[]' tokens via render_line, which overwrites
@@ -492,6 +494,7 @@ export class Editor {
     vm.touch();
     // Perry AOT: coordinator.invalidate() calls _ffi.* via interface dispatch → fails on GTK4/Linux.
     // Use direct render with the text parameter (already in scope) to push to Rust.
+    _currentBufferText = text;
     this._directRenderText(text);
     // Clear coordinator's TS-side cache so the next render() re-sends tokens.
     this._coordinator.clearLineCache();
@@ -742,10 +745,9 @@ export class Editor {
     if (this._isIOS > 0) {
       // iOS path
       hone_editor_poll_touch(h);
-      if (hadEvents > 1 || needsRender > 0) {
-        hone_editor_set_gutter_width(h, this._vm.gutterWidth);
-        this._directRenderText(this._doc.buffer.getText());
-      }
+      // Always re-render on iOS using module-level text (Perry class field chains are stale)
+      hone_editor_set_gutter_width(h, this._vm.gutterWidth);
+      this._directRenderText(_currentBufferText);
       this._syncCursor(h, this._vm);
       this._syncSelections(h, this._vm);
       hone_editor_invalidate(h);
@@ -862,6 +864,10 @@ export class Editor {
     }
 
     hone_editor_clear_events(handle as number);
+    // Update module-level text for iOS _directRenderText (Perry class field chains stale)
+    if (hadContentChange > 0) {
+      _currentBufferText = vm.document.buffer.getText();
+    }
     return hadContentChange > 0 ? 2 : 1;
   }
 

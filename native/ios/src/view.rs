@@ -227,7 +227,7 @@ extern "C" fn draw_rect(this: &Object, _sel: Sel, dirty_rect: ObjCRect) {
             eprintln!("[hone-ios] draw_rect: state_ptr is null!");
             return;
         }
-        let editor_view = &*(state_ptr as *const EditorView);
+        let editor_view = &mut *(state_ptr as *mut EditorView);
 
         // UIGraphicsGetCurrentContext() is a C function that returns the
         // CGContext set up by UIKit for the current drawRect: call.
@@ -392,18 +392,39 @@ extern "C" fn presses_began(this: &Object, _sel: Sel, presses: Id, event: Id) {
                 let code: i64 = msg_send![key, keyCode];
                 let modifiers: u64 = msg_send![key, modifierFlags];
                 let shift = (modifiers & (1 << 17)) != 0; // UIKeyModifierShift
+                let cmd = (modifiers & (1 << 20)) != 0;   // UIKeyModifierCommand
 
-                // UIKeyboardHIDUsage: 79=Right, 80=Left, 81=Down, 82=Up, 43=Tab
-                // Track held key for repeat
-                match code {
-                    79 | 80 | 81 | 82 | 40 | 43 | 88 => {
+                if cmd {
+                    // Cmd+key shortcuts
+                    match code {
+                        6 => { editor_view.on_action("copy:"); }     // Cmd+C
+                        25 => { editor_view.on_action("paste:"); }   // Cmd+V
+                        27 => { editor_view.on_action("cut:"); }     // Cmd+X
+                        29 => { if shift { editor_view.on_action("redo:"); } // Cmd+Shift+Z
+                                else { editor_view.on_action("undo:"); } }   // Cmd+Z
+                        4 => { editor_view.on_action("selectAll:"); } // Cmd+A
+                        _ => {}
+                    }
+                    // Enable repeat for Cmd+V and Cmd+Z
+                    if code == 25 || code == 29 {
                         editor_view.held_key_code = code;
                         editor_view.held_key_shift = shift;
+                        editor_view.held_key_cmd = true;
                         editor_view.key_repeat_counter = 0;
                     }
-                    _ => {}
+                } else {
+                    // Track held key for repeat
+                    match code {
+                        79 | 80 | 81 | 82 | 40 | 43 | 88 => {
+                            editor_view.held_key_code = code;
+                            editor_view.held_key_shift = shift;
+                            editor_view.held_key_cmd = false;
+                            editor_view.key_repeat_counter = 0;
+                        }
+                        _ => {}
+                    }
+                    dispatch_key_action(editor_view, code, shift);
                 }
-                dispatch_key_action(editor_view, code, shift);
             }
         }
         // Always call super so Enter/text keys reach insertText:
