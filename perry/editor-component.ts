@@ -50,6 +50,7 @@ declare function hone_editor_get_event_y(handle: number, index: number): number;
 declare function hone_editor_clear_events(handle: number): void;
 declare function hone_editor_set_ts_mode(handle: number, mode: number): void;
 declare function hone_editor_is_ios(): number;
+declare function hone_editor_poll_touch(handle: number): number;
 declare function hone_editor_set_gutter_width(handle: number, width: number): void;
 
 // === Read-only + line background FFI ===
@@ -528,6 +529,49 @@ export class Editor {
    * Skip the null guard and cast directly — the constructor always sets
    * nativeHandle to a valid value before this method is called.
    */
+
+  /**
+   * Push decoration overlays to the Rust renderer.
+   * JSON array of { x, y, w, h, color, type } objects.
+   * Must be called each frame — decorations are appended (cleared on next draw cycle).
+   */
+  pushDecorations(decorationsJson: string): void {
+    const handle = this.nativeHandle;
+    if (handle !== null) {
+      hone_editor_render_decorations(handle as number, decorationsJson as any);
+    }
+  }
+
+  /**
+   * Get the character width in pixels (for column→pixel conversion).
+   */
+  getCharWidth(): number {
+    return this._vm.getCharWidth();
+  }
+
+  /**
+   * Get the viewport start/end line numbers (0-based).
+   */
+  getViewportRange(): { startLine: number; endLine: number } {
+    return this._vm.viewport.getVisibleRange();
+  }
+
+  /**
+   * Get the cursor line number (0-based).
+   */
+  getCursorLine(): number {
+    const state = getPerryCursorState();
+    return state.line;
+  }
+
+  /**
+   * Get the cursor column (0-based).
+   */
+  getCursorColumn(): number {
+    const state = getPerryCursorState();
+    return state.col;
+  }
+
   createPerryWidget(): unknown {
     return embedNSView(hone_editor_nsview(this.nativeHandle as number));
   }
@@ -628,11 +672,15 @@ export class Editor {
       }
     }
 
-    // Process input events from Rust queue
+    // Poll active touch for scrolling (touchesMoved never fires in Perry iOS).
+    hone_editor_poll_touch(h);
+
+    // Process input events from Rust queue.
+    // Returns 2 for content-changing events (text/action), 1 for scroll/mouse only, 0 for none.
     const hadEvents = this._pollEvents();
 
-    // Re-render content after edits
-    if (hadEvents > 0) {
+    // Only re-render content after text/action events (not scroll — Rust handles scroll y_offsets directly).
+    if (hadEvents > 1) {
       hone_editor_set_gutter_width(h, this._vm.gutterWidth);
       this._directRenderText(this._doc.buffer.getText());
     }
@@ -672,6 +720,7 @@ export class Editor {
 
     const vm = this._vm;
     const isReadOnly = this._readOnly;
+    let hadContentChange = 0;
 
     for (let i = 0; i < count; i++) {
       const evType = hone_editor_get_event_type(handle as number, i);
@@ -683,6 +732,7 @@ export class Editor {
         if (code > 0) {
           const ch = String.fromCharCode(code);
           vm.onTextInput(ch);
+          hadContentChange = 1;
         }
       } else if (evType === EVENT_ACTION) {
         const aid = hone_editor_get_event_action(handle as number, i);
@@ -699,6 +749,7 @@ export class Editor {
           if (aid === ACTION_DELETE_WORD_BACKWARD) continue;
         }
         this._dispatchAction(vm, aid);
+        hadContentChange = 1;
       } else if (evType === EVENT_SCROLL) {
         const dx = hone_editor_get_event_x(handle as number, i);
         const dy = hone_editor_get_event_y(handle as number, i);
@@ -741,7 +792,7 @@ export class Editor {
     }
 
     hone_editor_clear_events(handle as number);
-    return 1;
+    return hadContentChange > 0 ? 2 : 1;
   }
 
   /**

@@ -626,3 +626,9 @@ pub extern "C" fn hone_editor_add_selection_rect(
     let view = unsafe { &mut *view };
     view.add_selection_rect_entry(x, y, w, h);
 }
+
+/// Poll touch events (iOS only — no-op on macOS).
+#[no_mangle]
+pub extern "C" fn hone_editor_poll_touch(_view: *mut EditorView) -> f64 {
+    0.0
+}
