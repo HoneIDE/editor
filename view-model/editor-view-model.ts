@@ -44,6 +44,13 @@ export function getPerryCursorState(): { line: number; col: number; anchorLine: 
   return { line: _perryCursorLine, col: _perryCursorCol, anchorLine: _perryAnchorLine, anchorCol: _perryAnchorCol };
 }
 
+export function setPerryCursorPos(line: number, col: number): void {
+  _perryCursorLine = line;
+  _perryCursorCol = col;
+  _perryAnchorLine = line;
+  _perryAnchorCol = col;
+}
+
 // ---------------------------------------------------------------------------
 // Perry-safe snapshot undo/redo (module-level, no class-field arrays).
 // Each entry stores: full buffer text, cursor line, cursor column.

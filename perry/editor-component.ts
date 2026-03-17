@@ -10,7 +10,7 @@
 
 import { embedNSView } from 'perry/ui';
 import { EditorDocument } from '../core/document/document';
-import { EditorViewModel, KeyEvent, MouseEvent as EditorMouseEvent, ScrollEvent, setPerryMarkdownState, setPerryLanguageState, setPerryTokenTheme, getPerryCursorState } from '../view-model/editor-view-model';
+import { EditorViewModel, KeyEvent, MouseEvent as EditorMouseEvent, ScrollEvent, setPerryMarkdownState, setPerryLanguageState, setPerryTokenTheme, getPerryCursorState, setPerryCursorPos } from '../view-model/editor-view-model';
 import { NativeRenderCoordinator, RenderCoordinatorConfig } from '../native/render-coordinator';
 import { DARK_THEME, LIGHT_THEME, EditorTheme } from '../view-model/theme';
 import type { NativeEditorFFI, NativeViewHandle } from '../native/ffi-bridge';
@@ -140,6 +140,7 @@ let _currentBufferText: string = '';
 let _isMobilePlatform: number = 0;
 let _debugCounter: number = 0;
 let _debugHandle: number = 0;
+let _measuredCharWidth: number = 8.5;
 
 /** Module-level widget creation — avoids Perry AOT class field access issues. */
 export function createEditorPerryWidget(): unknown {
@@ -393,6 +394,7 @@ export class Editor {
     const measuredWidth = hone_editor_measure_text(handle, 'M' as any);
     if (measuredWidth > 0) {
       vm.setCharWidth(measuredWidth);
+      _measuredCharWidth = measuredWidth;
     }
 
     // Sync gutter width to Rust for pixel-perfect cursor/text alignment.
@@ -769,10 +771,8 @@ export class Editor {
         this._coordinator.render();
       }
     }
-    // Always sync cursor/selection and invalidate on all platforms
-    const cs = getPerryCursorState();
-    const scrollTop = this._vm.viewport.scroll.scrollTop;
-    hone_editor_set_cursor(h, cs.col * 8.5 + 52, cs.line * 21 - scrollTop, 0);
+    // Always sync cursor/selection and invalidate on all platforms.
+    this._syncCursor(h, this._vm);
     hone_editor_invalidate(h);
   }
 
@@ -842,21 +842,37 @@ export class Editor {
       } else if (evType === EVENT_MOUSE_DOWN) {
         const x = hone_editor_get_event_x(handle as number, i);
         const y = hone_editor_get_event_y(handle as number, i);
-        // click count is stored in action_id field for MOUSE_DOWN events
-        const clickCount = hone_editor_get_event_action(handle as number, i);
-        const cc = clickCount > 0 ? clickCount : 1;
-        // Perry: explicit key: value (no ES6 shorthand)
-        const mouseEvent: EditorMouseEvent = {
-          x: x,
-          y: y,
-          button: 0,
-          clickCount: cc,
-          ctrlKey: false,
-          shiftKey: false,
-          altKey: false,
-          metaKey: false,
-        };
-        vm.onMouseDown(mouseEvent);
+        if (_isMobilePlatform > 0) {
+          // Mobile: compute (line, col) directly using module-level charWidth
+          // to avoid Perry class field issues in pixelToPosition.
+          const scrollTop = vm.viewport.scroll.scrollTop;
+          const lh = 14 + 14 / 2;
+          const line = Math.max(0, Math.min(
+            Math.floor((y + scrollTop) / lh),
+            this._doc.buffer.getLineCount() - 1,
+          ));
+          const col = Math.max(0, Math.round((x - 52) / _measuredCharWidth));
+          const lineLen = this._doc.buffer.getLineLength(line);
+          const clampedCol = col < lineLen ? col : lineLen;
+          vm.cursorManager.reset(line, clampedCol);
+          setPerryCursorPos(line, clampedCol);
+          vm.notifyChange();
+        } else {
+          // Desktop: use pixelToPosition via onMouseDown
+          const clickCount = hone_editor_get_event_action(handle as number, i);
+          const cc = clickCount > 0 ? clickCount : 1;
+          const mouseEvent: EditorMouseEvent = {
+            x: x,
+            y: y,
+            button: 0,
+            clickCount: cc,
+            ctrlKey: false,
+            shiftKey: false,
+            altKey: false,
+            metaKey: false,
+          };
+          vm.onMouseDown(mouseEvent);
+        }
       } else if (evType === EVENT_MOUSE_DRAG) {
         const x = hone_editor_get_event_x(handle as number, i);
         const y = hone_editor_get_event_y(handle as number, i);
