@@ -308,7 +308,7 @@ impl EditorView {
             gutter_fg_color: 0xFF858585,
             default_text_color: 0xFFD4D4D4,
             selection_color: 0x40264F78,
-            cursor_color: 0xFFFFFFFF,
+            cursor_color: 0xFFADAEAD, // dark theme cursor: rgb(0.68, 0.69, 0.68)
         }
     }
 
