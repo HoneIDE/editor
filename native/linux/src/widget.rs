@@ -33,6 +33,23 @@ pub fn create_editor_widget(
     setup_drag_handler(&area, state);
     setup_scroll_handler(&area, state);
 
+    // When the widget is realized (added to window tree), queue an immediate
+    // redraw. The initial TypeScript render (begin_frame/render_line/end_frame)
+    // runs before App() presents the window, so the first queue_draw is lost.
+    // This ensures frame_lines data paints as soon as the widget is on screen.
+    // Make the drawing area expand to fill the parent container.
+    // Without this, GTK gives it 0x0 allocation inside a VStack/Box.
+    area.set_hexpand(true);
+    area.set_vexpand(true);
+
+    // When the widget is realized (added to window tree), queue an immediate
+    // redraw. The initial TypeScript render (begin_frame/render_line/end_frame)
+    // runs before App() presents the window, so the first queue_draw is lost.
+    // This ensures frame_lines data paints as soon as the widget is on screen.
+    area.connect_realize(|area| {
+        area.queue_draw();
+    });
+
     // Convert to raw pointer — caller must ensure the widget stays alive
     let widget_obj = area.upcast::<gtk4::Widget>();
     let ptr = widget_obj.as_ptr() as *mut std::ffi::c_void;
@@ -49,7 +66,9 @@ pub fn create_editor_widget(
 fn setup_draw_handler(area: &DrawingArea, state: *mut EditorView) {
     let state_ptr = state as usize; // usize is Send + Copy
     area.set_draw_func(move |_area, cr, w, h| {
-        let editor_view = unsafe { &*(state_ptr as *const EditorView) };
+        let editor_view = unsafe { &mut *(state_ptr as *mut EditorView) };
+        // Keep stored dimensions in sync with GTK's allocated size.
+        editor_view.set_dimensions(w as f64, h as f64);
         editor_view.draw(cr, w as f64, h as f64);
     });
 }

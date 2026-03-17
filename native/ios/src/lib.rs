@@ -26,6 +26,84 @@ use string_header::str_from_header;
 
 // === FFI Contract Implementation ===
 
+/// Platform detection: returns 1.0 on iOS, 0.0 (stub) on macOS.
+#[no_mangle]
+pub extern "C" fn hone_editor_is_ios() -> f64 {
+    1.0
+}
+
+/// Stubs: features not yet implemented on iOS.
+#[no_mangle]
+pub extern "C" fn hone_editor_set_line_diagnostics(_view: *mut EditorView, _data: f64) {}
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_diagnostics(_view: *mut EditorView) {}
+#[no_mangle]
+pub extern "C" fn hone_editor_set_breakpoints(_view: *mut EditorView, _data: f64) {}
+#[no_mangle]
+pub extern "C" fn hone_editor_set_fold_ranges(_view: *mut EditorView, _data: f64) {}
+
+/// Poll active touch — returns scroll delta Y since last poll.
+/// touchesMoved never fires in Perry's UIView embedding, so TypeScript
+/// polls the saved UITouch's current position via setInterval.
+#[no_mangle]
+pub extern "C" fn hone_editor_poll_touch(ev_ptr: *mut EditorView) -> f64 {
+    if ev_ptr.is_null() { return 0.0; }
+    let ev = unsafe { &mut *ev_ptr };
+
+    // Key repeat: if a key is held, fire it again after initial delay (50 cycles = 400ms)
+    // then every 4 cycles (32ms) for continuous repeat.
+    if ev.held_key_code >= 0 {
+        ev.key_repeat_counter += 1;
+        let should_repeat = ev.key_repeat_counter > 50 && (ev.key_repeat_counter % 4 == 0);
+        if should_repeat {
+            if ev.held_key_cmd {
+                // Cmd+key repeat (paste, undo)
+                match ev.held_key_code {
+                    25 => ev.on_action("paste:"),
+                    29 => { if ev.held_key_shift { ev.on_action("redo:"); }
+                            else { ev.on_action("undo:"); } }
+                    _ => {}
+                }
+            } else {
+                view::dispatch_key_action(ev, ev.held_key_code, ev.held_key_shift);
+            }
+        }
+    }
+
+    // Store our ptr low bits for comparison
+    ev.debug_cancel_count = (ev_ptr as usize & 0xFFFF) as i32;
+    if ev.active_touch == 0 {
+        ev.debug_scroll_count = -1;
+        return 0.0;
+    }
+
+    unsafe {
+        let touch = ev.active_touch as *mut objc::runtime::Object;
+        let phase: i64 = msg_send![touch, phase];
+        ev.debug_scroll_count = (phase as i32) * 1000;
+
+        if phase >= 3 {
+            ev.active_touch = 0;
+            ev.prev_touch_y = 0.0;
+            return 0.0;
+        }
+
+        let nil_view: *mut objc::runtime::Object = std::ptr::null_mut();
+        let point: view::ObjCPoint = msg_send![touch, locationInView: nil_view];
+        let cur_y = point.y;
+        let prev_y = ev.prev_touch_y;
+        ev.prev_touch_y = cur_y;
+
+        if prev_y == 0.0 { return 0.0; }
+        let delta = cur_y - prev_y;
+
+        if delta.abs() > 0.5 {
+            ev.on_scroll(0.0, delta);
+        }
+        delta
+    }
+}
+
 /// Create a new editor view with the given dimensions.
 #[no_mangle]
 pub extern "C" fn hone_editor_create(width: f64, height: f64) -> *mut EditorView {
@@ -249,6 +327,43 @@ pub extern "C" fn hone_editor_nsview(view: *mut EditorView) -> *mut std::ffi::c_
     view.uiview() as *mut std::ffi::c_void
 }
 
+// === Editor Color Settings ===
+
+/// Set the editor background color (also sets gutter bg to match).
+#[no_mangle]
+pub extern "C" fn hone_editor_set_bg_color(view: *mut EditorView, r: f64, g: f64, b: f64) {
+    let view = unsafe { &mut *view };
+    view.set_bg_color(r, g, b);
+}
+
+/// Set the default text foreground color.
+#[no_mangle]
+pub extern "C" fn hone_editor_set_fg_color(view: *mut EditorView, r: f64, g: f64, b: f64) {
+    let view = unsafe { &mut *view };
+    view.set_fg_color(r, g, b);
+}
+
+/// Set the gutter (line number) foreground color.
+#[no_mangle]
+pub extern "C" fn hone_editor_set_gutter_fg_color(view: *mut EditorView, r: f64, g: f64, b: f64) {
+    let view = unsafe { &mut *view };
+    view.set_gutter_fg_color(r, g, b);
+}
+
+/// Set the selection highlight color (with alpha).
+#[no_mangle]
+pub extern "C" fn hone_editor_set_selection_color(view: *mut EditorView, r: f64, g: f64, b: f64, a: f64) {
+    let view = unsafe { &mut *view };
+    view.set_selection_color(r, g, b, a);
+}
+
+/// Set the cursor color.
+#[no_mangle]
+pub extern "C" fn hone_editor_set_cursor_color(view: *mut EditorView, r: f64, g: f64, b: f64) {
+    let view = unsafe { &mut *view };
+    view.set_cursor_color(r, g, b);
+}
+
 /// Begin a frame batch.
 #[no_mangle]
 pub extern "C" fn hone_editor_begin_frame(view: *mut EditorView) {
@@ -292,7 +407,8 @@ pub extern "C" fn hone_editor_set_event_callback(
 #[no_mangle]
 pub extern "C" fn hone_editor_pending_event_count(view: *mut EditorView) -> f64 {
     let view = unsafe { &*view };
-    view.pending_events.len() as f64
+    let count = view.pending_events.len();
+    count as f64
 }
 
 #[no_mangle]
@@ -334,4 +450,174 @@ pub extern "C" fn hone_editor_get_event_y(view: *mut EditorView, index: f64) -> 
 pub extern "C" fn hone_editor_clear_events(view: *mut EditorView) {
     let view = unsafe { &mut *view };
     view.pending_events.clear();
+}
+
+// === TS-authoritative render protocol (cache_line + set_viewport) ===
+
+/// Get the actual UIView width.
+#[no_mangle]
+pub extern "C" fn hone_editor_get_view_width(view: *mut EditorView) -> f64 {
+    let view = unsafe { &*view };
+    view.width()
+}
+
+/// Get the actual UIView height.
+#[no_mangle]
+pub extern "C" fn hone_editor_get_view_height(view: *mut EditorView) -> f64 {
+    let view = unsafe { &*view };
+    view.height()
+}
+
+/// Set read-only mode. mode > 0.5 = read-only, mode <= 0.5 = editable.
+#[no_mangle]
+pub extern "C" fn hone_editor_set_read_only(view: *mut EditorView, mode: f64) {
+    let view = unsafe { &mut *view };
+    view.read_only = mode > 0.5;
+}
+
+/// Set a background color for a specific line (1-based).
+#[no_mangle]
+pub extern "C" fn hone_editor_set_line_background(
+    view: *mut EditorView,
+    line: f64,
+    r: f64, g: f64, b: f64, a: f64,
+) {
+    let view = unsafe { &mut *view };
+    view.line_backgrounds.insert(line as i32, (r, g, b, a));
+}
+
+/// Clear all per-line background colors.
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_line_backgrounds(view: *mut EditorView) {
+    let view = unsafe { &mut *view };
+    view.line_backgrounds.clear();
+}
+
+/// Get the accumulated scroll delta (in pixels) since the last clear.
+#[no_mangle]
+pub extern "C" fn hone_editor_get_scroll_delta(view: *mut EditorView) -> f64 {
+    let view = unsafe { &*view };
+    view.rust_scroll_delta
+}
+
+/// Clear the accumulated scroll delta.
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_scroll_delta(view: *mut EditorView) {
+    let view = unsafe { &mut *view };
+    view.rust_scroll_delta = 0.0;
+}
+
+/// Returns 1.0 if Rust needs TypeScript to provide lines, 0.0 otherwise.
+#[no_mangle]
+pub extern "C" fn hone_editor_needs_lines(view: *mut EditorView) -> f64 {
+    let view = unsafe { &*view };
+    if view.needs_lines { 1.0 } else { 0.0 }
+}
+
+/// Clear the line cache.
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_line_cache(view: *mut EditorView) {
+    let view = unsafe { &mut *view };
+    view.clear_line_cache();
+}
+
+/// Cache a line's text and tokens (packed format).
+#[no_mangle]
+pub extern "C" fn hone_editor_cache_line(
+    view: *mut EditorView,
+    line_number: f64,
+    text: *const u8,
+    packed_tokens: *const u8,
+) {
+    let view = unsafe { &mut *view };
+    let text_str = str_from_header(text);
+    let tokens_str = str_from_header(packed_tokens);
+    view.cache_line(line_number as i32, text_str, tokens_str);
+}
+
+/// Build frame_lines from the cache for the visible range.
+#[no_mangle]
+pub extern "C" fn hone_editor_set_viewport(
+    view: *mut EditorView,
+    start_line: f64,
+    end_line: f64,
+    scroll_top: f64,
+    total_lines: f64,
+    line_height: f64,
+) {
+    let view = unsafe { &mut *view };
+    view.set_viewport_from_cache(
+        start_line as i32, end_line as i32,
+        scroll_top, total_lines as i32, line_height,
+    );
+}
+
+/// Clear selections and pre-allocate for `count` new rects.
+#[no_mangle]
+pub extern "C" fn hone_editor_begin_selections(
+    view: *mut EditorView,
+    count: f64,
+) {
+    let view = unsafe { &mut *view };
+    view.begin_selections_new(count as usize);
+}
+
+/// Add a selection highlight rectangle.
+#[no_mangle]
+pub extern "C" fn hone_editor_add_selection_rect(
+    view: *mut EditorView,
+    x: f64, y: f64, w: f64, h: f64,
+) {
+    let view = unsafe { &mut *view };
+    view.add_selection_rect_new(x, y, w, h);
+}
+
+/// Copy text to the iOS system clipboard (UIPasteboard).
+#[no_mangle]
+pub extern "C" fn hone_editor_copy_to_clipboard(
+    _view: *mut EditorView,
+    text_ptr: *const u8,
+) {
+    let text = str_from_header(text_ptr);
+    if text.is_empty() {
+        return;
+    }
+    unsafe {
+        let pb: *mut objc::runtime::Object = msg_send![class!(UIPasteboard), generalPasteboard];
+        let ns_string: *mut objc::runtime::Object = msg_send![class!(NSString), alloc];
+        let ns_string: *mut objc::runtime::Object = msg_send![ns_string, initWithBytes: text.as_ptr()
+                                                               length: text.len()
+                                                             encoding: 4u64]; // NSUTF8StringEncoding
+        let _: () = msg_send![pb, setString: ns_string];
+        let _: () = msg_send![ns_string, release];
+    }
+}
+
+/// Read text from iOS system clipboard and push it as text events.
+#[no_mangle]
+pub extern "C" fn hone_editor_paste_from_clipboard(
+    view: *mut EditorView,
+) {
+    let view = unsafe { &mut *view };
+    unsafe {
+        let pb: *mut objc::runtime::Object = msg_send![class!(UIPasteboard), generalPasteboard];
+        let ns_string: *mut objc::runtime::Object = msg_send![pb, string];
+        if ns_string.is_null() {
+            return;
+        }
+        let cstr: *const std::os::raw::c_char = msg_send![ns_string, UTF8String];
+        if cstr.is_null() {
+            return;
+        }
+        let rust_str = std::ffi::CStr::from_ptr(cstr).to_str().unwrap_or("");
+        for ch in rust_str.chars() {
+            view.pending_events.push(editor_view::PendingEvent {
+                event_type: 1, // TEXT
+                char_code: ch as u32,
+                action_id: 0,
+                x: 0.0,
+                y: 0.0,
+            });
+        }
+    }
 }

@@ -1,9 +1,13 @@
 /**
  * NativeRenderCoordinator: bridges EditorViewModel to native FFI.
  *
- * Converts RenderedLines, cursor state, scroll position, and selections
- * into FFI calls. Manages the native view lifecycle (create/destroy),
- * frame batching, and dirty tracking to minimize FFI calls.
+ * Uses the TS-authoritative render protocol:
+ * 1. cacheLine() for dirty lines (packed token format, no JSON)
+ * 2. setViewport() to tell Rust which lines to display
+ * 3. setCursor() for cursor position
+ * 4. beginSelections() + addSelectionRect() for selections (scalar, no JSON)
+ *
+ * Only changed lines are re-sent via cacheLine() — clean lines stay in Rust's cache.
  */
 
 import type { NativeEditorFFI, NativeViewHandle, RenderToken, SelectionRegion, DecorationOverlay } from './ffi-bridge';
@@ -37,6 +41,9 @@ export class NativeRenderCoordinator {
   private _lastScrollTop: number = -1;
   private _lastCursorKey: string = '';
   private _lastSelectionKey: string = '';
+  // Per-line cache: unchanged lines skip re-packing + FFI calls.
+  private _lineCacheContent: Map<number, string> = new Map();
+  private _lineCacheTokens: Map<number, string> = new Map();
 
   constructor(ffi: NativeEditorFFI, config: RenderCoordinatorConfig) {
     this._ffi = ffi;
@@ -67,6 +74,20 @@ export class NativeRenderCoordinator {
     this._charWidth = this._ffi.measureText(this._handle, 'M');
 
     return this._handle;
+  }
+
+  /**
+   * Initialize with a pre-created handle (Perry AOT workaround).
+   * Bypasses create() to avoid interface dispatch via NativeEditorFFI which
+   * Perry AOT cannot resolve (js_native_call_method callback is null in AOT).
+   */
+  setHandle(handle: NativeViewHandle): void {
+    this._handle = handle;
+  }
+
+  /** Set char width directly (when create() is bypassed in Perry AOT mode). */
+  setCharWidthDirect(width: number): void {
+    this._charWidth = width;
   }
 
   /**
@@ -114,7 +135,7 @@ export class NativeRenderCoordinator {
   }
 
   /**
-   * Perform a full render cycle.
+   * Perform a render cycle using the TS-authoritative protocol.
    */
   render(): void {
     if (!this._handle || !this._viewModel) return;
@@ -123,42 +144,61 @@ export class NativeRenderCoordinator {
     const ffi = this._ffi;
 
     // Begin frame batch
-    ffi.beginFrame(handle);
+    if (ffi.beginFrame) ffi.beginFrame(handle);
 
-    // 1. Update scroll
     const scroll = vm.scrollState;
-    if (scroll.scrollTop !== this._lastScrollTop) {
-      ffi.scroll(handle, scroll.scrollTop);
-      this._lastScrollTop = scroll.scrollTop;
-    }
-
-    // 2. Render visible lines
     const visibleLines = vm.visibleLines;
+
+    // 1. Cache dirty lines (only lines whose content/tokens changed)
+    const cContent = this._lineCacheContent;
+    const cTokens = this._lineCacheTokens;
     for (let li = 0; li < visibleLines.length; li++) {
       const line = visibleLines[li];
-      const tokensJson = this.serializeTokens(line.tokens);
-      const yOffset = this.computeYOffset(line.lineNumber, scroll.scrollTop);
+      const lineNum = line.lineNumber + 1; // 1-based for Rust
+      let needsCache = true;
+      if (cContent.has(line.lineNumber)) {
+        const prev = cContent.get(line.lineNumber);
+        if (prev === line.content && cTokens.has(line.lineNumber)) {
+          needsCache = false;
+        }
+      }
+      if (needsCache) {
+        let packed = this.packTokens(line.tokens);
+        // Prepend line background color if set (for code blocks, etc.)
+        if (line.lineBg.length > 0) {
+          let bgHex = line.lineBg;
+          if (bgHex.length > 0 && bgHex.charCodeAt(0) === 35) { // strip '#'
+            bgHex = bgHex.substring(1);
+          }
+          packed = 'BG:' + bgHex + '|' + packed;
+        }
+        ffi.cacheLine(handle, lineNum, line.content, packed);
+        cContent.set(line.lineNumber, line.content);
+        cTokens.set(line.lineNumber, packed);
+      }
+    }
 
-      ffi.renderLine(
-        handle,
-        line.lineNumber + 1, // 1-based display
-        line.content,
-        tokensJson,
-        yOffset,
-      );
+    // 2. Set viewport (tells Rust which lines to display + computes y_offsets)
+    if (visibleLines.length > 0) {
+      const startLine = visibleLines[0].lineNumber + 1;
+      const endLine = visibleLines[visibleLines.length - 1].lineNumber + 1;
+      const totalLines = vm.document.buffer.getLineCount();
+      const sz = this._config.fontSize;
+      const lineHeight = sz + sz / 2; // 1.5x multiplier
+      ffi.setViewport(handle, startLine, endLine, scroll.scrollTop, totalLines, lineHeight);
     }
 
     // 3. Update cursor(s)
     this.renderCursors(handle, vm);
 
-    // 4. Update selections
+    // 4. Update selections (scalar per-rect, no JSON)
     this.renderSelections(handle, vm);
 
     // 5. Render ghost text if supported and active
     this.renderGhostText(handle, vm);
 
     // End frame batch
-    ffi.endFrame(handle);
+    if (ffi.endFrame) ffi.endFrame(handle);
   }
 
   /**
@@ -167,6 +207,8 @@ export class NativeRenderCoordinator {
   invalidate(): void {
     this._lastCursorKey = '';
     this._lastSelectionKey = '';
+    this._lineCacheContent.clear();
+    this._lineCacheTokens.clear();
     if (this._handle) {
       this._ffi.invalidate(this._handle);
     }
@@ -174,12 +216,17 @@ export class NativeRenderCoordinator {
   }
 
   /**
+   * Clear the TS-side line cache so the next render() re-sends all lines.
+   * Does NOT call ffi.invalidate or trigger a render — use when the Rust
+   * cache was modified externally (e.g. by _directRenderText).
+   */
+  clearLineCache(): void {
+    this._lineCacheContent.clear();
+    this._lineCacheTokens.clear();
+  }
+
+  /**
    * Explicitly set the computed line height in pixels.
-   *
-   * NOTE: computeYOffset now derives line height from config.fontSize directly
-   * (Perry-safe: avoids _lineHeightPx class field which Perry AOT may mis-read).
-   * This method updates _lineHeightPx for callers that read the field directly,
-   * but has no effect on rendering layout.
    */
   setLineHeightPx(px: number): void {
     this._lineHeightPx = px;
@@ -272,31 +319,33 @@ export class NativeRenderCoordinator {
     if (selectionKey === this._lastSelectionKey) return;
     this._lastSelectionKey = selectionKey;
 
-    const regions: SelectionRegion[] = [];
+    // Build selection rects
+    const rects: { x: number; y: number; w: number; h: number }[] = [];
 
-    // Perry AOT: for (const sel of selections) broken — use index loop.
     for (let _si = 0; _si < selections.length; _si++) {
       const sel = selections[_si];
-      // Skip empty selections
       if (sel.startLine === sel.endLine && sel.startColumn === sel.endColumn) continue;
 
-      // Generate rectangles for each line in the selection
       for (let line = sel.startLine; line <= sel.endLine; line++) {
         const lineContent = vm.document.buffer.getLine(line);
         const startCol = line === sel.startLine ? sel.startColumn : 0;
         const endCol = line === sel.endLine ? sel.endColumn : lineContent.length;
 
-        const rx = this.measureTextWidth(handle, lineContent.substring(0, startCol)) + vm.gutterWidth;
-        const rw = this.measureTextWidth(handle, lineContent.substring(startCol, endCol));
+        const cw = vm.getCharWidth();
+        const rx = startCol * cw + vm.gutterWidth;
+        const rw = (endCol - startCol) * cw;
         const ry = this.computeYOffset(line, scroll.scrollTop);
         const sz2 = this._config.fontSize;
-        // Perry AOT: {x, y, w, h} shorthand → use explicit key:value.
-        // Perry AOT: _lineHeightPx broken → use sz+sz/2.
-        regions.push({ x: rx, y: ry, w: rw, h: sz2 + sz2 / 2 });
+        const rh = sz2 + sz2 / 2;
+        rects.push({ x: rx, y: ry, w: rw, h: rh });
       }
     }
 
-    this._ffi.setSelection(handle, JSON.stringify(regions));
+    // Use per-rect FFI (no JSON)
+    this._ffi.beginSelections(handle, rects.length);
+    for (let i = 0; i < rects.length; i++) {
+      this._ffi.addSelectionRect(handle, rects[i].x, rects[i].y, rects[i].w, rects[i].h);
+    }
   }
 
   private renderGhostText(handle: NativeViewHandle, vm: EditorViewModel): void {
@@ -309,7 +358,7 @@ export class NativeRenderCoordinator {
     const scroll = vm.scrollState;
     const lineContent = vm.document.buffer.getLine(primary.line);
 
-    const x = this.measureTextWidth(handle, lineContent.substring(0, primary.column)) + vm.gutterWidth;
+    const x = primary.column * vm.getCharWidth() + vm.gutterWidth;
     const y = this.computeYOffset(primary.line, scroll.scrollTop);
 
     this._ffi.renderGhostText(handle, ghost.text, x, y, '#808080');
@@ -325,9 +374,7 @@ export class NativeRenderCoordinator {
   }
 
   private computeCursorX(handle: NativeViewHandle, cursor: CursorState, vm: EditorViewModel): number {
-    const lineContent = vm.document.buffer.getLine(cursor.line);
-    const textBeforeCursor = lineContent.substring(0, cursor.column);
-    return this.measureTextWidth(handle, textBeforeCursor) + vm.gutterWidth;
+    return cursor.column * vm.getCharWidth() + vm.gutterWidth;
   }
 
   private measureTextWidth(handle: NativeViewHandle, text: string): number {
@@ -335,52 +382,27 @@ export class NativeRenderCoordinator {
     return this._ffi.measureText(handle, text);
   }
 
-  private serializeTokens(tokens: LineToken[]): string {
-    // Perry AOT: tokens.map(t => ({...})) broken — use index loop.
-    const ffiTokens: RenderToken[] = [];
+  /**
+   * Pack tokens into the compact format: "start,end,hexColor,styleInt|..."
+   * Replaces serializeTokens() which used JSON.stringify.
+   */
+  private packTokens(tokens: LineToken[]): string {
+    let packed = '';
     for (let _ti = 0; _ti < tokens.length; _ti++) {
       const t = tokens[_ti];
-      const st = t.fontStyle === 'bold-italic' ? 'bold' : t.fontStyle;
-      ffiTokens.push({ s: t.startColumn, e: t.endColumn, c: t.color, st: st });
-    }
-    return JSON.stringify(ffiTokens);
-  }
-
-  private serializeDecorations(
-    decorations: LineDecoration[],
-    lineNumber: number,
-    scrollTop: number,
-  ): string {
-    // Perry AOT: decorations.map(d => ({...})) broken — use index loop.
-    const y = this.computeYOffset(lineNumber, scrollTop);
-    const sz3 = this._config.fontSize;
-    const overlays: DecorationOverlay[] = [];
-    for (let _di = 0; _di < decorations.length; _di++) {
-      const d = decorations[_di];
-      let dType: 'background' | 'underline' | 'underline-wavy';
-      if (d.type === 'underline-error') {
-        dType = 'underline-wavy';
-      } else if (d.type === 'underline' || d.type === 'underline-warning' || d.type === 'underline-info') {
-        dType = 'underline';
-      } else {
-        dType = 'background';
+      // Strip '#' from color — Rust adds it back
+      let hex = t.color;
+      if (hex.length > 0 && hex.charCodeAt(0) === 35) { // '#'
+        hex = hex.substring(1);
       }
-      const dx = d.startColumn * this._charWidth;
-      const dw = (d.endColumn - d.startColumn) * this._charWidth;
-      // Perry AOT: _lineHeightPx broken → use sz+sz/2.
-      overlays.push({ x: dx, y: y, w: dw, h: sz3 + sz3 / 2, color: d.color, type: dType });
+      let styleInt = 0;
+      if (t.fontStyle === 'italic') styleInt = 1;
+      if (t.fontStyle === 'bold') styleInt = 2;
+      if (t.fontStyle === 'bold-italic') styleInt = 2;
+      if (t.fontStyle === 'heading-lg') styleInt = 3;
+      if (t.fontStyle === 'heading-md') styleInt = 4;
+      packed += t.startColumn + ',' + t.endColumn + ',' + hex + ',' + styleInt + '|';
     }
-    return JSON.stringify(overlays);
-  }
-
-  private hashLine(line: RenderedLine): string {
-    // Perry AOT: line.tokens.map(t => ...).join(',') broken — use index loop.
-    let tokenHash = '';
-    for (let _hi = 0; _hi < line.tokens.length; _hi++) {
-      const t = line.tokens[_hi];
-      if (_hi > 0) tokenHash += ',';
-      tokenHash += t.startColumn + ':' + t.endColumn + ':' + t.color;
-    }
-    return line.content + '|' + line.tokens.length + '|' + line.decorations.length + '|' + line.foldState + '|' + tokenHash;
+    return packed;
   }
 }

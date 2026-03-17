@@ -28,7 +28,7 @@ extern "C" {
 }
 
 /// Token data from the TypeScript layer.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct RenderToken {
     /// Start column.
     pub s: usize,
@@ -40,11 +40,15 @@ pub struct RenderToken {
     pub st: String,
 }
 
-/// A set of font variants (normal, bold, italic) with cached metrics.
+/// A set of font variants (normal, bold, italic, heading sizes) with cached metrics.
 pub struct FontSet {
     pub normal: CTFont,
     pub bold: CTFont,
     pub italic: CTFont,
+    /// Bold font at ~1.3x size for h1/h2 headings.
+    pub heading_large: CTFont,
+    /// Bold font at ~1.15x size for h3+ headings.
+    pub heading_medium: CTFont,
     pub char_width: f64,
     pub ascent: f64,
     pub descent: f64,
@@ -55,13 +59,38 @@ pub struct FontSet {
 impl FontSet {
     /// Create a new FontSet from a font family name and size.
     pub fn new(family: &str, size: f64) -> Self {
-        let normal = ct_font::new_from_name(family, size)
+        let mut normal = ct_font::new_from_name(family, size)
             .or(ct_font::new_from_name("Menlo", size))
             .or(ct_font::new_from_name("Monaco", size))
             .expect("No monospace font available");
 
+        // Verify font is monospace: 'M' and 'i' must have equal width.
+        // CTFontCreateWithName silently falls back to a proportional font
+        // when the requested name doesn't exist.
+        let w_m = measure_string_width(&normal, "M");
+        let w_i = measure_string_width(&normal, "i");
+        if (w_m - w_i).abs() > 0.5 {
+            // Proportional fallback detected — use Menlo instead.
+            normal = ct_font::new_from_name("Menlo", size)
+                .or(ct_font::new_from_name("Monaco", size))
+                .expect("No monospace font available");
+        }
+
         let bold = create_variant(&normal, size, K_CT_FONT_BOLD_TRAIT);
         let italic = create_variant(&normal, size, K_CT_FONT_ITALIC_TRAIT);
+
+        // Heading fonts: larger bold variants for markdown headings
+        let heading_large_size = (size * 1.4).round();
+        let heading_large_base = ct_font::new_from_name(family, heading_large_size)
+            .or(ct_font::new_from_name("Menlo", heading_large_size))
+            .unwrap_or_else(|_| normal.clone());
+        let heading_large = create_variant(&heading_large_base, heading_large_size, K_CT_FONT_BOLD_TRAIT);
+
+        let heading_medium_size = (size * 1.15).round();
+        let heading_medium_base = ct_font::new_from_name(family, heading_medium_size)
+            .or(ct_font::new_from_name("Menlo", heading_medium_size))
+            .unwrap_or_else(|_| normal.clone());
+        let heading_medium = create_variant(&heading_medium_base, heading_medium_size, K_CT_FONT_BOLD_TRAIT);
 
         let ascent = normal.ascent();
         let descent = normal.descent();
@@ -75,6 +104,8 @@ impl FontSet {
             normal,
             bold,
             italic,
+            heading_large,
+            heading_medium,
             char_width,
             ascent,
             descent,
@@ -96,6 +127,8 @@ impl FontSet {
         match style {
             "bold" => &self.bold,
             "italic" => &self.italic,
+            "heading-lg" => &self.heading_large,
+            "heading-md" => &self.heading_medium,
             _ => &self.normal,
         }
     }
@@ -123,6 +156,9 @@ fn create_variant(base: &CTFont, size: f64, trait_mask: u32) -> CTFont {
 
 /// Measure the width of a string using CTLine's typographic bounds.
 fn measure_string_width(font: &CTFont, text: &str) -> f64 {
+    if text.is_empty() {
+        return 0.0;
+    }
     let cf_str = CFString::new(text);
     let mut attr_str = CFMutableAttributedString::new();
     let range = core_foundation::base::CFRange::init(0, 0);
@@ -275,6 +311,62 @@ pub fn draw_text(
     ctx.set_text_matrix(&FLIPPED_TEXT_MATRIX);
     ctx.set_text_position(x, y + ascent);
     line.draw(ctx);
+}
+
+/// Result of parsing packed tokens: tokens + optional per-line background color.
+pub struct ParsedTokens {
+    pub tokens: Vec<RenderToken>,
+    /// Optional line background color (from BG: prefix).
+    pub line_bg: Option<(f64, f64, f64)>,
+}
+
+/// Parse packed token format: "start,end,hexColor,styleInt|start,end,hexColor,styleInt|..."
+/// styleInt: 0=normal, 1=italic, 2=bold, 3=heading-lg, 4=heading-md.
+/// Optional prefix: "BG:rrggbb|" sets a line background color.
+/// Replaces JSON token parsing for the new TS-authoritative render protocol.
+pub fn parse_packed_tokens(packed: &str) -> ParsedTokens {
+    if packed.is_empty() {
+        return ParsedTokens { tokens: Vec::new(), line_bg: None };
+    }
+    let mut tokens = Vec::new();
+    let mut line_bg: Option<(f64, f64, f64)> = None;
+    for segment in packed.split('|') {
+        if segment.is_empty() {
+            continue;
+        }
+        // Check for BG: prefix (line background color)
+        if segment.len() >= 5 && &segment[..3] == "BG:" {
+            line_bg = Some(parse_hex_color(&segment[3..]));
+            continue;
+        }
+        let mut parts = segment.splitn(4, ',');
+        let s = match parts.next() {
+            Some(v) => v.parse::<usize>().unwrap_or(0),
+            None => continue,
+        };
+        let e = match parts.next() {
+            Some(v) => v.parse::<usize>().unwrap_or(0),
+            None => continue,
+        };
+        let c = match parts.next() {
+            Some(v) => {
+                let mut hex = String::with_capacity(7);
+                hex.push('#');
+                hex.push_str(v);
+                hex
+            }
+            None => continue,
+        };
+        let st = match parts.next() {
+            Some("1") => "italic".to_string(),
+            Some("2") => "bold".to_string(),
+            Some("3") => "heading-lg".to_string(),
+            Some("4") => "heading-md".to_string(),
+            _ => "normal".to_string(),
+        };
+        tokens.push(RenderToken { s, e, c, st });
+    }
+    ParsedTokens { tokens, line_bg }
 }
 
 /// Set the foreground color attribute on a range of an attributed string.

@@ -173,10 +173,11 @@ export class Rope {
       }
       if (!found) {
         // Edge: offset equals total, go to last child
-        const lastIdx = node.children.length - 1;
-        path.push({ node, childIndex: lastIdx });
-        remaining = node.children[lastIdx].charCount;
-        node = node.children[lastIdx];
+        const intNode = node as InternalNode;
+        const lastIdx = intNode.children.length - 1;
+        path.push({ node: intNode, childIndex: lastIdx });
+        remaining = intNode.children[lastIdx].charCount;
+        node = intNode.children[lastIdx];
       }
     }
 

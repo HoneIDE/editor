@@ -9,7 +9,7 @@ export interface LineToken {
   startColumn: number;
   endColumn: number;
   color: string;
-  fontStyle: 'normal' | 'italic' | 'bold' | 'bold-italic';
+  fontStyle: 'normal' | 'italic' | 'bold' | 'bold-italic' | 'heading-lg' | 'heading-md';
 }
 
 export interface LineDecoration {
@@ -28,6 +28,8 @@ export interface RenderedLine {
   decorations: LineDecoration[];
   foldState: 'expanded' | 'collapsed' | 'none';
   gutterItems: GutterItem[];
+  /** Optional line background color hex (e.g., code blocks). */
+  lineBg: string;
 }
 
 /**
@@ -53,6 +55,16 @@ export function computeRenderedLines(
     } else {
       tokens = defaultTokens(content);
     }
+    // Extract lineBg from special sentinel token (startColumn === -1)
+    let lineBg = '';
+    const realTokens: LineToken[] = [];
+    for (let ti = 0; ti < tokens.length; ti++) {
+      if (tokens[ti].startColumn === -1) {
+        lineBg = tokens[ti].color;
+      } else {
+        realTokens.push(tokens[ti]);
+      }
+    }
     const decorations: LineDecoration[] = [];
     const gutterItems = gutterRenderer.getGutterItems(
       lineNumber,
@@ -64,10 +76,11 @@ export function computeRenderedLines(
     const line: RenderedLine = {
       lineNumber: lineNumber,
       content: content,
-      tokens: tokens,
+      tokens: realTokens,
       decorations: decorations,
       foldState: 'none',
       gutterItems: gutterItems,
+      lineBg: lineBg,
     };
     result.push(line);
   }

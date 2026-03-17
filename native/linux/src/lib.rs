@@ -294,6 +294,43 @@ pub extern "C" fn hone_editor_nsview(view: *mut EditorView) -> i64 {
     ptr
 }
 
+// === Editor Color Settings ===
+
+/// Set the editor background color (also sets gutter bg to match).
+#[no_mangle]
+pub extern "C" fn hone_editor_set_bg_color(view: *mut EditorView, r: f64, g: f64, b: f64) {
+    let view = unsafe { &mut *view };
+    view.set_bg_color(r, g, b);
+}
+
+/// Set the default text foreground color.
+#[no_mangle]
+pub extern "C" fn hone_editor_set_fg_color(view: *mut EditorView, r: f64, g: f64, b: f64) {
+    let view = unsafe { &mut *view };
+    view.set_fg_color(r, g, b);
+}
+
+/// Set the gutter (line number) foreground color.
+#[no_mangle]
+pub extern "C" fn hone_editor_set_gutter_fg_color(view: *mut EditorView, r: f64, g: f64, b: f64) {
+    let view = unsafe { &mut *view };
+    view.set_gutter_fg_color(r, g, b);
+}
+
+/// Set the selection highlight color (with alpha).
+#[no_mangle]
+pub extern "C" fn hone_editor_set_selection_color(view: *mut EditorView, r: f64, g: f64, b: f64, a: f64) {
+    let view = unsafe { &mut *view };
+    view.set_selection_color(r, g, b, a);
+}
+
+/// Set the cursor color.
+#[no_mangle]
+pub extern "C" fn hone_editor_set_cursor_color(view: *mut EditorView, r: f64, g: f64, b: f64) {
+    let view = unsafe { &mut *view };
+    view.set_cursor_color(r, g, b);
+}
+
 /// Begin a frame batch.
 #[no_mangle]
 pub extern "C" fn hone_editor_begin_frame(view: *mut EditorView) {
@@ -393,4 +430,231 @@ pub extern "C" fn hone_editor_get_event_y(view: *mut EditorView, index: f64) -> 
 pub extern "C" fn hone_editor_clear_events(view: *mut EditorView) {
     let view = unsafe { &mut *view };
     view.pending_events.clear();
+}
+
+/// Set TypeScript mode (enables TS-aware syntax handling).
+/// Perry params: ["i64", "f64"]
+#[no_mangle]
+pub extern "C" fn hone_editor_set_ts_mode(_view: *mut EditorView, _mode: f64) {
+    // Stub — TypeScript tokenization not yet ported to Linux
+}
+
+/// Set the gutter (line number area) width in pixels.
+/// Perry params: ["i64", "f64"]
+#[no_mangle]
+pub extern "C" fn hone_editor_set_gutter_width(_view: *mut EditorView, _width: f64) {
+    // Stub — gutter width not yet implemented on Linux
+}
+
+// ── New TS-authoritative render protocol stubs ──────────────────────────────
+// These functions support the scroll-delta / line-cache / viewport render
+// protocol added in editor commit 81bf31a. The Linux GTK4 backend handles
+// scroll and rendering natively (via Rust), so most of these are no-ops or
+// return zero to let TypeScript's _directRenderText path remain in control.
+
+/// Set read-only mode. TypeScript enforces read-only on the event queue side;
+/// this stub satisfies the FFI symbol requirement.
+/// Perry params: ["i64", "f64"]
+#[no_mangle]
+pub extern "C" fn hone_editor_set_read_only(view: *mut EditorView, mode: f64) {
+    if view.is_null() { return; }
+    let view = unsafe { &mut *view };
+    view.read_only = mode != 0.0;
+}
+
+/// Set a per-line background color for diff highlighting (line is 1-based).
+/// Perry params: ["i64", "f64", "f64", "f64", "f64", "f64"]
+#[no_mangle]
+pub extern "C" fn hone_editor_set_line_background(
+    _view: *mut EditorView,
+    _line: f64, _r: f64, _g: f64, _b: f64, _a: f64,
+) {
+    // Stub — diff line backgrounds not yet implemented on Linux
+}
+
+/// Clear all per-line background colors.
+/// Perry params: ["i64"]
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_line_backgrounds(_view: *mut EditorView) {
+    // Stub
+}
+
+/// Return the accumulated scroll delta since the last call (pixels).
+/// Linux GTK4 handles scroll natively — always return 0 so TypeScript's
+/// scroll sync path is a no-op.
+/// Perry params: ["i64"]  returns: f64
+#[no_mangle]
+pub extern "C" fn hone_editor_get_scroll_delta(_view: *mut EditorView) -> f64 {
+    0.0
+}
+
+/// Clear the accumulated scroll delta.
+/// Perry params: ["i64"]
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_scroll_delta(_view: *mut EditorView) {
+    // No-op — scroll handled natively on Linux
+}
+
+/// Return 1 if Rust needs TypeScript to send updated line data, 0 otherwise.
+/// On Linux, _directRenderText already pushes lines on demand — always return 0.
+/// Perry params: ["i64"]  returns: f64
+#[no_mangle]
+pub extern "C" fn hone_editor_needs_lines(_view: *mut EditorView) -> f64 {
+    0.0
+}
+
+/// Clear the Rust-side line cache (signals stale data after content change).
+/// Perry params: ["i64"]
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_line_cache(_view: *mut EditorView) {
+    // No-op — Linux uses _directRenderText which always sends fresh line data
+}
+
+/// Return the current allocated view width.
+/// Perry params: ["i64"]  returns: f64
+#[no_mangle]
+pub extern "C" fn hone_editor_get_view_width(view: *mut EditorView) -> f64 {
+    if view.is_null() { return 0.0; }
+    let view = unsafe { &*view };
+    view.view_width()
+}
+
+/// Return the current allocated view height.
+/// Perry params: ["i64"]  returns: f64
+#[no_mangle]
+pub extern "C" fn hone_editor_get_view_height(view: *mut EditorView) -> f64 {
+    if view.is_null() { return 0.0; }
+    let view = unsafe { &*view };
+    view.view_height()
+}
+
+/// Cache a rendered line for the TS-authoritative render protocol.
+/// Linux uses _directRenderText instead — no-op.
+/// Perry params: ["i64", "f64", "i64", "i64"]
+#[no_mangle]
+pub extern "C" fn hone_editor_cache_line(
+    _view: *mut EditorView,
+    _line_number: f64, _text: i64, _packed_tokens: i64,
+) {
+    // No-op — TS line cache not used on Linux
+}
+
+/// Invalidate a single cached line.
+/// Perry params: ["i64", "f64"]
+#[no_mangle]
+pub extern "C" fn hone_editor_invalidate_line(_view: *mut EditorView, _line_number: f64) {
+    // No-op
+}
+
+/// Set viewport state (visible line range, scroll offset, total lines, line height).
+/// Used by the TS-authoritative render protocol; no-op on Linux.
+/// Perry params: ["i64", "f64", "f64", "f64", "f64", "f64"]
+#[no_mangle]
+pub extern "C" fn hone_editor_set_viewport(
+    _view: *mut EditorView,
+    _start_line: f64, _end_line: f64,
+    _scroll_top: f64, _total_lines: f64, _line_height: f64,
+) {
+    // No-op — Linux renders via _directRenderText / begin_frame / render_line / end_frame
+}
+
+/// Begin a new selection batch (TS-authoritative selection rect protocol).
+/// Perry params: ["i64", "f64"]
+#[no_mangle]
+pub extern "C" fn hone_editor_begin_selections(_view: *mut EditorView, _count: f64) {
+    // Stub — selection rects not yet used on Linux (existing set_selection API used instead)
+}
+
+/// Add one selection rectangle to the current batch.
+/// Perry params: ["i64", "f64", "f64", "f64", "f64"]
+#[no_mangle]
+pub extern "C" fn hone_editor_add_selection_rect(
+    _view: *mut EditorView,
+    _x: f64, _y: f64, _w: f64, _h: f64,
+) {
+    // Stub
+}
+
+// === Diagnostics / Breakpoints / Folds (Perry FFI stubs) ===
+
+/// Set per-line diagnostics from packed data string.
+/// Perry params: ["i64", "i64"]
+#[no_mangle]
+pub extern "C" fn hone_editor_set_line_diagnostics(
+    _view: *mut EditorView,
+    _packed_data: i64,
+) {
+    // Stub — diagnostics rendering not yet implemented on Linux
+}
+
+/// Clear all diagnostic indicators.
+/// Perry params: ["i64"]
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_diagnostics(_view: *mut EditorView) {
+    // Stub
+}
+
+/// Set breakpoint lines from packed newline-delimited string.
+/// Perry params: ["i64", "i64"]
+#[no_mangle]
+pub extern "C" fn hone_editor_set_breakpoints(
+    _view: *mut EditorView,
+    _packed_lines: i64,
+) {
+    // Stub — breakpoint rendering not yet implemented on Linux
+}
+
+/// Set fold ranges from packed data string.
+/// Perry params: ["i64", "i64"]
+#[no_mangle]
+pub extern "C" fn hone_editor_set_fold_ranges(
+    _view: *mut EditorView,
+    _packed_data: i64,
+) {
+    // Stub — fold indicators not yet implemented on Linux
+}
+
+/// Copy text to clipboard (called by TypeScript).
+/// Perry params: ["i64", "i64"]
+#[no_mangle]
+pub extern "C" fn hone_editor_copy_to_clipboard(
+    view: *mut EditorView,
+    text: i64,
+) {
+    let text_str = unsafe { perry_str(text) };
+    if text_str.is_empty() { return; }
+    let view = unsafe { &mut *view };
+    view.write_to_clipboard(text_str);
+}
+
+/// Paste from clipboard (called by TypeScript — queues paste text as events).
+/// Perry params: ["i64"]
+#[no_mangle]
+pub extern "C" fn hone_editor_paste_from_clipboard(view: *mut EditorView) {
+    let view = unsafe { &mut *view };
+    let text = view.read_from_clipboard();
+    if !text.is_empty() {
+        // Queue each character as a TEXT event for TypeScript to process
+        for ch in text.chars() {
+            view.pending_events.push(editor_view::PendingEvent {
+                event_type: 1, // TEXT
+                char_code: ch as u32,
+                action_id: 0,
+                x: 0.0,
+                y: 0.0,
+            });
+        }
+    }
+}
+
+/// Returns 0 — this is not iOS.
+#[no_mangle]
+pub extern "C" fn hone_editor_is_ios() -> f64 {
+    0.0
+}
+
+/// Poll touch events (iOS only — no-op on Linux).
+#[no_mangle]
+pub extern "C" fn hone_editor_poll_touch(_view: *mut EditorView) -> f64 {
+    0.0
 }

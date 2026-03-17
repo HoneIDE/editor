@@ -223,6 +223,9 @@ pub struct EditorView {
     // Context menu
     context_menu_items: Vec<ContextMenuItem>,
 
+    // Read-only mode flag
+    pub read_only: bool,
+
     // Theme colors
     background_color: (f64, f64, f64),
     gutter_bg_color: (f64, f64, f64),
@@ -261,6 +264,7 @@ impl EditorView {
             rust_sel_anchor: None,
             user_has_clicked: false,
             initial_top_y: None,
+            read_only: false,
             clipboard_buf: String::new(),
             context_menu_items: Vec::new(),
             // VS Code dark theme defaults
@@ -272,6 +276,17 @@ impl EditorView {
             cursor_color: (0.918, 0.918, 0.918),          // #eaeaea
         }
     }
+
+    /// Update stored dimensions from GTK's allocated size (called from draw handler).
+    pub fn set_dimensions(&mut self, w: f64, h: f64) {
+        self.width = w;
+        self.height = h;
+    }
+
+    /// Return the stored view width (updated each draw frame by GTK allocation).
+    pub fn view_width(&self) -> f64 { self.width }
+    /// Return the stored view height (updated each draw frame by GTK allocation).
+    pub fn view_height(&self) -> f64 { self.height }
 
     /// Called from lib.rs after the EditorView has a stable address.
     pub fn init_widget(&mut self) {
@@ -865,6 +880,37 @@ impl EditorView {
         }
     }
 
+    /// Set the editor background color (also sets gutter bg to match).
+    pub fn set_bg_color(&mut self, r: f64, g: f64, b: f64) {
+        self.background_color = (r, g, b);
+        self.gutter_bg_color = (r, g, b);
+        self.invalidate();
+    }
+
+    /// Set the default text foreground color.
+    pub fn set_fg_color(&mut self, r: f64, g: f64, b: f64) {
+        self.default_text_color = (r, g, b);
+        self.invalidate();
+    }
+
+    /// Set the gutter (line number) foreground color.
+    pub fn set_gutter_fg_color(&mut self, r: f64, g: f64, b: f64) {
+        self.gutter_fg_color = (r, g, b);
+        self.invalidate();
+    }
+
+    /// Set the selection highlight color (with alpha).
+    pub fn set_selection_color(&mut self, r: f64, g: f64, b: f64, a: f64) {
+        self.selection_color = (r, g, b, a);
+        self.invalidate();
+    }
+
+    /// Set the cursor color.
+    pub fn set_cursor_color(&mut self, r: f64, g: f64, b: f64) {
+        self.cursor_color = (r, g, b);
+        self.invalidate();
+    }
+
     pub fn measure_text(&self, text: &str) -> f64 {
         self.renderer.measure_text(text)
     }
@@ -885,7 +931,12 @@ impl EditorView {
     }
 
     pub fn render_line(&mut self, line_number: i32, text: &str, tokens_json: &str, y_offset: f64) {
-        let tokens: Vec<RenderToken> = serde_json::from_str(tokens_json).unwrap_or_default();
+        let mut tokens: Vec<RenderToken> = serde_json::from_str(tokens_json).unwrap_or_default();
+        // If TypeScript sent empty tokens (e.g. from _directRenderText), run
+        // Rust-side tokenizer so syntax highlighting is visible immediately.
+        if tokens.is_empty() && !text.is_empty() {
+            tokens = crate::tokenizer::tokenize_line(text);
+        }
         if line_number > self.max_line_number {
             self.max_line_number = line_number;
         }
@@ -1130,7 +1181,7 @@ impl EditorView {
     }
 
     /// Write text to the system clipboard using GTK4's clipboard API.
-    fn write_to_clipboard(&mut self, text: &str) {
+    pub fn write_to_clipboard(&mut self, text: &str) {
         // Cache locally to avoid Wayland deadlock on subsequent paste.
         self.clipboard_buf = text.to_string();
         if let Some(display) = gdk4::Display::default() {
@@ -1144,7 +1195,7 @@ impl EditorView {
     /// wl-paste as a subprocess deadlocks: wl-paste asks the compositor for data,
     /// the compositor asks us, but our event loop is blocked waiting for the subprocess.
     /// Fix: return our cached clipboard_buf when we are the owner.
-    fn read_from_clipboard(&self) -> String {
+    pub fn read_from_clipboard(&self) -> String {
         // If we own the clipboard, return internal buffer (no Wayland deadlock).
         if let Some(display) = gdk4::Display::default() {
             if display.clipboard().is_local() {

@@ -14,6 +14,7 @@ use core_graphics::geometry::{CGPoint, CGRect, CGSize};
 use objc::runtime::Object;
 use serde::Deserialize;
 
+use std::collections::HashMap;
 use std::ffi::{c_char, CString};
 use std::ptr::null_mut;
 
@@ -173,6 +174,11 @@ struct GhostTextData {
     color: (f64, f64, f64),
 }
 
+struct CachedLine {
+    text: String,
+    tokens: Vec<RenderToken>,
+}
+
 // ── EditorView ──────────────────────────────────────────────────────────────
 
 pub struct EditorView {
@@ -214,10 +220,33 @@ pub struct EditorView {
     pub ts_gutter_width: Option<f64>,
     initial_top_y: Option<f64>,
 
+    // Read-only mode
+    pub read_only: bool,
+
+    // Per-line background colors for diff highlighting (1-based line number → RGBA)
+    pub line_backgrounds: HashMap<i32, (f64, f64, f64, f64)>,
+
+    // Line cache: stores all lines ever sent by TypeScript, keyed by 1-based line number.
+    line_cache: HashMap<i32, CachedLine>,
+    // Accumulated scroll delta (in pixels) that TypeScript can read.
+    pub rust_scroll_delta: f64,
+    // Set true when scroll reveals lines not present in the cache.
+    pub needs_lines: bool,
+
     // Context menu
     context_menu_items: Vec<ContextMenuItem>,
 
     // Theme colors
+    pub debug_touch_count: i32,
+    pub debug_scroll_count: i32,
+    pub debug_cancel_count: i32,
+    pub debug_end_count: i32,
+    pub active_touch: usize,  // retained UITouch pointer for scroll polling
+    pub prev_touch_y: f64,
+    pub held_key_code: i64,   // HID key code currently held (-1 = none)
+    pub held_key_shift: bool,
+    pub held_key_cmd: bool,
+    pub key_repeat_counter: i32, // counts poll cycles since key was pressed
     background_color: (f64, f64, f64),
     gutter_bg_color: (f64, f64, f64),
     gutter_fg_color: (f64, f64, f64),
@@ -231,6 +260,16 @@ impl EditorView {
         let renderer = FontSet::new("Menlo", 14.0);
 
         EditorView {
+            debug_touch_count: 0,
+            debug_scroll_count: 0,
+            debug_cancel_count: 0,
+            debug_end_count: 0,
+            active_touch: 0,
+            prev_touch_y: 0.0,
+            held_key_code: -1,
+            held_key_shift: false,
+            held_key_cmd: false,
+            key_repeat_counter: 0,
             renderer,
             uiview: NIL,
             parent_view: null_mut(),
@@ -257,6 +296,11 @@ impl EditorView {
             ts_handles_events: false,
             ts_gutter_width: None,
             initial_top_y: None,
+            read_only: false,
+            line_backgrounds: HashMap::new(),
+            line_cache: HashMap::new(),
+            rust_scroll_delta: 0.0,
+            needs_lines: false,
             context_menu_items: Vec::new(),
             background_color: (0.118, 0.118, 0.118),
             gutter_bg_color:  (0.118, 0.118, 0.118),
@@ -273,6 +317,45 @@ impl EditorView {
     }
 
     pub fn uiview(&self) -> Id { self.uiview }
+
+    pub fn width(&self) -> f64 { self.width }
+    pub fn height(&self) -> f64 { self.height }
+
+    /// Set the editor background color.
+    pub fn set_bg_color(&mut self, r: f64, g: f64, b: f64) {
+        self.background_color = (r, g, b);
+        self.gutter_bg_color = (r, g, b);
+        // Also set the UIView's backgroundColor so undrawn areas match
+        // (opaque views show black for pixels not covered by drawRect:).
+        if self.uiview != view::NIL {
+            view::set_view_background_color(self.uiview, r, g, b);
+        }
+        self.invalidate();
+    }
+
+    /// Set the default text color.
+    pub fn set_fg_color(&mut self, r: f64, g: f64, b: f64) {
+        self.default_text_color = (r, g, b);
+        self.invalidate();
+    }
+
+    /// Set the gutter (line number) foreground color.
+    pub fn set_gutter_fg_color(&mut self, r: f64, g: f64, b: f64) {
+        self.gutter_fg_color = (r, g, b);
+        self.invalidate();
+    }
+
+    /// Set the selection highlight color (with alpha).
+    pub fn set_selection_color(&mut self, r: f64, g: f64, b: f64, a: f64) {
+        self.selection_color = (r, g, b, a);
+        self.invalidate();
+    }
+
+    /// Set the cursor color.
+    pub fn set_cursor_color(&mut self, r: f64, g: f64, b: f64) {
+        self.cursor_color = (r, g, b);
+        self.invalidate();
+    }
 
     pub fn set_text_input_callback(&mut self, cb: TextInputCallback) {
         self.text_input_callback = Some(cb);
@@ -303,6 +386,7 @@ impl EditorView {
         }
         // In ts_mode, TypeScript handles the edit and re-renders via FFI.
         if self.ts_handles_events {
+            // [debug removed]
             return;
         }
         // Rust-side editing: insert into the cursor line in frame_lines directly.
@@ -665,6 +749,11 @@ impl EditorView {
 
     /// Called from UIView touchesBegan: — tap to position cursor.
     pub fn on_mouse_down(&mut self, x: f64, y: f64) {
+        // Track touch count for debug display
+        static mut TOUCH_COUNT: i32 = 0;
+        unsafe { TOUCH_COUNT += 77; } // +77 proves we have the latest binary
+        self.debug_touch_count = unsafe { TOUCH_COUNT };
+        self.debug_end_count = self.active_touch as i32;
         if let Some(cb) = self.mouse_down_callback {
             let self_ptr = self as *mut EditorView;
             cb(self_ptr, x, y);
@@ -775,6 +864,7 @@ impl EditorView {
     /// Called from UIView two-finger pan (scroll).
     /// dy convention: negative = finger moved up = content scrolls up.
     pub fn on_scroll(&mut self, dx: f64, dy: f64) {
+        self.debug_scroll_count = self.debug_scroll_count + 1;
         if let Some(cb) = self.scroll_callback {
             let self_ptr = self as *mut EditorView;
             cb(self_ptr, dx, dy);
@@ -788,12 +878,13 @@ impl EditorView {
             x: dx,
             y: dy,
         });
-        // In ts_mode, also handle scroll directly in Rust for visual responsiveness.
-        // TypeScript will sync its viewport state from the queued event, so the next
-        // full re-render (after text edits) uses the correct scrollTop.
+        // Handle scroll directly in Rust for visual responsiveness.
         if self.frame_lines.is_empty() {
             return;
         }
+
+        // Sync actual view dimensions from UIView frame (Auto Layout may have resized).
+        self.sync_view_size();
 
         let ts_line_h = self.ts_line_height();
         let n = self.frame_lines.len() as f64;
@@ -848,6 +939,20 @@ impl EditorView {
         }
     }
 
+    pub fn get_width(&self) -> f64 { self.width }
+    pub fn get_height(&self) -> f64 { self.height }
+
+    /// Update self.width/height from the actual UIView frame (Auto Layout may resize).
+    pub fn sync_view_size(&mut self) {
+        if self.uiview != NIL {
+            unsafe {
+                let frame: view::ObjCRect = msg_send![self.uiview, frame];
+                if frame.size.width > 1.0 { self.width = frame.size.width; }
+                if frame.size.height > 1.0 { self.height = frame.size.height; }
+            }
+        }
+    }
+
     pub fn measure_text(&self, text: &str) -> f64 {
         self.renderer.measure_text(text)
     }
@@ -856,20 +961,22 @@ impl EditorView {
 
     pub fn begin_frame(&mut self) {
         self.frame_lines.clear();
-        // In ts_mode, TypeScript manages all state — always accept its cursor.
-        // Without ts_mode, only clear cursor if user hasn't manually clicked.
-        if self.ts_handles_events || !self.user_has_clicked {
-            self.cursor = None;
-        }
+        // Do NOT clear cursor or selections here — they are managed by
+        // TypeScript's _syncCursor/_syncSelections which run asynchronously.
+        // Clearing them causes a race where drawRect sees None between
+        // begin_frame and the next _syncCursor call.
         self.cursors.clear();
-        self.selections.clear();
         self.decorations.clear();
         self.ghost_text = None;
         self.max_line_number = 0;
     }
 
     pub fn render_line(&mut self, line_number: i32, text: &str, tokens_json: &str, y_offset: f64) {
-        let tokens: Vec<RenderToken> = serde_json::from_str(tokens_json).unwrap_or_default();
+        let mut tokens: Vec<RenderToken> = serde_json::from_str(tokens_json).unwrap_or_default();
+        // Auto-tokenize if TypeScript sent empty tokens (e.g. initial _directRenderText).
+        if tokens.is_empty() && !text.is_empty() {
+            tokens = crate::tokenizer::tokenize_line(text);
+        }
         if line_number > self.max_line_number {
             self.max_line_number = line_number;
         }
@@ -882,6 +989,7 @@ impl EditorView {
     }
 
     pub fn set_cursor(&mut self, x: f64, y: f64, style: i32) {
+        // [debug removed]
         if !self.ts_handles_events && self.user_has_clicked {
             // User manually positioned cursor via click — don't let TypeScript override.
             // (In ts_mode, TypeScript is authoritative — always accept its cursor.)
@@ -937,7 +1045,10 @@ impl EditorView {
             }
         }
         if self.uiview != NIL {
+            // [debug removed]
             view::invalidate_view(self.uiview);
+        } else {
+            // [debug removed]
         }
     }
 
@@ -1228,7 +1339,9 @@ impl EditorView {
         digits as f64 * self.renderer.char_width + 36.0
     }
 
-    pub fn draw(&self, raw_ctx: core_graphics::sys::CGContextRef, _dirty_rect: CGRect) {
+    pub fn draw(&mut self, raw_ctx: core_graphics::sys::CGContextRef, _dirty_rect: CGRect) {
+        // Sync actual view size from Auto Layout before drawing
+        self.sync_view_size();
         let ctx = unsafe { CGContext::from_existing_context_ptr(raw_ctx) };
         self.draw_with_context(&ctx);
     }
@@ -1318,6 +1431,38 @@ impl EditorView {
             );
         }
 
+        // DEBUG: draw status bar at bottom showing cursor state + frame count
+        {
+            // Static frame counter — proves the app is alive and redrawing
+            static mut FRAME_COUNT: u64 = 0;
+            let frame = unsafe { FRAME_COUNT += 1; FRAME_COUNT };
+
+            let cursor_info = if let Some(ref c) = self.cursor {
+                format!("CUR({:.0},{:.0}) ", c.x, c.y)
+            } else {
+                "CUR(none) ".to_string()
+            };
+            let debug_text = format!(
+                "{}F={} L={} t={}",
+                cursor_info,
+                frame,
+                self.frame_lines.len(),
+                self.debug_touch_count,
+            );
+            let debug_y = 0.0;
+            // Black background for debug bar
+            ctx.set_rgb_fill_color(0.0, 0.0, 0.0, 0.8);
+            ctx.fill_rect(CGRect::new(
+                &CGPoint::new(0.0, debug_y),
+                &CGSize::new(bounds.size.width, 20.0),
+            ));
+            text_renderer::draw_text(
+                ctx, &debug_text, 10.0, debug_y,
+                &self.renderer.normal, self.renderer.ascent,
+                (1.0, 1.0, 0.0), // yellow
+            );
+        }
+
         self.draw_cursors(ctx);
     }
 
@@ -1342,6 +1487,69 @@ impl EditorView {
 
         if let Some(ref c) = self.cursor { draw_one(c); }
         for c in &self.cursors { draw_one(c); }
+    }
+}
+
+// === TS-authoritative render protocol ===
+
+impl EditorView {
+    /// Cache a line's text and tokens (packed format). Does NOT add to frame_lines.
+    pub fn cache_line(&mut self, line_number: i32, text: &str, packed_tokens: &str) {
+        let parsed = text_renderer::parse_packed_tokens(packed_tokens);
+        self.line_cache.insert(line_number, CachedLine {
+            text: text.to_string(),
+            tokens: parsed.tokens,
+        });
+    }
+
+    /// Build frame_lines from the cache for the visible range.
+    pub fn set_viewport_from_cache(
+        &mut self,
+        start_line: i32,
+        end_line: i32,
+        scroll_top: f64,
+        total_lines: i32,
+        line_height: f64,
+    ) {
+        self.frame_lines.clear();
+        self.max_line_number = total_lines;
+        self.needs_lines = false;
+
+        for ln in start_line..=end_line {
+            let y = (ln - 1) as f64 * line_height - scroll_top;
+            if let Some(cached) = self.line_cache.get(&ln) {
+                self.frame_lines.push(LineRenderData {
+                    line_number: ln,
+                    text: cached.text.clone(),
+                    tokens: cached.tokens.clone(),
+                    y_offset: y,
+                });
+            } else {
+                self.needs_lines = true;
+                self.frame_lines.push(LineRenderData {
+                    line_number: ln,
+                    text: String::new(),
+                    tokens: Vec::new(),
+                    y_offset: y,
+                });
+            }
+        }
+    }
+
+    /// Clear selections and pre-allocate for `count` new rects.
+    pub fn begin_selections_new(&mut self, count: usize) {
+        self.selections.clear();
+        self.selections.reserve(count);
+    }
+
+    /// Add a selection highlight rectangle.
+    pub fn add_selection_rect_new(&mut self, x: f64, y: f64, w: f64, h: f64) {
+        self.selections.push(SelectionRegion { x, y, w, h });
+    }
+
+    /// Clear the line cache.
+    pub fn clear_line_cache(&mut self) {
+        self.line_cache.clear();
     }
 }
 

@@ -20,6 +20,8 @@ const EDITOR_STATE_IVAR: &str = "honeEditorState";
 
 /// NSEventModifierFlagCommand
 const NS_COMMAND_KEY_MASK: u64 = 1 << 20;
+/// NSEventModifierFlagShift
+const NS_SHIFT_KEY_MASK: u64 = 1 << 17;
 
 /// Register the HoneEditorView class (idempotent).
 fn ensure_class_registered() {
@@ -86,6 +88,14 @@ fn ensure_class_registered() {
                 action_forwarder as extern "C" fn(&Object, Sel, id),
             );
             decl.add_method(
+                objc::sel!(undo:),
+                action_forwarder as extern "C" fn(&Object, Sel, id),
+            );
+            decl.add_method(
+                objc::sel!(redo:),
+                action_forwarder as extern "C" fn(&Object, Sel, id),
+            );
+            decl.add_method(
                 objc::sel!(scrollWheel:),
                 scroll_wheel as extern "C" fn(&Object, Sel, id),
             );
@@ -117,6 +127,9 @@ extern "C" fn draw_rect(this: &Object, _sel: Sel, dirty_rect: NSRect) {
         if state_ptr.is_null() {
             return;
         }
+        // Update cached dimensions from actual NSView bounds.
+        let editor_view_mut = &mut *(state_ptr as *mut EditorView);
+        editor_view_mut.sync_view_size();
         let editor_view = &*(state_ptr as *const EditorView);
 
         let gfx_ctx: id = msg_send![class!(NSGraphicsContext), currentContext];
@@ -128,7 +141,20 @@ extern "C" fn draw_rect(this: &Object, _sel: Sel, dirty_rect: NSRect) {
             return;
         }
 
-        editor_view.draw(cg_ctx, dirty_rect);
+        // Catch panics in draw to prevent crash propagation through ObjC boundary
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            editor_view.draw(cg_ctx, dirty_rect);
+        }));
+        if let Err(e) = result {
+            let msg = if let Some(s) = e.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = e.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "unknown panic".to_string()
+            };
+            eprintln!("[HONE CRASH] draw_rect panic: {}", msg);
+        }
     }
 }
 
@@ -150,6 +176,14 @@ extern "C" fn key_down(this: &Object, _sel: Sel, event: id) {
                         "v" => { let _: () = msg_send![this, paste: self_id]; return; }
                         "x" => { let _: () = msg_send![this, cut: self_id]; return; }
                         "a" => { let _: () = msg_send![this, selectAll: self_id]; return; }
+                        "z" => {
+                            if flags & NS_SHIFT_KEY_MASK != 0 {
+                                let _: () = msg_send![this, redo: self_id];
+                            } else {
+                                let _: () = msg_send![this, undo: self_id];
+                            }
+                            return;
+                        }
                         "q" => {
                             let app: id = msg_send![class!(NSApplication), sharedApplication];
                             let _: () = msg_send![app, terminate: nil];
@@ -180,7 +214,19 @@ extern "C" fn insert_text(this: &Object, _sel: Sel, string: id) {
         }
         let text = CStr::from_ptr(utf8).to_str().unwrap_or("");
         if !text.is_empty() {
-            editor_view.on_text_input(text);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                editor_view.on_text_input(text);
+            }));
+            if let Err(e) = result {
+                let msg = if let Some(s) = e.downcast_ref::<&str>() {
+                    s.to_string()
+                } else if let Some(s) = e.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "unknown panic".to_string()
+                };
+                eprintln!("[HONE CRASH] insert_text panic: {}", msg);
+            }
         }
     }
 }
@@ -194,12 +240,30 @@ extern "C" fn do_command_by_selector(this: &Object, _sel: Sel, action: Sel) {
         let editor_view = &mut *(state_ptr as *mut EditorView);
 
         let sel_name = action.name();
-        editor_view.on_action(sel_name);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            editor_view.on_action(sel_name);
+        }));
+        if let Err(e) = result {
+            let msg = if let Some(s) = e.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = e.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "unknown panic".to_string()
+            };
+            eprintln!("[HONE CRASH] do_command_by_selector({}) panic: {}", sel_name, msg);
+        }
     }
 }
 
 extern "C" fn mouse_down(this: &Object, _sel: Sel, event: id) {
     unsafe {
+        // Make this view the firstResponder so it receives keyDown: events
+        let window: id = msg_send![this, window];
+        if window != nil {
+            let _: BOOL = msg_send![window, makeFirstResponder: this as *const Object as id];
+        }
+
         let state_ptr: *mut c_void = *this.get_ivar(EDITOR_STATE_IVAR);
         if state_ptr.is_null() {
             return;
@@ -210,7 +274,22 @@ extern "C" fn mouse_down(this: &Object, _sel: Sel, event: id) {
         let view_point: cocoa::foundation::NSPoint =
             msg_send![this, convertPoint: window_point fromView: nil];
 
-        editor_view.on_mouse_down(view_point.x, view_point.y);
+
+        let click_count: isize = msg_send![event, clickCount];
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            editor_view.on_mouse_down(view_point.x, view_point.y, click_count as i32);
+        }));
+        if let Err(e) = result {
+            let msg = if let Some(s) = e.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = e.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "unknown panic".to_string()
+            };
+            eprintln!("[HONE CRASH] mouse_down({}, {}) panic: {}", view_point.x, view_point.y, msg);
+        }
     }
 }
 
@@ -226,7 +305,19 @@ extern "C" fn mouse_dragged(this: &Object, _sel: Sel, event: id) {
         let view_point: cocoa::foundation::NSPoint =
             msg_send![this, convertPoint: window_point fromView: nil];
 
-        editor_view.on_mouse_drag(view_point.x, view_point.y);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            editor_view.on_mouse_drag(view_point.x, view_point.y);
+        }));
+        if let Err(e) = result {
+            let msg = if let Some(s) = e.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = e.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "unknown panic".to_string()
+            };
+            eprintln!("[HONE CRASH] mouse_dragged({}, {}) panic: {}", view_point.x, view_point.y, msg);
+        }
     }
 }
 
@@ -269,7 +360,20 @@ extern "C" fn scroll_wheel(this: &Object, _sel: Sel, event: id) {
             (dx * 10.0, dy * 10.0)
         };
 
-        editor_view.on_scroll(dx, dy);
+        // Catch panics in scroll to prevent crash propagation through ObjC boundary
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            editor_view.on_scroll(dx, dy);
+        }));
+        if let Err(e) = result {
+            let msg = if let Some(s) = e.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = e.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "unknown panic".to_string()
+            };
+            eprintln!("[HONE CRASH] scroll_wheel panic: {}", msg);
+        }
     }
 }
 

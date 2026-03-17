@@ -143,6 +143,46 @@ export interface NativeEditorFFI {
    * Native layer can use this to flush/present.
    */
   endFrame?(handle: NativeViewHandle): void;
+
+  // === New TS-authoritative render protocol ===
+
+  /**
+   * Cache a line's text and packed tokens. Does NOT display — call setViewport after.
+   * @param packedTokens - "start,end,hexColor,styleInt|..." format.
+   */
+  cacheLine(
+    handle: NativeViewHandle,
+    lineNumber: number,
+    text: string,
+    packedTokens: string,
+  ): void;
+
+  /**
+   * Set the visible viewport range. Builds frame from cached lines.
+   * @param startLine - First visible line (1-based).
+   * @param endLine - Last visible line (1-based).
+   * @param scrollTop - Vertical scroll offset in pixels.
+   * @param totalLines - Total document line count.
+   * @param lineHeight - Line height in pixels (fontSize * lineHeightMultiplier).
+   */
+  setViewport(
+    handle: NativeViewHandle,
+    startLine: number,
+    endLine: number,
+    scrollTop: number,
+    totalLines: number,
+    lineHeight: number,
+  ): void;
+
+  /**
+   * Begin selection rendering — clears previous selections, pre-allocates.
+   */
+  beginSelections(handle: NativeViewHandle, count: number): void;
+
+  /**
+   * Add a selection highlight rectangle.
+   */
+  addSelectionRect(handle: NativeViewHandle, x: number, y: number, w: number, h: number): void;
 }
 
 /**
@@ -210,6 +250,22 @@ export class NoOpFFI implements NativeEditorFFI {
 
   endFrame(handle: NativeViewHandle): void {
     this.calls.push({ method: 'endFrame', args: [handle] });
+  }
+
+  cacheLine(handle: NativeViewHandle, lineNumber: number, text: string, packedTokens: string): void {
+    this.calls.push({ method: 'cacheLine', args: [handle, lineNumber, text, packedTokens] });
+  }
+
+  setViewport(handle: NativeViewHandle, startLine: number, endLine: number, scrollTop: number, totalLines: number, lineHeight: number): void {
+    this.calls.push({ method: 'setViewport', args: [handle, startLine, endLine, scrollTop, totalLines, lineHeight] });
+  }
+
+  beginSelections(handle: NativeViewHandle, count: number): void {
+    this.calls.push({ method: 'beginSelections', args: [handle, count] });
+  }
+
+  addSelectionRect(handle: NativeViewHandle, x: number, y: number, w: number, h: number): void {
+    this.calls.push({ method: 'addSelectionRect', args: [handle, x, y, w, h] });
   }
 
   /** Clear recorded calls. */

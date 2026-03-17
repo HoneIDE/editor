@@ -571,7 +571,7 @@ impl DemoEditor {
         let last_visible = (first_visible + visible_count).min(self.lines.len());
 
         for i in first_visible..last_visible {
-            let line_number = (i + 1) as i32;
+            let line_number = (i + 1) as f64;
             let y_offset = i as f64 * self.line_height - self.scroll_y;
             let c_text = CString::new(self.lines[i].as_str()).unwrap_or_default();
             let tok_json = self.tokens_for_line(i);
@@ -595,7 +595,7 @@ impl DemoEditor {
             gutter_w + text_w
         };
         let cursor_y = self.cursor_line as f64 * self.line_height - self.scroll_y;
-        hone_editor_set_cursor(editor, cursor_x, cursor_y, 0);
+        hone_editor_set_cursor(editor, cursor_x, cursor_y, 0.0);
 
         // Selection rects
         if self.has_selection() {
