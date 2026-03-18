@@ -49,6 +49,8 @@
         { "name": "hone_editor_end_frame", "params": ["i64"], "returns": "void" },
         { "name": "hone_editor_render_ghost_text", "params": ["i64", "i64", "f64", "f64", "i64"], "returns": "void" },
         { "name": "hone_editor_render_decorations", "params": ["i64", "i64"], "returns": "void" },
+        { "name": "hone_editor_set_find_highlights", "params": ["i64", "i64"], "returns": "void" },
+        { "name": "hone_editor_clear_find_highlights", "params": ["i64"], "returns": "void" },
         { "name": "hone_editor_set_cursors", "params": ["i64", "i64"], "returns": "void" },
         { "name": "hone_editor_attach_to_view", "params": ["i64", "i64"], "returns": "void" },
         { "name": "hone_editor_nsview", "params": ["i64"], "returns": "i64" },

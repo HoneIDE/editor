@@ -35,6 +35,8 @@ declare function hone_editor_begin_frame(handle: number): void;
 declare function hone_editor_end_frame(handle: number): void;
 declare function hone_editor_render_ghost_text(handle: number, text: number, x: number, y: number, color: number): void;
 declare function hone_editor_render_decorations(handle: number, decorationsJson: number): void;
+declare function hone_editor_set_find_highlights(handle: number, json: number): void;
+declare function hone_editor_clear_find_highlights(handle: number): void;
 declare function hone_editor_set_cursors(handle: number, cursorsJson: number): void;
 declare function hone_editor_attach_to_view(handle: number, parentView: number): void;
 declare function hone_editor_nsview(handle: number): number;
@@ -571,6 +573,25 @@ export class Editor {
     const handle = this.nativeHandle;
     if (handle !== null) {
       hone_editor_render_decorations(handle as number, decorationsJson as any);
+    }
+  }
+
+  /**
+   * Set persistent find highlights. NOT cleared by begin_frame — persists until
+   * explicitly changed or cleared. Use for find/replace match highlighting.
+   */
+  setFindHighlights(json: string): void {
+    const handle = this.nativeHandle;
+    if (handle !== null) {
+      hone_editor_set_find_highlights(handle as number, json as any);
+    }
+  }
+
+  /** Clear find highlights. */
+  clearFindHighlights(): void {
+    const handle = this.nativeHandle;
+    if (handle !== null) {
+      hone_editor_clear_find_highlights(handle as number);
     }
   }
 

@@ -202,6 +202,8 @@ pub struct EditorView {
     cursors: Vec<CursorData>,
     selections: Vec<SelectionRegion>,
     decorations: Vec<DecorationOverlay>,
+    /// Find highlights — NOT cleared by begin_frame. Set via set_find_highlights FFI.
+    find_highlights: Vec<DecorationOverlay>,
     ghost_text: Option<GhostTextData>,
     scroll_offset: f64,
     max_line_number: i32,
@@ -281,6 +283,7 @@ impl EditorView {
             cursors: Vec::new(),
             selections: Vec::new(),
             decorations: Vec::new(),
+            find_highlights: Vec::new(),
             ghost_text: None,
             scroll_offset: 0.0,
             max_line_number: 0,
@@ -544,6 +547,9 @@ impl EditorView {
         for decor in &mut self.decorations {
             decor.y += actual_dy;
         }
+        for decor in &mut self.find_highlights {
+            decor.y += actual_dy;
+        }
 
         // Remove lines that scrolled entirely out of view and add cached lines
         // that scrolled into view.
@@ -774,6 +780,17 @@ impl EditorView {
         let mut decors: Vec<DecorationOverlay> =
             serde_json::from_str(decorations_json).unwrap_or_default();
         self.decorations.append(&mut decors);
+    }
+
+    /// Set persistent find highlights (NOT cleared by begin_frame).
+    /// Replaces any previous find highlights.
+    pub fn set_find_highlights(&mut self, json: &str) {
+        self.find_highlights = serde_json::from_str(json).unwrap_or_default();
+    }
+
+    /// Clear find highlights.
+    pub fn clear_find_highlights(&mut self) {
+        self.find_highlights.clear();
     }
 
     pub fn render_ghost_text(&mut self, text: &str, x: f64, y: f64, color: &str) {
@@ -1013,7 +1030,25 @@ impl EditorView {
             }
         }
 
-        // 4. Draw decorations (underlines, backgrounds)
+        // 4a. Draw find highlights (persistent, behind regular decorations)
+        for decor in &self.find_highlights {
+            let (r, g, b) = text_renderer::parse_hex_color(&decor.color);
+            // Parse alpha from 8-char hex color (#RRGGBBAA), default 0.3
+            let a = if decor.color.len() >= 9 {
+                let hex = decor.color.trim_start_matches('#');
+                u8::from_str_radix(&hex[6..8], 16).unwrap_or(77) as f64 / 255.0
+            } else {
+                0.3
+            };
+            ctx.set_rgb_fill_color(r, g, b, a);
+            let rect = CGRect::new(
+                &CGPoint::new(decor.x, decor.y),
+                &CGSize::new(decor.w, decor.h),
+            );
+            ctx.fill_rect(rect);
+        }
+
+        // 4b. Draw decorations (underlines, backgrounds)
         for decor in &self.decorations {
             let (r, g, b) = text_renderer::parse_hex_color(&decor.color);
             match decor.kind.as_str() {
