@@ -158,6 +158,16 @@ pub struct DecorationOverlay {
     pub kind: String,
 }
 
+/// Find highlight stored as line/col/len — pixel positions computed at draw time
+/// from frame_lines y_offsets, so scrolling stays correct.
+#[derive(Debug, Deserialize)]
+pub struct FindHighlight {
+    pub line: i32,      // 0-based line number
+    pub col: i32,       // 0-based column
+    pub len: i32,       // match length in characters
+    pub current: i32,   // 1 = current match, 0 = other
+}
+
 struct LineRenderData {
     line_number: i32,
     text: String,
@@ -202,8 +212,9 @@ pub struct EditorView {
     cursors: Vec<CursorData>,
     selections: Vec<SelectionRegion>,
     decorations: Vec<DecorationOverlay>,
-    /// Find highlights — NOT cleared by begin_frame. Set via set_find_highlights FFI.
-    find_highlights: Vec<DecorationOverlay>,
+    /// Find highlights — NOT cleared by begin_frame. Stored as line/col/len,
+    /// pixel positions computed at draw time from frame_lines y_offsets.
+    find_highlights: Vec<FindHighlight>,
     ghost_text: Option<GhostTextData>,
     scroll_offset: f64,
     max_line_number: i32,
@@ -547,9 +558,7 @@ impl EditorView {
         for decor in &mut self.decorations {
             decor.y += actual_dy;
         }
-        for decor in &mut self.find_highlights {
-            decor.y += actual_dy;
-        }
+        // find_highlights use line/col — no y shift needed (computed at draw time)
 
         // Remove lines that scrolled entirely out of view and add cached lines
         // that scrolled into view.
@@ -782,8 +791,8 @@ impl EditorView {
         self.decorations.append(&mut decors);
     }
 
-    /// Set persistent find highlights (NOT cleared by begin_frame).
-    /// Replaces any previous find highlights.
+    /// Set persistent find highlights as line/col/len/current entries.
+    /// NOT cleared by begin_frame — persists until explicitly changed.
     pub fn set_find_highlights(&mut self, json: &str) {
         self.find_highlights = serde_json::from_str(json).unwrap_or_default();
     }
@@ -1002,6 +1011,40 @@ impl EditorView {
                 self.gutter_fg_color,
             );
 
+            // Draw find highlights for this line (BEFORE text, so text renders on top)
+            for fh in &self.find_highlights {
+                if fh.line + 1 == line.line_number {
+                    let char_w = self.renderer.char_width;
+                    // Convert byte offset to character count for correct positioning with multi-byte UTF-8
+                    let byte_col = fh.col as usize;
+                    let char_col = if byte_col <= line.text.len() {
+                        line.text[..byte_col].chars().count()
+                    } else {
+                        byte_col // fallback
+                    };
+                    let byte_end = (fh.col + fh.len) as usize;
+                    let char_len = if byte_end <= line.text.len() {
+                        line.text[byte_col..byte_end].chars().count()
+                    } else {
+                        fh.len as usize
+                    };
+                    let hx = gutter_w + char_col as f64 * char_w;
+                    let hw = char_len as f64 * char_w;
+                    if fh.current > 0 {
+                        // Current match: orange background
+                        ctx.set_rgb_fill_color(0.91, 0.67, 0.33, 0.35);
+                    } else {
+                        // Other matches: subtle yellow background
+                        ctx.set_rgb_fill_color(0.89, 0.76, 0.33, 0.20);
+                    }
+                    let hr = CGRect::new(
+                        &CGPoint::new(hx, line.y_offset),
+                        &CGSize::new(hw, ts_line_h),
+                    );
+                    ctx.fill_rect(hr);
+                }
+            }
+
             // Draw text content with tokens starting at gutter_w
             text_renderer::draw_line(
                 ctx,
@@ -1030,25 +1073,7 @@ impl EditorView {
             }
         }
 
-        // 4a. Draw find highlights (persistent, behind regular decorations)
-        for decor in &self.find_highlights {
-            let (r, g, b) = text_renderer::parse_hex_color(&decor.color);
-            // Parse alpha from 8-char hex color (#RRGGBBAA), default 0.3
-            let a = if decor.color.len() >= 9 {
-                let hex = decor.color.trim_start_matches('#');
-                u8::from_str_radix(&hex[6..8], 16).unwrap_or(77) as f64 / 255.0
-            } else {
-                0.3
-            };
-            ctx.set_rgb_fill_color(r, g, b, a);
-            let rect = CGRect::new(
-                &CGPoint::new(decor.x, decor.y),
-                &CGSize::new(decor.w, decor.h),
-            );
-            ctx.fill_rect(rect);
-        }
-
-        // 4b. Draw decorations (underlines, backgrounds)
+        // 4. Draw decorations (underlines, backgrounds)
         for decor in &self.decorations {
             let (r, g, b) = text_renderer::parse_hex_color(&decor.color);
             match decor.kind.as_str() {
