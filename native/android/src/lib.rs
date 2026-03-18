@@ -371,20 +371,12 @@ fn draw_editor(env: &mut jni::JNIEnv, canvas: &JObject, view: &EditorView) {
 
 #[no_mangle]
 pub extern "C" fn hone_editor_create(width: f64, height: f64) -> *mut EditorView {
-    // android_log(&format!("hone_editor_create({}, {})", width, height));
     let mut view = EditorView::new(width, height);
 
     if let Some((global_ref, raw_ptr)) = create_editor_android_view(width, height) {
         view.parent_view = raw_ptr;
         view.android_view_ref = Some(global_ref);
-        // android_log("hone_editor_create: android view created");
-    } else {
-        // android_log("hone_editor_create: android view FAILED");
     }
-
-    // Signal to PerryActivity that main() is already running,
-    // so it doesn't spawn a duplicate nativeMain() thread.
-    notify_main_started();
 
     let ptr = Box::into_raw(Box::new(view));
 
