@@ -138,11 +138,21 @@ let _editorCount: number = 0;
 let _pollStarted: number = 0;
 let _currentBufferText: string = '';
 let _isMobilePlatform: number = 0;
-let _debugCounter: number = 0;
 let _debugHandle: number = 0;
+
+// Persistent decoration JSON — pushed after every coordinator.render() so decorations
+// survive the begin_frame clear. Set via setPersistentDecorations() from IDE code.
+let _persistentDecorations = '';
 let _measuredCharWidth: number = 8.5;
 
 /** Module-level widget creation — avoids Perry AOT class field access issues. */
+/** Set persistent decorations JSON that gets re-pushed after every begin_frame clear.
+ * Use for find highlights, bracket matching, etc. that must survive frame clears.
+ * Pass empty string to clear. */
+export function setPersistentDecorations(json: string): void {
+  _persistentDecorations = json;
+}
+
 export function createEditorPerryWidget(): unknown {
   if (_debugHandle === 0) { return 0; }
   const viewPtr = hone_editor_nsview(_debugHandle);
@@ -764,6 +774,10 @@ export class Editor {
         hone_editor_set_gutter_width(h, this._vm.gutterWidth);
         this._coordinator.render();
       }
+    }
+    // Re-push persistent decorations after render (begin_frame clears them)
+    if (_persistentDecorations.length > 2 && _debugHandle > 0) {
+      hone_editor_render_decorations(_debugHandle, _persistentDecorations as any);
     }
     // Always sync cursor/selection and invalidate on all platforms.
     this._syncCursor(h, this._vm);
