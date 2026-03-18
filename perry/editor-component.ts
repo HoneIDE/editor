@@ -166,12 +166,6 @@ function _unregisterEditor(slot: number): void {
 
 /** Module-level poll function for setInterval. */
 function _pollAllEditors(): void {
-  // DEBUG: bypass class method dispatch — call FFI directly with module-level handle
-  if (_debugHandle > 0) {
-    _debugCounter = _debugCounter + 1;
-    hone_editor_set_cursor(_debugHandle, 52 + (_debugCounter % 20) * 8, 42, 0);
-    hone_editor_invalidate(_debugHandle);
-  }
   if (_editor0 !== null && _editor0 !== undefined) _editor0.flushEvents();
   if (_editor1 !== null && _editor1 !== undefined) _editor1.flushEvents();
   if (_editor2 !== null && _editor2 !== undefined) _editor2.flushEvents();
