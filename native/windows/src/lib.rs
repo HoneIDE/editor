@@ -446,3 +446,103 @@ pub extern "C" fn hone_editor_set_cursor_color(view: *mut EditorView, r: f64, g:
     let view = unsafe { &mut *view };
     view.set_cursor_color(r, g, b);
 }
+
+// === Missing FFI stubs (declared in package.json but not yet implemented) ===
+
+#[no_mangle]
+pub extern "C" fn hone_editor_set_find_highlights(_view: *mut EditorView, _json: i64) {}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_find_highlights(_view: *mut EditorView) {}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_set_ts_mode(_view: *mut EditorView, _mode: f64) {}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_is_ios() -> f64 {
+    0.0
+}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_poll_touch(_view: *mut EditorView) -> f64 {
+    0.0
+}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_set_gutter_width(_view: *mut EditorView, _width: f64) {}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_set_read_only(_view: *mut EditorView, _read_only: f64) {}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_set_line_background(
+    _view: *mut EditorView, _line: f64, _r: f64, _g: f64, _b: f64, _a: f64,
+) {}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_line_backgrounds(_view: *mut EditorView) {}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_set_line_diagnostics(_view: *mut EditorView, _json: i64) {}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_diagnostics(_view: *mut EditorView) {}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_set_breakpoints(_view: *mut EditorView, _json: i64) {}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_set_fold_ranges(_view: *mut EditorView, _json: i64) {}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_get_scroll_delta(_view: *mut EditorView) -> f64 {
+    0.0
+}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_get_view_width(_view: *mut EditorView) -> f64 {
+    0.0
+}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_get_view_height(_view: *mut EditorView) -> f64 {
+    0.0
+}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_scroll_delta(_view: *mut EditorView) {}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_needs_lines(_view: *mut EditorView) -> f64 {
+    1.0
+}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_line_cache(_view: *mut EditorView) {}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_cache_line(
+    _view: *mut EditorView, _line: f64, _text: i64, _tokens: i64,
+) {}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_invalidate_line(_view: *mut EditorView, _line: f64) {}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_set_viewport(
+    _view: *mut EditorView, _start: f64, _end: f64, _total: f64, _line_height: f64, _scroll_top: f64,
+) {}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_begin_selections(_view: *mut EditorView, _count: f64) {}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_add_selection_rect(
+    _view: *mut EditorView, _x: f64, _y: f64, _w: f64, _h: f64,
+) {}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_copy_to_clipboard(_view: *mut EditorView, _text: i64) {}
+
+#[no_mangle]
+pub extern "C" fn hone_editor_paste_from_clipboard(_view: *mut EditorView) {}
