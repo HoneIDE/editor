@@ -965,3 +965,7 @@ pub extern "C" fn hone_editor_clear_diagnostics(_view: *mut EditorView) {}
 pub extern "C" fn hone_editor_set_breakpoints(_view: *mut EditorView, _data: f64) {}
 #[no_mangle]
 pub extern "C" fn hone_editor_set_fold_ranges(_view: *mut EditorView, _data: f64) {}
+#[no_mangle]
+pub extern "C" fn hone_editor_set_find_highlights(_view: *mut EditorView, _json: *const u8) {}
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_find_highlights(_view: *mut EditorView) {}
