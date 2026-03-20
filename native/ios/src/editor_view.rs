@@ -1431,38 +1431,6 @@ impl EditorView {
             );
         }
 
-        // DEBUG: draw status bar at bottom showing cursor state + frame count
-        {
-            // Static frame counter — proves the app is alive and redrawing
-            static mut FRAME_COUNT: u64 = 0;
-            let frame = unsafe { FRAME_COUNT += 1; FRAME_COUNT };
-
-            let cursor_info = if let Some(ref c) = self.cursor {
-                format!("CUR({:.0},{:.0}) ", c.x, c.y)
-            } else {
-                "CUR(none) ".to_string()
-            };
-            let debug_text = format!(
-                "{}F={} L={} t={}",
-                cursor_info,
-                frame,
-                self.frame_lines.len(),
-                self.debug_touch_count,
-            );
-            let debug_y = 0.0;
-            // Black background for debug bar
-            ctx.set_rgb_fill_color(0.0, 0.0, 0.0, 0.8);
-            ctx.fill_rect(CGRect::new(
-                &CGPoint::new(0.0, debug_y),
-                &CGSize::new(bounds.size.width, 20.0),
-            ));
-            text_renderer::draw_text(
-                ctx, &debug_text, 10.0, debug_y,
-                &self.renderer.normal, self.renderer.ascent,
-                (1.0, 1.0, 0.0), // yellow
-            );
-        }
-
         self.draw_cursors(ctx);
     }
 

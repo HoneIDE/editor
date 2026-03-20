@@ -158,6 +158,16 @@ pub struct DecorationOverlay {
     pub kind: String,
 }
 
+/// Find highlight stored as line/col/len — pixel positions computed at draw time
+/// from frame_lines y_offsets, so scrolling stays correct.
+#[derive(Debug, Deserialize)]
+pub struct FindHighlight {
+    pub line: i32,      // 0-based line number
+    pub col: i32,       // 0-based column
+    pub len: i32,       // match length in characters
+    pub current: i32,   // 1 = current match, 0 = other
+}
+
 struct LineRenderData {
     line_number: i32,
     text: String,
@@ -202,6 +212,9 @@ pub struct EditorView {
     cursors: Vec<CursorData>,
     selections: Vec<SelectionRegion>,
     decorations: Vec<DecorationOverlay>,
+    /// Find highlights — NOT cleared by begin_frame. Stored as line/col/len,
+    /// pixel positions computed at draw time from frame_lines y_offsets.
+    find_highlights: Vec<FindHighlight>,
     ghost_text: Option<GhostTextData>,
     scroll_offset: f64,
     max_line_number: i32,
@@ -281,6 +294,7 @@ impl EditorView {
             cursors: Vec::new(),
             selections: Vec::new(),
             decorations: Vec::new(),
+            find_highlights: Vec::new(),
             ghost_text: None,
             scroll_offset: 0.0,
             max_line_number: 0,
@@ -544,6 +558,7 @@ impl EditorView {
         for decor in &mut self.decorations {
             decor.y += actual_dy;
         }
+        // find_highlights use line/col — no y shift needed (computed at draw time)
 
         // Remove lines that scrolled entirely out of view and add cached lines
         // that scrolled into view.
@@ -776,6 +791,17 @@ impl EditorView {
         self.decorations.append(&mut decors);
     }
 
+    /// Set persistent find highlights as line/col/len/current entries.
+    /// NOT cleared by begin_frame — persists until explicitly changed.
+    pub fn set_find_highlights(&mut self, json: &str) {
+        self.find_highlights = serde_json::from_str(json).unwrap_or_default();
+    }
+
+    /// Clear find highlights.
+    pub fn clear_find_highlights(&mut self) {
+        self.find_highlights.clear();
+    }
+
     pub fn render_ghost_text(&mut self, text: &str, x: f64, y: f64, color: &str) {
         self.ghost_text = Some(GhostTextData {
             text: text.to_string(),
@@ -984,6 +1010,40 @@ impl EditorView {
                 self.renderer.ascent,
                 self.gutter_fg_color,
             );
+
+            // Draw find highlights for this line (BEFORE text, so text renders on top)
+            for fh in &self.find_highlights {
+                if fh.line + 1 == line.line_number {
+                    let char_w = self.renderer.char_width;
+                    // Convert byte offset to character count for correct positioning with multi-byte UTF-8
+                    let byte_col = fh.col as usize;
+                    let char_col = if byte_col <= line.text.len() {
+                        line.text[..byte_col].chars().count()
+                    } else {
+                        byte_col // fallback
+                    };
+                    let byte_end = (fh.col + fh.len) as usize;
+                    let char_len = if byte_end <= line.text.len() {
+                        line.text[byte_col..byte_end].chars().count()
+                    } else {
+                        fh.len as usize
+                    };
+                    let hx = gutter_w + char_col as f64 * char_w;
+                    let hw = char_len as f64 * char_w;
+                    if fh.current > 0 {
+                        // Current match: orange background
+                        ctx.set_rgb_fill_color(0.91, 0.67, 0.33, 0.35);
+                    } else {
+                        // Other matches: subtle yellow background
+                        ctx.set_rgb_fill_color(0.89, 0.76, 0.33, 0.20);
+                    }
+                    let hr = CGRect::new(
+                        &CGPoint::new(hx, line.y_offset),
+                        &CGSize::new(hw, ts_line_h),
+                    );
+                    ctx.fill_rect(hr);
+                }
+            }
 
             // Draw text content with tokens starting at gutter_w
             text_renderer::draw_line(

@@ -35,6 +35,8 @@ declare function hone_editor_begin_frame(handle: number): void;
 declare function hone_editor_end_frame(handle: number): void;
 declare function hone_editor_render_ghost_text(handle: number, text: number, x: number, y: number, color: number): void;
 declare function hone_editor_render_decorations(handle: number, decorationsJson: number): void;
+declare function hone_editor_set_find_highlights(handle: number, json: number): void;
+declare function hone_editor_clear_find_highlights(handle: number): void;
 declare function hone_editor_set_cursors(handle: number, cursorsJson: number): void;
 declare function hone_editor_attach_to_view(handle: number, parentView: number): void;
 declare function hone_editor_nsview(handle: number): number;
@@ -138,11 +140,21 @@ let _editorCount: number = 0;
 let _pollStarted: number = 0;
 let _currentBufferText: string = '';
 let _isMobilePlatform: number = 0;
-let _debugCounter: number = 0;
 let _debugHandle: number = 0;
+
+// Persistent decoration JSON — pushed after every coordinator.render() so decorations
+// survive the begin_frame clear. Set via setPersistentDecorations() from IDE code.
+let _persistentDecorations = '';
 let _measuredCharWidth: number = 8.5;
 
 /** Module-level widget creation — avoids Perry AOT class field access issues. */
+/** Set persistent decorations JSON that gets re-pushed after every begin_frame clear.
+ * Use for find highlights, bracket matching, etc. that must survive frame clears.
+ * Pass empty string to clear. */
+export function setPersistentDecorations(json: string): void {
+  _persistentDecorations = json;
+}
+
 export function createEditorPerryWidget(): unknown {
   if (_debugHandle === 0) { return 0; }
   const viewPtr = hone_editor_nsview(_debugHandle);
@@ -166,12 +178,6 @@ function _unregisterEditor(slot: number): void {
 
 /** Module-level poll function for setInterval. */
 function _pollAllEditors(): void {
-  // DEBUG: bypass class method dispatch — call FFI directly with module-level handle
-  if (_debugHandle > 0) {
-    _debugCounter = _debugCounter + 1;
-    hone_editor_set_cursor(_debugHandle, 52 + (_debugCounter % 20) * 8, 42, 0);
-    hone_editor_invalidate(_debugHandle);
-  }
   if (_editor0 !== null && _editor0 !== undefined) _editor0.flushEvents();
   if (_editor1 !== null && _editor1 !== undefined) _editor1.flushEvents();
   if (_editor2 !== null && _editor2 !== undefined) _editor2.flushEvents();
@@ -571,6 +577,25 @@ export class Editor {
   }
 
   /**
+   * Set persistent find highlights. NOT cleared by begin_frame — persists until
+   * explicitly changed or cleared. Use for find/replace match highlighting.
+   */
+  setFindHighlights(json: string): void {
+    const handle = this.nativeHandle;
+    if (handle !== null) {
+      hone_editor_set_find_highlights(handle as number, json as any);
+    }
+  }
+
+  /** Clear find highlights. */
+  clearFindHighlights(): void {
+    const handle = this.nativeHandle;
+    if (handle !== null) {
+      hone_editor_clear_find_highlights(handle as number);
+    }
+  }
+
+  /**
    * Set line diagnostics for Error Lens rendering.
    * packedData format: "line:severity:color:message\n..." (1-based lines)
    * severity: 1=error, 2=warning, 3=info, 4=hint
@@ -770,6 +795,10 @@ export class Editor {
         hone_editor_set_gutter_width(h, this._vm.gutterWidth);
         this._coordinator.render();
       }
+    }
+    // Re-push persistent decorations after render (begin_frame clears them)
+    if (_persistentDecorations.length > 2 && _debugHandle > 0) {
+      hone_editor_render_decorations(_debugHandle, _persistentDecorations as any);
     }
     // Always sync cursor/selection and invalidate on all platforms.
     this._syncCursor(h, this._vm);

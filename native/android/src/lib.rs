@@ -140,13 +140,6 @@ pub extern "C" fn Java_com_perry_app_HoneEditorView_nativeDrawEditor(
     handle: jni::sys::jlong,
     canvas: JObject,
 ) {
-    static mut DRAW_COUNT: i32 = 0;
-    unsafe {
-        DRAW_COUNT += 1;
-        if DRAW_COUNT <= 3 || DRAW_COUNT % 100 == 0 {
-            android_log(&format!("nativeDrawEditor #{} handle={}", DRAW_COUNT, handle));
-        }
-    }
     if handle == 0 { return; }
     let view = unsafe { &*(handle as *const EditorView) };
     draw_editor(&mut env, &canvas, view);
@@ -161,7 +154,6 @@ pub extern "C" fn Java_com_perry_app_HoneEditorView_nativeOnSizeChanged(
     width_px: jni::sys::jfloat,
     height_px: jni::sys::jfloat,
 ) {
-    android_log(&format!("onSizeChanged: {}x{}", width_px, height_px));
     if handle == 0 { return; }
     let view = unsafe { &mut *(handle as *mut EditorView) };
     let density = get_density_cached();
@@ -361,13 +353,14 @@ fn draw_editor(env: &mut jni::JNIEnv, canvas: &JObject, view: &EditorView) {
 
     // Draw cursor
     if let Some(cursor) = view.get_cursor() {
+        // cursor.x = column (character index), cursor.y = line (fractional, scroll-adjusted)
         let _ = env.call_method(&paint, "setColor", "(I)V", &[JValue::Int(view.cursor_color as i32)]);
-        let cx = (cursor.x as f32) * d + gutter_width;
-        let cy = (cursor.y as f32) * d;
-        let ch = (view.get_line_height() as f32) * d;
+        let cx = gutter_width + (cursor.x as f32) * char_width;
+        let cy = (cursor.y as f32) * text_size_px * 1.5;
+        let ch = text_size_px * 1.5;
         let _ = env.call_method(canvas, "drawRect", "(FFFFLandroid/graphics/Paint;)V",
             &[JValue::Float(cx), JValue::Float(cy),
-              JValue::Float(cx + 2.0), JValue::Float(cy + ch),
+              JValue::Float(cx + 3.0), JValue::Float(cy + ch),
               JValue::Object(&paint)]);
     }
 
@@ -378,15 +371,11 @@ fn draw_editor(env: &mut jni::JNIEnv, canvas: &JObject, view: &EditorView) {
 
 #[no_mangle]
 pub extern "C" fn hone_editor_create(width: f64, height: f64) -> *mut EditorView {
-    android_log(&format!("hone_editor_create({}, {})", width, height));
     let mut view = EditorView::new(width, height);
 
     if let Some((global_ref, raw_ptr)) = create_editor_android_view(width, height) {
         view.parent_view = raw_ptr;
         view.android_view_ref = Some(global_ref);
-        android_log("hone_editor_create: android view created");
-    } else {
-        android_log("hone_editor_create: android view FAILED");
     }
 
     let ptr = Box::into_raw(Box::new(view));
@@ -398,6 +387,27 @@ pub extern "C" fn hone_editor_create(width: f64, height: f64) -> *mut EditorView
     }
 
     ptr
+}
+
+/// Set PerryActivity.mainStarted = true via JNI to prevent double nativeMain().
+fn notify_main_started() {
+    let vm = match JAVA_VM.get() {
+        Some(vm) => vm,
+        None => return,
+    };
+    let mut env = match vm.attach_current_thread() {
+        Ok(env) => env,
+        Err(_) => return,
+    };
+    let class = match env.find_class("com/perry/app/PerryActivity") {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    let field_id = match env.get_static_field_id(&class, "mainStarted", "Z") {
+        Ok(f) => f,
+        Err(_) => return,
+    };
+    let _ = env.set_static_field(&class, field_id, jni::objects::JValue::Bool(1));
 }
 
 #[no_mangle]
@@ -421,11 +431,6 @@ pub extern "C" fn hone_editor_set_font(view: *mut EditorView, family: *const u8,
 
 #[no_mangle]
 pub extern "C" fn hone_editor_render_line(view: *mut EditorView, line_number: f64, text: *const u8, tokens_json: *const u8, y_offset: f64) {
-    static mut LOGGED: bool = false;
-    if unsafe { !LOGGED } {
-        android_log(&format!("render_line first call: line={}", line_number));
-        unsafe { LOGGED = true; }
-    }
     let view = unsafe { &mut *view };
     let text_str = str_from_header(text);
     let tokens_str = str_from_header(tokens_json);
@@ -462,10 +467,6 @@ pub extern "C" fn hone_editor_measure_text(view: *mut EditorView, text: *const u
 
 #[no_mangle]
 pub extern "C" fn hone_editor_invalidate(view: *mut EditorView) {
-    static mut INV_COUNT: i32 = 0;
-    unsafe { INV_COUNT += 1; if INV_COUNT <= 3 || INV_COUNT % 500 == 0 {
-        android_log(&format!("invalidate #{}", INV_COUNT));
-    }}
     let view = unsafe { &mut *view };
     view.invalidate();
     if let Some(ref android_ref) = view.android_view_ref {
@@ -557,7 +558,6 @@ pub extern "C" fn hone_editor_clear_context_menu_items(view: *mut EditorView) {
 #[no_mangle]
 pub extern "C" fn hone_editor_nsview(view: *mut EditorView) -> *mut std::ffi::c_void {
     let view = unsafe { &*view };
-    android_log(&format!("hone_editor_nsview: parent_view={:?} has_ref={}", view.parent_view, view.android_view_ref.is_some()));
     view.parent_view
 }
 
@@ -656,13 +656,6 @@ pub extern "C" fn hone_editor_set_event_callback(view: *mut EditorView, callback
 
 #[no_mangle]
 pub extern "C" fn hone_editor_pending_event_count(view: *mut EditorView) -> f64 {
-    static mut LOG_COUNT: i32 = 0;
-    unsafe {
-        LOG_COUNT += 1;
-        if LOG_COUNT == 1 || LOG_COUNT % 500 == 0 {
-            android_log(&format!("pending_event_count called #{}", LOG_COUNT));
-        }
-    }
     let view = unsafe { &*view };
     view.pending_events.len() as f64
 }
@@ -972,3 +965,7 @@ pub extern "C" fn hone_editor_clear_diagnostics(_view: *mut EditorView) {}
 pub extern "C" fn hone_editor_set_breakpoints(_view: *mut EditorView, _data: f64) {}
 #[no_mangle]
 pub extern "C" fn hone_editor_set_fold_ranges(_view: *mut EditorView, _data: f64) {}
+#[no_mangle]
+pub extern "C" fn hone_editor_set_find_highlights(_view: *mut EditorView, _json: *const u8) {}
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_find_highlights(_view: *mut EditorView) {}
