@@ -25,7 +25,7 @@ mod text_renderer;
 mod tokenizer;
 
 pub use editor_view::EditorView;
-use editor_view::{ActionCallback, MouseDownCallback, ScrollCallback, TextInputCallback};
+use editor_view::{ActionCallback, MouseDownCallback, MouseDragCallback, MouseDoubleClickCallback, ScrollCallback, TextInputCallback};
 
 // ── Perry string helper ──────────────────────────────────────────────
 
@@ -241,6 +241,26 @@ pub extern "C" fn hone_editor_set_mouse_down_callback(
 ) {
     let view = unsafe { &mut *view };
     view.set_mouse_down_callback(callback);
+}
+
+/// Set the callback for mouse drag events (left button held).
+#[no_mangle]
+pub extern "C" fn hone_editor_set_mouse_drag_callback(
+    view: *mut EditorView,
+    callback: MouseDragCallback,
+) {
+    let view = unsafe { &mut *view };
+    view.set_mouse_drag_callback(callback);
+}
+
+/// Set the callback for mouse double-click events.
+#[no_mangle]
+pub extern "C" fn hone_editor_set_mouse_double_click_callback(
+    view: *mut EditorView,
+    callback: MouseDoubleClickCallback,
+) {
+    let view = unsafe { &mut *view };
+    view.set_mouse_double_click_callback(callback);
 }
 
 /// Set the callback for scroll wheel events.

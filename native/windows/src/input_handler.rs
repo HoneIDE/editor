@@ -231,6 +231,17 @@ unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
 
+        WM_LBUTTONDBLCLK => {
+            let x = (lparam.0 & 0xFFFF) as i16 as f64;
+            let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f64;
+            let _ = SetFocus(hwnd);
+            SetCapture(hwnd);
+            if let Some(editor) = get_editor(hwnd) {
+                editor.on_mouse_double_click(x, y);
+            }
+            LRESULT(0)
+        }
+
         WM_MOUSEMOVE => {
             // Only process if left button is held (drag)
             if wparam.0 & MK_LBUTTON != 0 {

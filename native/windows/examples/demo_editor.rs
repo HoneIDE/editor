@@ -24,8 +24,13 @@ use hone_editor_windows::{
     hone_editor_create, hone_editor_destroy, hone_editor_attach_to_view,
     hone_editor_hwnd, hone_editor_set_text_input_callback,
     hone_editor_set_action_callback, hone_editor_set_mouse_down_callback,
+    hone_editor_set_mouse_drag_callback, hone_editor_set_mouse_double_click_callback,
     hone_editor_set_scroll_callback,
 };
+
+fn is_word_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
 
 // ── DemoEditor state ────────────────────────────────────────────
 
@@ -229,16 +234,14 @@ impl DemoEditor {
         validate_tokens_json(orig_tokens, orig_text, current_text)
     }
 
-    /// Position cursor from a click at (x, y) in view coordinates.
-    fn click_to_cursor(&mut self, x: f64, y: f64) {
+    /// Hit-test: find (line, col) from view coordinates (x, y).
+    fn hit_test(&self, x: f64, y: f64) -> (usize, usize) {
         let editor = self.editor_ptr as *mut hone_editor_windows::EditorView;
         let gutter_w = self.gutter_width();
 
-        // Determine line from y (account for scroll offset)
         let line = ((y + self.scroll_y) / self.line_height).floor() as usize;
         let line = line.min(self.lines.len().saturating_sub(1));
 
-        // Determine column from x
         let text_x = x - gutter_w;
         let col = if text_x <= 0.0 {
             0
@@ -262,9 +265,44 @@ impl DemoEditor {
             best_col
         };
 
+        (line, col)
+    }
+
+    /// Position cursor from a click at (x, y) in view coordinates.
+    fn click_to_cursor(&mut self, x: f64, y: f64) {
+        let (line, col) = self.hit_test(x, y);
         self.cursor_line = line;
         self.cursor_col = col;
-        self.sel_anchor = None;
+        self.sel_anchor = Some((line, col));
+    }
+
+    /// Extend selection by dragging to (x, y).
+    fn drag_to_cursor(&mut self, x: f64, y: f64) {
+        let (line, col) = self.hit_test(x, y);
+        self.cursor_line = line;
+        self.cursor_col = col;
+        // sel_anchor was set on mouse_down; don't clear it
+    }
+
+    /// Select the word under the double-click at (x, y).
+    fn double_click_select_word(&mut self, x: f64, y: f64) {
+        let (line, col) = self.hit_test(x, y);
+        let text = &self.lines[line];
+        let bytes = text.as_bytes();
+
+        // Expand to word boundaries
+        let mut word_start = col;
+        let mut word_end = col;
+        while word_start > 0 && is_word_byte(bytes[word_start - 1]) {
+            word_start -= 1;
+        }
+        while word_end < bytes.len() && is_word_byte(bytes[word_end]) {
+            word_end += 1;
+        }
+
+        self.cursor_line = line;
+        self.cursor_col = word_end;
+        self.sel_anchor = Some((line, word_start));
     }
 
     fn gutter_width(&self) -> f64 {
@@ -835,6 +873,32 @@ extern "C" fn on_mouse_down(
     }
 }
 
+extern "C" fn on_mouse_drag(
+    _view: *mut hone_editor_windows::EditorView,
+    x: f64,
+    y: f64,
+) {
+    unsafe {
+        if let Some(ref mut demo) = DEMO {
+            demo.drag_to_cursor(x, y);
+            demo.render();
+        }
+    }
+}
+
+extern "C" fn on_mouse_double_click(
+    _view: *mut hone_editor_windows::EditorView,
+    x: f64,
+    y: f64,
+) {
+    unsafe {
+        if let Some(ref mut demo) = DEMO {
+            demo.double_click_select_word(x, y);
+            demo.render();
+        }
+    }
+}
+
 extern "C" fn on_scroll(
     _view: *mut hone_editor_windows::EditorView,
     _dx: f64,
@@ -970,6 +1034,8 @@ fn main() {
         hone_editor_set_text_input_callback(editor, on_text_input);
         hone_editor_set_action_callback(editor, on_action);
         hone_editor_set_mouse_down_callback(editor, on_mouse_down);
+        hone_editor_set_mouse_drag_callback(editor, on_mouse_drag);
+        hone_editor_set_mouse_double_click_callback(editor, on_mouse_double_click);
         hone_editor_set_scroll_callback(editor, on_scroll);
 
         // Add a custom context menu item to demonstrate extensibility

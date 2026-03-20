@@ -124,6 +124,12 @@ pub type ActionCallback = extern "C" fn(view: *mut EditorView, selector: *const 
 /// Called when the user clicks in the editor view. `x` and `y` are in view coordinates.
 pub type MouseDownCallback = extern "C" fn(view: *mut EditorView, x: f64, y: f64);
 
+/// Called when the user drags the mouse (left button held). `x` and `y` are in view coordinates.
+pub type MouseDragCallback = extern "C" fn(view: *mut EditorView, x: f64, y: f64);
+
+/// Called when the user double-clicks in the editor view. `x` and `y` are in view coordinates.
+pub type MouseDoubleClickCallback = extern "C" fn(view: *mut EditorView, x: f64, y: f64);
+
 /// Called when the user scrolls. `dx`/`dy` are pixel deltas (dy positive = scroll down).
 pub type ScrollCallback = extern "C" fn(view: *mut EditorView, dx: f64, dy: f64);
 
@@ -204,6 +210,8 @@ pub struct EditorView {
     text_input_callback: Option<TextInputCallback>,
     action_callback: Option<ActionCallback>,
     mouse_down_callback: Option<MouseDownCallback>,
+    mouse_drag_callback: Option<MouseDragCallback>,
+    mouse_double_click_callback: Option<MouseDoubleClickCallback>,
     scroll_callback: Option<ScrollCallback>,
 
     // Event queue (for Perry polling)
@@ -234,6 +242,10 @@ pub struct EditorView {
     default_text_color: D2D1_COLOR_F,
     selection_color: D2D1_COLOR_F,
     cursor_color: D2D1_COLOR_F,
+}
+
+fn is_word_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
 }
 
 fn is_null_hwnd(hwnd: HWND) -> bool {
@@ -296,6 +308,8 @@ impl EditorView {
             text_input_callback: None,
             action_callback: None,
             mouse_down_callback: None,
+            mouse_drag_callback: None,
+            mouse_double_click_callback: None,
             scroll_callback: None,
             pending_events: Vec::new(),
             event_callback: None,
@@ -763,6 +777,14 @@ impl EditorView {
         self.mouse_down_callback = Some(cb);
     }
 
+    pub fn set_mouse_drag_callback(&mut self, cb: MouseDragCallback) {
+        self.mouse_drag_callback = Some(cb);
+    }
+
+    pub fn set_mouse_double_click_callback(&mut self, cb: MouseDoubleClickCallback) {
+        self.mouse_double_click_callback = Some(cb);
+    }
+
     /// Called from the WndProc's WM_LBUTTONDOWN handler.
     pub fn on_mouse_down(&mut self, x: f64, y: f64) {
         // Convert from physical pixels to DIPs for DPI-aware Perry mode.
@@ -831,6 +853,11 @@ impl EditorView {
         let scale = self.dpi_scale();
         let x = x / scale;
         let y = y / scale;
+        if let Some(cb) = self.mouse_drag_callback {
+            let self_ptr = self as *mut EditorView;
+            cb(self_ptr, x * scale, y * scale);
+            return;
+        }
         if self.mouse_down_callback.is_some() {
             return;
         }
@@ -875,6 +902,70 @@ impl EditorView {
 
         self.sync_selection_rects();
         self.invalidate();
+    }
+
+    /// Called from the WndProc's WM_LBUTTONDBLCLK handler.
+    pub fn on_mouse_double_click(&mut self, x: f64, y: f64) {
+        let scale = self.dpi_scale();
+        let x = x / scale;
+        let y = y / scale;
+        if let Some(cb) = self.mouse_double_click_callback {
+            let self_ptr = self as *mut EditorView;
+            cb(self_ptr, x * scale, y * scale);
+            return;
+        }
+        // Rust-side: find the word under click and select it.
+        if let Some(line) = self.frame_lines.iter().min_by(|a, b| {
+            let da = (a.y_offset - y).abs();
+            let db = (b.y_offset - y).abs();
+            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+        }) {
+            let line_number = line.line_number;
+            let text = line.text.clone();
+            self.user_has_clicked = true;
+            let gutter_w = self.gutter_width();
+            let text_x = (x - gutter_w).max(0.0);
+
+            // Find byte offset at click
+            let mut best_byte_col = 0usize;
+            let mut best_dist = f64::MAX;
+            let mut byte_pos = 0usize;
+            loop {
+                let w = self.renderer.measure_text(&text[..byte_pos]);
+                let dist = (w - text_x).abs();
+                if dist < best_dist {
+                    best_dist = dist;
+                    best_byte_col = byte_pos;
+                }
+                if let Some(ch) = text[byte_pos..].chars().next() {
+                    byte_pos += ch.len_utf8();
+                } else {
+                    break;
+                }
+            }
+
+            // Expand to word boundaries
+            let bytes = text.as_bytes();
+            let mut word_start = best_byte_col;
+            let mut word_end = best_byte_col;
+            while word_start > 0 && is_word_byte(bytes[word_start - 1]) {
+                word_start -= 1;
+            }
+            while word_end < bytes.len() && is_word_byte(bytes[word_end]) {
+                word_end += 1;
+            }
+
+            self.rust_cursor_line = line_number;
+            self.rust_col = word_end;
+            self.rust_sel_anchor = Some((line_number, word_start));
+
+            let cursor_x = gutter_w + self.renderer.measure_text(&text[..word_end]);
+            let cursor_y = line.y_offset;
+            self.cursor = Some(CursorData { x: cursor_x, y: cursor_y, style: 0 });
+
+            self.sync_selection_rects();
+            self.invalidate();
+        }
     }
 
     pub fn set_scroll_callback(&mut self, cb: ScrollCallback) {
