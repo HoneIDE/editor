@@ -42,9 +42,11 @@ export class UndoManager {
     forceNewGroup: boolean = false,
   ): void {
     const now = Date.now();
+    // Take ownership of edits/deletedTexts (callers don't reuse them).
+    // Cursor states must be cloned since CursorManager mutates them.
     const op: Operation = {
-      edits: edits.map(e => ({ ...e })),
-      deletedTexts: [...deletedTexts],
+      edits: edits,
+      deletedTexts: deletedTexts,
       cursorsBefore: cursorsBefore.map(c => ({ ...c, selectionAnchor: c.selectionAnchor ? { ...c.selectionAnchor } : null })),
       cursorsAfter: cursorsAfter.map(c => ({ ...c, selectionAnchor: c.selectionAnchor ? { ...c.selectionAnchor } : null })),
       timestamp: now,

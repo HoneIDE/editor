@@ -385,7 +385,53 @@ export class Rope {
     const actualLength = Math.min(length, this.root.charCount - offset);
     const deletedText = this.getText(offset, offset + actualLength);
 
-    // Collect all pieces in a flat array, perform the delete, rebuild
+    // Fast path: deletion within a single piece in one leaf
+    const loc = this.findByOffset(offset);
+    if (loc && loc.offsetInPiece + actualLength <= loc.leaf.pieces[loc.pieceIndex].len) {
+      const leaf = loc.leaf;
+      const piece = leaf.pieces[loc.pieceIndex];
+      const buffer = piece.bufferType === 'original'
+        ? this.pieceTable.originalBuffer
+        : this.pieceTable.addBuffer;
+
+      if (loc.offsetInPiece === 0 && actualLength === piece.len) {
+        // Remove entire piece
+        leaf.pieces.splice(loc.pieceIndex, 1);
+      } else if (loc.offsetInPiece === 0) {
+        // Trim from start
+        piece.start += actualLength;
+        piece.len -= actualLength;
+        piece.lineBreakCount = countLineBreaks(buffer, piece.start, piece.len);
+      } else if (loc.offsetInPiece + actualLength === piece.len) {
+        // Trim from end
+        piece.len = loc.offsetInPiece;
+        piece.lineBreakCount = countLineBreaks(buffer, piece.start, piece.len);
+      } else {
+        // Split piece, removing middle
+        const rightStart = piece.start + loc.offsetInPiece + actualLength;
+        const rightLen = piece.len - loc.offsetInPiece - actualLength;
+        const rightPiece: PieceDescriptor = {
+          bufferType: piece.bufferType,
+          start: rightStart,
+          len: rightLen,
+          lineBreakCount: countLineBreaks(buffer, rightStart, rightLen),
+        };
+        piece.len = loc.offsetInPiece;
+        piece.lineBreakCount = countLineBreaks(buffer, piece.start, piece.len);
+        leaf.pieces.splice(loc.pieceIndex + 1, 0, rightPiece);
+      }
+
+      // Update stats up the tree
+      updateNodeStats(leaf);
+      for (let i = loc.path.length - 1; i >= 0; i--) {
+        updateNodeStats(loc.path[i].node);
+      }
+      // Sync piece table
+      this.pieceTable.setPieces(this.collectAllPieces());
+      return deletedText;
+    }
+
+    // Slow path: multi-piece delete — collect all pieces, delete range, rebuild
     const allPieces = this.collectAllPieces();
     const newPieces = this.deletePiecesInRange(allPieces, offset, actualLength);
 
@@ -521,24 +567,113 @@ export class Rope {
   }
 
   private appendPiece(piece: PieceDescriptor): void {
-    const allPieces = this.collectAllPieces();
-    allPieces.push(piece);
-    this.root = this.buildTree(allPieces);
+    // Navigate to the last leaf
+    const path: { node: InternalNode; childIndex: number }[] = [];
+    let node = this.root;
+
+    while (node.kind === 'internal') {
+      const lastIdx = node.children.length - 1;
+      path.push({ node: node, childIndex: lastIdx });
+      node = node.children[lastIdx];
+    }
+
+    const leaf = node as LeafNode;
+    leaf.pieces.push(piece);
+
+    // Update stats up the tree
+    updateNodeStats(leaf);
+    for (let i = path.length - 1; i >= 0; i--) {
+      updateNodeStats(path[i].node);
+    }
+
+    // Check if leaf needs splitting
+    this.maybeRebalance(leaf, path);
   }
 
   private prependPiece(piece: PieceDescriptor): void {
-    const allPieces = this.collectAllPieces();
-    allPieces.unshift(piece);
-    this.root = this.buildTree(allPieces);
+    // Navigate to the first leaf
+    const path: { node: InternalNode; childIndex: number }[] = [];
+    let node = this.root;
+
+    while (node.kind === 'internal') {
+      path.push({ node: node, childIndex: 0 });
+      node = node.children[0];
+    }
+
+    const leaf = node as LeafNode;
+    // Insert at beginning via splice (Perry-safe)
+    leaf.pieces.splice(0, 0, piece);
+
+    // Update stats up the tree
+    updateNodeStats(leaf);
+    for (let i = path.length - 1; i >= 0; i--) {
+      updateNodeStats(path[i].node);
+    }
+
+    // Check if leaf needs splitting
+    this.maybeRebalance(leaf, path);
   }
 
   private maybeRebalance(leaf: LeafNode, path: { node: InternalNode; childIndex: number }[]): void {
     if (leaf.pieces.length <= MAX_CHILDREN) return;
-    // Rebuild the entire tree from pieces for simplicity
-    // (A production implementation would do targeted splits, but this is
-    // correct and fast enough — the rebuild is O(n/B * log_B(n/B)))
-    const allPieces = this.collectAllPieces();
-    this.root = this.buildTree(allPieces);
+
+    // Split the leaf into two halves
+    const mid = Math.floor(leaf.pieces.length / 2);
+    const rightPieces = leaf.pieces.splice(mid);
+    // leaf.pieces now has the left half
+    const rightLeaf = createLeaf(rightPieces);
+    updateNodeStats(leaf);
+
+    // Insert rightLeaf into parent
+    if (path.length === 0) {
+      // Leaf is the root — create a new internal root
+      this.root = createInternal([leaf, rightLeaf]);
+      return;
+    }
+
+    const parentEntry = path[path.length - 1];
+    const parent = parentEntry.node;
+    parent.children.splice(parentEntry.childIndex + 1, 0, rightLeaf);
+    updateNodeStats(parent);
+
+    // If parent overflows, split it too (propagate up)
+    if (parent.children.length > MAX_CHILDREN) {
+      this.splitInternal(path, path.length - 1);
+    } else {
+      // Just update stats up the rest of the path
+      for (let i = path.length - 2; i >= 0; i--) {
+        updateNodeStats(path[i].node);
+      }
+    }
+  }
+
+  private splitInternal(path: { node: InternalNode; childIndex: number }[], pathIndex: number): void {
+    const node = path[pathIndex].node;
+    const mid = Math.floor(node.children.length / 2);
+    const rightChildren = node.children.splice(mid);
+    const rightNode = createInternal(rightChildren);
+    updateNodeStats(node);
+
+    if (pathIndex === 0) {
+      // This node is a child of the root — create new root
+      this.root = createInternal([node, rightNode]);
+      return;
+    }
+
+    // Insert rightNode into grandparent
+    const gpEntry = path[pathIndex - 1];
+    const grandparent = gpEntry.node;
+    grandparent.children.splice(gpEntry.childIndex + 1, 0, rightNode);
+    updateNodeStats(grandparent);
+
+    if (grandparent.children.length > MAX_CHILDREN) {
+      this.splitInternal(path, pathIndex - 1);
+    } else {
+      // Update stats for remaining ancestors
+      for (let i = pathIndex - 2; i >= 0; i--) {
+        updateNodeStats(path[i].node);
+      }
+    }
   }
 
   /**

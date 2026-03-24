@@ -83,6 +83,73 @@ export class TextBuffer {
   }
 
   /**
+   * Incrementally update _lineStarts after an insert.
+   * Perry-safe: builds a NEW array (no splice/push on class field arrays).
+   */
+  private _updateLineStartsInsert(offset: number, text: string): void {
+    const old = this._lineStarts;
+    const insertLen = text.length;
+
+    // Find the line containing offset via binary search
+    let lo = 0, hi = old.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (old[mid] <= offset) lo = mid;
+      else hi = mid - 1;
+    }
+    const lineNum = lo;
+
+    // Build new array: [before] + [new line starts] + [shifted after]
+    const result: number[] = [];
+
+    // Copy starts up to and including the line containing offset
+    for (let i = 0; i <= lineNum; i++) {
+      result.push(old[i]);
+    }
+
+    // Add new line starts from inserted text
+    for (let i = 0; i < text.length; i++) {
+      if (text.charCodeAt(i) === 10) {
+        result.push(offset + i + 1);
+      }
+    }
+
+    // Copy and shift remaining starts
+    for (let i = lineNum + 1; i < old.length; i++) {
+      result.push(old[i] + insertLen);
+    }
+
+    this._lineStarts = result;
+    this._lineCount = result.length;
+  }
+
+  /**
+   * Incrementally update _lineStarts after a delete.
+   * Perry-safe: builds a NEW array (no splice on class field arrays).
+   */
+  private _updateLineStartsDelete(offset: number, length: number): void {
+    const old = this._lineStarts;
+    const deleteEnd = offset + length;
+
+    // Build new array: keep starts before/at offset, skip starts in deleted range, shift the rest
+    const result: number[] = [];
+
+    for (let i = 0; i < old.length; i++) {
+      if (old[i] <= offset) {
+        // Before or at the deletion point — keep as-is
+        result.push(old[i]);
+      } else if (old[i] > deleteEnd) {
+        // After the deleted range — shift back
+        result.push(old[i] - length);
+      }
+      // Starts within (offset, deleteEnd] are dropped
+    }
+
+    this._lineStarts = result;
+    this._lineCount = result.length;
+  }
+
+  /**
    * Insert text at the given character offset.
    * @returns The actual number of characters inserted.
    */
@@ -97,7 +164,7 @@ export class TextBuffer {
     } else {
       this._text = this._text.substring(0, clampedOffset) + text + this._text.substring(clampedOffset);
     }
-    this._rebuildLineStarts();
+    this._updateLineStartsInsert(clampedOffset, text);
     return text.length;
   }
 
@@ -109,7 +176,7 @@ export class TextBuffer {
     if (length <= 0) return '';
     const deletedText = this._text.substring(offset, offset + length);
     this._text = this._text.substring(0, offset) + this._text.substring(offset + length);
-    this._rebuildLineStarts();
+    this._updateLineStartsDelete(offset, length);
     return deletedText;
   }
 

@@ -119,6 +119,7 @@ export class CursorManager {
       if (c.line === line && c.column === column) return;
     }
 
+    this._cursorsSorted = false;
     this._cursors.push({
       line,
       column,
@@ -144,6 +145,7 @@ export class CursorManager {
         });
       }
     }
+    this._cursorsSorted = false;
     this._cursors.push(...newCursors);
     this.sortCursors();
     this.mergeCursors();
@@ -165,6 +167,7 @@ export class CursorManager {
         });
       }
     }
+    this._cursorsSorted = false;
     this._cursors.push(...newCursors);
     this.sortCursors();
     this.mergeCursors();
@@ -187,17 +190,42 @@ export class CursorManager {
     if (searchText.length === 0) return;
 
     const fullText = this.buffer.getText();
-    this._cursors = [];
+
+    // Collect all match offsets first
+    const matchOffsets: number[] = [];
     let searchFrom = 0;
     while (true) {
       const idx = fullText.indexOf(searchText, searchFrom);
       if (idx === -1) break;
+      matchOffsets.push(idx);
+      searchFrom = idx + searchText.length;
+    }
 
-      const startLine = this.buffer.getOffsetLine(idx);
-      const startCol = idx - this.buffer.getLineOffset(startLine);
-      const endOffset = idx + searchText.length;
-      const endLine = this.buffer.getOffsetLine(endOffset);
-      const endCol = endOffset - this.buffer.getLineOffset(endLine);
+    // Batch convert offsets to line/col in a single forward pass
+    // (avoids O(n * log n) binary searches for sorted offsets)
+    this._cursors = [];
+    let curLine = 0;
+    let curLineOffset = 0;
+    const lineCount = this.buffer.getLineCount();
+    const searchLen = searchText.length;
+
+    for (let mi = 0; mi < matchOffsets.length; mi++) {
+      const startOff = matchOffsets[mi];
+      const endOff = startOff + searchLen;
+
+      // Advance curLine to find the line containing startOff
+      while (curLine + 1 < lineCount && this.buffer.getLineOffset(curLine + 1) <= startOff) {
+        curLine++;
+      }
+      const startLine = curLine;
+      const startCol = startOff - this.buffer.getLineOffset(startLine);
+
+      // Advance curLine to find the line containing endOff
+      while (curLine + 1 < lineCount && this.buffer.getLineOffset(curLine + 1) <= endOff) {
+        curLine++;
+      }
+      const endLine = curLine;
+      const endCol = endOff - this.buffer.getLineOffset(endLine);
 
       this._cursors.push({
         line: endLine,
@@ -205,8 +233,6 @@ export class CursorManager {
         selectionAnchor: { line: startLine, column: startCol },
         desiredColumn: endCol,
       });
-
-      searchFrom = idx + searchText.length;
     }
 
     if (this._cursors.length === 0) {
@@ -264,6 +290,7 @@ export class CursorManager {
     const endLine = this.buffer.getOffsetLine(endOffset);
     const endCol = endOffset - this.buffer.getLineOffset(endLine);
 
+    this._cursorsSorted = false;
     this._cursors.push({
       line: endLine,
       column: endCol,
@@ -414,11 +441,15 @@ export class CursorManager {
     return Math.max(0, Math.min(column, lineLen));
   }
 
+  private _cursorsSorted: boolean = false;
+
   private sortCursors(): void {
+    if (this._cursorsSorted) return;
     this._cursors.sort((a, b) => {
       if (a.line !== b.line) return a.line - b.line;
       return a.column - b.column;
     });
+    this._cursorsSorted = true;
   }
 
   /** Merge overlapping or coincident cursors. */

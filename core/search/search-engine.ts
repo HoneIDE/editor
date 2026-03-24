@@ -155,26 +155,97 @@ export function searchPrev(
 
 function literalSearch(buffer: TextBuffer, query: string, opts: SearchOptions): SearchMatch[] {
   const text = buffer.getText();
-  const searchText = opts.caseSensitive ? text : text.toLowerCase();
-  const searchQuery = opts.caseSensitive ? query : query.toLowerCase();
   const matches: SearchMatch[] = [];
 
-  let pos = 0;
-  while (pos < searchText.length) {
-    const idx = searchText.indexOf(searchQuery, pos);
-    if (idx === -1) break;
+  if (opts.caseSensitive) {
+    // Direct search on original text — no copy needed
+    let pos = 0;
+    while (pos < text.length) {
+      const idx = text.indexOf(query, pos);
+      if (idx === -1) break;
 
-    if (opts.wholeWord && !isWholeWord(text, idx, query.length)) {
-      pos = idx + 1;
-      continue;
+      if (opts.wholeWord && !isWholeWord(text, idx, query.length)) {
+        pos = idx + 1;
+        continue;
+      }
+
+      const matchText = text.substring(idx, idx + query.length);
+      matches.push(createMatch(buffer, idx, query.length, matchText));
+      pos = idx + query.length;
     }
+  } else {
+    // Case-insensitive: lowercase the query only, scan text with charCode comparison
+    const lowerQuery = query.toLowerCase();
+    const qLen = query.length;
+    const firstQChar = lowerQuery.charCodeAt(0);
 
-    const matchText = text.substring(idx, idx + query.length);
-    matches.push(createMatch(buffer, idx, query.length, matchText));
-    pos = idx + query.length;
+    let pos = 0;
+    while (pos <= text.length - qLen) {
+      // Fast ASCII check for first character
+      const ch = text.charCodeAt(pos);
+      const lch = (ch >= 65 && ch <= 90) ? ch + 32 : ch;
+      if (lch !== firstQChar) {
+        pos++;
+        continue;
+      }
+
+      // Check remaining characters
+      let matched = true;
+      for (let j = 1; j < qLen; j++) {
+        const c = text.charCodeAt(pos + j);
+        const lc = (c >= 65 && c <= 90) ? c + 32 : c;
+        if (lc !== lowerQuery.charCodeAt(j)) {
+          matched = false;
+          break;
+        }
+      }
+
+      if (!matched) {
+        pos++;
+        continue;
+      }
+
+      if (opts.wholeWord && !isWholeWord(text, pos, qLen)) {
+        pos++;
+        continue;
+      }
+
+      const matchText = text.substring(pos, pos + qLen);
+      matches.push(createMatch(buffer, pos, qLen, matchText));
+      pos += qLen;
+    }
   }
 
   return matches;
+}
+
+// 2-slot regex compilation cache
+let _reCacheKey1 = '';
+let _reCacheFlags1 = '';
+let _reCacheRe1: RegExp | null = null;
+let _reCacheKey2 = '';
+let _reCacheFlags2 = '';
+let _reCacheRe2: RegExp | null = null;
+
+function getCachedRegExp(pattern: string, flags: string): RegExp {
+  if (_reCacheKey1 === pattern && _reCacheFlags1 === flags && _reCacheRe1 !== null) {
+    _reCacheRe1.lastIndex = 0;
+    return _reCacheRe1;
+  }
+  if (_reCacheKey2 === pattern && _reCacheFlags2 === flags && _reCacheRe2 !== null) {
+    _reCacheRe2.lastIndex = 0;
+    return _reCacheRe2;
+  }
+  // Evict slot 2, move slot 1 to slot 2
+  _reCacheKey2 = _reCacheKey1;
+  _reCacheFlags2 = _reCacheFlags1;
+  _reCacheRe2 = _reCacheRe1;
+  // Create new regex in slot 1
+  const re = new RegExp(pattern, flags);
+  _reCacheKey1 = pattern;
+  _reCacheFlags1 = flags;
+  _reCacheRe1 = re;
+  return re;
 }
 
 function regexSearch(buffer: TextBuffer, pattern: string, opts: SearchOptions): SearchMatch[] {
@@ -182,7 +253,7 @@ function regexSearch(buffer: TextBuffer, pattern: string, opts: SearchOptions): 
 
   try {
     const flags = opts.caseSensitive ? 'g' : 'gi';
-    const re = new RegExp(pattern, flags);
+    const re = getCachedRegExp(pattern, flags);
     const text = buffer.getText();
 
     let match: RegExpExecArray | null;
