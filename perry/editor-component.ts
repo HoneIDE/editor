@@ -10,7 +10,7 @@
 
 import { embedNSView } from 'perry/ui';
 import { EditorDocument } from '../core/document/document';
-import { EditorViewModel, KeyEvent, MouseEvent as EditorMouseEvent, ScrollEvent, setPerryMarkdownState, setPerryLanguageState, setPerryTokenTheme, getPerryCursorState, setPerryCursorPos } from '../view-model/editor-view-model';
+import { EditorViewModel, KeyEvent, MouseEvent as EditorMouseEvent, ScrollEvent, setPerryMarkdownState, setPerryLanguageState, setPerryTokenTheme, getPerryCursorState, setPerryCursorPos, getPerryClipboard } from '../view-model/editor-view-model';
 import { NativeRenderCoordinator, RenderCoordinatorConfig } from '../native/render-coordinator';
 import { DARK_THEME, LIGHT_THEME, EditorTheme } from '../view-model/theme';
 import type { NativeEditorFFI, NativeViewHandle } from '../native/ffi-bridge';
@@ -147,7 +147,6 @@ let _debugHandle: number = 0;
 let _persistentDecorations = '';
 let _measuredCharWidth: number = 8.5;
 
-/** Module-level widget creation — avoids Perry AOT class field access issues. */
 /** Set persistent decorations JSON that gets re-pushed after every begin_frame clear.
  * Use for find highlights, bracket matching, etc. that must survive frame clears.
  * Pass empty string to clear. */
@@ -178,9 +177,9 @@ function _unregisterEditor(slot: number): void {
 
 /** Module-level poll function for setInterval. */
 function _pollAllEditors(): void {
-  if (_editor0 !== null && _editor0 !== undefined) _editor0.flushEvents();
-  if (_editor1 !== null && _editor1 !== undefined) _editor1.flushEvents();
-  if (_editor2 !== null && _editor2 !== undefined) _editor2.flushEvents();
+  _editor0?.flushEvents();
+  _editor1?.flushEvents();
+  _editor2?.flushEvents();
 }
 
 /**
@@ -263,10 +262,6 @@ class PerryEditorFFI implements NativeEditorFFI {
 
 /**
  * Options for configuring the Editor component.
- *
- * NOTE: The constructor reads each field with explicit if-checks instead of
- * object spread or nullish coalescing — those patterns don't compile in Perry's
- * native codegen. Test code (Bun) can freely spread into this interface.
  */
 export interface EditorOptions {
   /** Custom FFI implementation. Omit to use Perry's native FFI. Useful for testing. */
@@ -287,10 +282,6 @@ export interface EditorOptions {
 
 /**
  * Perry-embeddable code editor component.
- *
- * NOTE: Constructor body avoids object spread, nullish coalescing (??) and
- * optional-chaining (?.) — those patterns don't compile correctly in Perry's
- * native codegen. Explicit if-else is used throughout.
  */
 export class Editor {
   private _doc: EditorDocument;
@@ -318,46 +309,15 @@ export class Editor {
     this._height = height;
     this.nativeHandle = null;
 
-    // Resolve FFI — use injected impl (for testing) or Perry's native impl.
-    let ffi: NativeEditorFFI;
-    if (opts && opts.ffi) {
-      ffi = opts.ffi;
-    } else {
-      ffi = new PerryEditorFFI();
-    }
+    const ffi: NativeEditorFFI = opts?.ffi ?? new PerryEditorFFI();
     this._ffi = ffi;
 
-    // Resolve options with explicit if-checks (no ?. or ?? — Perry constraint).
-    let initialContent = '';
-    if (opts && opts.content) {
-      initialContent = opts.content;
-    }
-
-    let language = 'typescript';
-    if (opts && opts.language) {
-      language = opts.language;
-    }
-
-    let useLight = false;
-    if (opts && opts.theme) {
-      useLight = opts.theme === 'light';
-    }
-    const theme: EditorTheme = useLight ? LIGHT_THEME : DARK_THEME;
-
-    let fontSize = 14;
-    if (opts && opts.fontSize) {
-      fontSize = opts.fontSize;
-    }
-
-    let fontFamily = 'Menlo';
-    if (opts && opts.fontFamily) {
-      fontFamily = opts.fontFamily;
-    }
-
-    let readOnly = false;
-    if (opts && opts.readOnly) {
-      readOnly = true;
-    }
+    const initialContent = opts?.content ?? '';
+    const language = opts?.language ?? 'typescript';
+    const fontSize = opts?.fontSize ?? 14;
+    const fontFamily = opts?.fontFamily ?? 'Menlo';
+    const theme: EditorTheme = opts?.theme === 'light' ? LIGHT_THEME : DARK_THEME;
+    const readOnly = opts?.readOnly === true;
 
     const doc = new EditorDocument('untitled', initialContent, language);
     this._doc = doc;
@@ -365,10 +325,7 @@ export class Editor {
     const syntaxEngine = new KeywordSyntaxEngine();
     const vm = new EditorViewModel(doc, theme, syntaxEngine);
     vm.setPerryMode(true);
-    // Perry-safe: bypass _tokenProvider closure, call engine directly
-    // in visibleLines getter via this.syntaxEngine (no closure method dispatch).
     vm.setDirectTokens(1);
-    // Set module-level language state so the inline tokenizer knows which keywords to use.
     setPerryLanguageState(language);
     this._vm = vm;
 
@@ -381,11 +338,7 @@ export class Editor {
     const coordinator = new NativeRenderCoordinator(ffi, config);
     this._coordinator = coordinator;
 
-    // Perry AOT: coordinator.create() dispatches through the NativeEditorFFI
-    // interface at runtime. Perry's AOT codegen emits js_native_call_method for
-    // interface methods, which requires a JS callback that is null in AOT mode.
-    // Instead, call hone_editor_create directly (a declared extern "C" function
-    // that Perry resolves statically) and inject the handle into the coordinator.
+    // Call hone_editor_create directly and inject the handle into the coordinator.
     const handle = hone_editor_create(width, height);
     coordinator.setHandle(handle);
     this.nativeHandle = handle;
@@ -393,10 +346,7 @@ export class Editor {
 
     coordinator.attach(vm);
 
-    // Measure real char width from native renderer (setHandle bypasses create()
-    // which normally does this). Must be AFTER attach() and set directly on vm —
-    // Perry class field reads return initial values, so coordinator._charWidth
-    // from setCharWidthDirect() would still read as 8 inside attach().
+    // Measure real char width from native renderer.
     const measuredWidth = hone_editor_measure_text(handle, 'M' as any);
     if (measuredWidth > 0) {
       vm.setCharWidth(measuredWidth);
@@ -409,7 +359,6 @@ export class Editor {
     vm.onResize(width, height);
 
     // Detect platform
-    // Set module-level platform flag (class field reads return stale values in Perry)
     const iosCheck = hone_editor_is_ios();
     if (iosCheck > 0) { _isMobilePlatform = 1; }
     this._isIOS = _isMobilePlatform;
@@ -423,17 +372,11 @@ export class Editor {
       hone_editor_set_read_only(handle, 1);
     }
 
-    // Perry AOT: coordinator.attach() and vm.onResize() trigger onChange → render()
-    // which calls _ffi.* methods via interface dispatch — fails on GTK4/Linux
-    // (Perry's js_native_call_method callback is null in AOT mode).
-    // Call direct render with initialContent to populate frame_lines in the Rust view.
+    // Direct render to populate frame_lines in the Rust view.
     _currentBufferText = initialContent;
     this._directRenderText(initialContent);
 
-    // _directRenderText sends empty '[]' tokens via render_line, which overwrites
-    // the Rust line_cache. But the coordinator's TS-side cache still thinks those
-    // lines are clean (from the render() in attach/onResize). Clear it so the next
-    // coordinator.render() (in flushEvents) re-sends lines with proper tokens.
+    // Clear TS-side cache so next render() re-sends lines with proper tokens.
     coordinator.clearLineCache();
 
     // Register in a multi-instance slot.
@@ -480,15 +423,10 @@ export class Editor {
     // Reset scroll and cursor to top of new content
     vm.viewport.scroll.scrollTo(0, 0);
     vm.cursorManager.reset(0, 0);
-    // Rebuild block comment depth cache for new content
     const engine = vm.syntaxEngine;
     engine.parse(buf);
-    // Perry-safe: build fence cache for markdown content.
-    // NOTE: doc.languageId === 'markdown' string comparison fails in Perry AOT.
-    // Use this._isMd which was set by setLanguage() (called before setContent).
     if (this._isMd === 1) {
-      // Build fence cache: char 'N' = not in fence, 'F' = in fence
-      // Using printable chars (not \0/\1) because Perry strings may be null-terminated
+      // Build fence cache: 'N' = not in fence, 'F' = in fence
       let fenceStr = '';
       let inFence = false;
       for (let fi = 0; fi < lineCount; fi++) {
@@ -511,11 +449,8 @@ export class Editor {
       hone_editor_clear_line_cache(handle as number);
     }
     vm.touch();
-    // Perry AOT: coordinator.invalidate() calls _ffi.* via interface dispatch → fails on GTK4/Linux.
-    // Use direct render with the text parameter (already in scope) to push to Rust.
     _currentBufferText = text;
     this._directRenderText(text);
-    // Clear coordinator's TS-side cache so the next render() re-sends tokens.
     this._coordinator.clearLineCache();
   }
 
@@ -527,9 +462,6 @@ export class Editor {
     const engine = vm.syntaxEngine;
     engine.setLanguage(languageId);
     engine.parse(doc.buffer);
-    // Perry-safe: set module-level markdown state directly from the language string.
-    // Engine method calls and property access fail after first frame in Perry AOT.
-    // Module-level vars are the ONLY reliable mutable state in Perry getters.
     setPerryLanguageState(languageId);
     if (languageId === 'markdown') {
       this._isMd = 1;
@@ -662,9 +594,6 @@ export class Editor {
   }
 
   createPerryWidget(): unknown {
-    // Use module-level _debugHandle instead of this.nativeHandle —
-    // Perry AOT class field reads may return the initial value (null/0)
-    // rather than the value assigned during the constructor.
     return embedNSView(hone_editor_nsview(_debugHandle));
   }
 
@@ -681,13 +610,12 @@ export class Editor {
     const event: KeyEvent = {
       key,
       code: key,
-      ctrlKey: modifiers !== undefined && modifiers.ctrl === true,
-      shiftKey: modifiers !== undefined && modifiers.shift === true,
-      altKey: modifiers !== undefined && modifiers.alt === true,
-      metaKey: modifiers !== undefined && modifiers.meta === true,
+      ctrlKey: modifiers?.ctrl === true,
+      shiftKey: modifiers?.shift === true,
+      altKey: modifiers?.alt === true,
+      metaKey: modifiers?.meta === true,
     };
-    const vm = this._vm;
-    return vm.onKeyDown(event);
+    return this._vm.onKeyDown(event);
   }
 
   /** Handle text input (e.g., from IME). */
@@ -747,8 +675,6 @@ export class Editor {
    * Public so the module-level top-level function can reach it without a closure.
    */
   flushEvents(): void {
-    // Perry AOT inverts === null checks on union-typed fields.
-    // Skip null guard — constructor always sets nativeHandle before this runs.
     const h = this.nativeHandle as number;
 
     // Sync view dimensions
@@ -824,7 +750,6 @@ export class Editor {
    */
   private _pollEvents(): number {
     if (this._disposed) return 0;
-    // Perry AOT inverts === null checks on union-typed fields. Skip guard.
     const handle = this.nativeHandle as number;
 
     const count = hone_editor_pending_event_count(handle);
@@ -872,8 +797,6 @@ export class Editor {
         const x = hone_editor_get_event_x(handle as number, i);
         const y = hone_editor_get_event_y(handle as number, i);
         if (_isMobilePlatform > 0) {
-          // Mobile: compute (line, col) directly using module-level charWidth
-          // to avoid Perry class field issues in pixelToPosition.
           const scrollTop = vm.viewport.scroll.scrollTop;
           const lh = 14 + 14 / 2;
           const line = Math.max(0, Math.min(
@@ -920,7 +843,6 @@ export class Editor {
     }
 
     hone_editor_clear_events(handle as number);
-    // Update module-level text for iOS _directRenderText (Perry class field chains stale)
     if (hadContentChange > 0) {
       _currentBufferText = vm.document.buffer.getText();
     }
@@ -963,7 +885,7 @@ export class Editor {
     else if (aid === ACTION_SELECT_ALL) { vm.executeCommand('editor.action.selectAll'); return; }
     else if (aid === ACTION_CUT) {
       vm.executeCommand('editor.action.cut');
-      const cutText = vm.getClipboardText();
+      const cutText = getPerryClipboard();
       if (cutText.length > 0) {
         hone_editor_copy_to_clipboard(this.nativeHandle as number, cutText as any);
       }
@@ -971,7 +893,7 @@ export class Editor {
     }
     else if (aid === ACTION_COPY) {
       vm.executeCommand('editor.action.copy');
-      const copiedText = vm.getClipboardText();
+      const copiedText = getPerryClipboard();
       if (copiedText.length > 0) {
         hone_editor_copy_to_clipboard(this.nativeHandle as number, copiedText as any);
       }
@@ -989,41 +911,14 @@ export class Editor {
     else if (aid === ACTION_REDO) { vm.executeCommand('editor.action.redo'); return; }
 
     if (key.length > 0) {
-      // Perry: explicit key: value (no ES6 shorthand — it captures initial values)
       const event: KeyEvent = {
-        key: key,
-        code: key,
-        ctrlKey: ctrlKey,
-        shiftKey: shiftKey,
-        altKey: altKey,
-        metaKey: false,
+        key, code: key, ctrlKey, shiftKey, altKey, metaKey: false,
       };
       vm.onKeyDown(event);
     }
   }
 
-  /**
-   * Perry AOT direct render: bypasses NativeRenderCoordinator interface dispatch,
-   * which fails on GTK4/Linux (js_native_call_method callback is null in AOT mode).
-   * Calls hone_editor_* FFI functions directly — Perry resolves these statically.
-   *
-   * Takes text as a parameter to avoid Perry getter dispatch issues:
-   * Perry's AOT codegen does not call TypeScript `get` property getters — it reads
-   * the property as a plain field (returning undefined). vm.visibleLines as a getter
-   * returns undefined, making visibleLines.length === 0 and the render loop a no-op.
-   * Passing text directly sidesteps all getter/view-model access.
-   *
-   * Perry AOT constraints apply:
-   * - `for (let i...)` loop (not for-of or .map)
-   * - No object shorthand, no ?. or ??
-   * - Cast strings to `any` for FFI pointer params
-   * - charCodeAt compared to numeric literal (not variable) — Perry-safe
-   */
-  /**
-   * Push cursor position directly via FFI, bypassing coordinator.
-   * The coordinator's renderCursors relies on vm.cursorRenderState getter
-   * which Perry AOT may not dispatch correctly.
-   */
+  /** Push cursor position directly via FFI. */
   private _syncCursor(h: number, vm: EditorViewModel): void {
     const cs = getPerryCursorState();
     const cw = vm.getCharWidth();
@@ -1036,12 +931,8 @@ export class Editor {
     hone_editor_set_cursor(h, x, y, 0);
   }
 
-  /**
-   * Push selection rects directly via FFI, bypassing coordinator.
-   * Reads cursor0.selectionAnchor and cursor position from the cursor manager.
-   */
+  /** Push selection rects directly via FFI. */
   private _syncSelections(h: number, vm: EditorViewModel): void {
-    // Use module-level cursor state (Perry-safe: vm.cursors getter fails in AOT).
     const cs = getPerryCursorState();
     if (cs.anchorLine < 0) {
       hone_editor_begin_selections(h, 0);

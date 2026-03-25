@@ -71,34 +71,16 @@ tests/          Unit and integration tests
 - Only `native/` Rust FFI crates are platform-specific
 - FFI contract is identical across all platforms (same function signatures)
 
-## Perry AOT Codegen Constraints
-Perry compiles TypeScript to native AOT binaries. Its codegen has several limitations that affect
-any code running through it (including `core/`, `view-model/`, `perry/`, and `native/`). These were
-discovered during macOS demo development and apply to **all platforms**:
+## Perry AOT Codegen Notes
+Perry v0.4.14+ compiles standard TypeScript patterns correctly, including: `?.`, `??`, `for...of`,
+ES6 shorthand `{ key }`, `array.push/indexOf/map` on class fields, `obj[variable]` dynamic keys,
+`/regex/.test()`, character range comparisons, and `Array.sort()` with comparators (TimSort).
 
-### Language Patterns That Are Broken in Perry
-| Pattern | Broken | Working Alternative |
-|---|---|---|
-| `obj[variable]` on Record/object | ❌ dynamic key access fails | explicit `if/else if` per key |
-| `array.indexOf(x)` on class fields | ❌ method dispatch broken | `for` loop with `=== x` |
-| `array.push(x)` on class fields | ❌ method dispatch broken | redesign to avoid (see TextBuffer) |
-| `{ color, fontStyle }` shorthand | ❌ captures initial value, not reassigned | `{ color: color, fontStyle: fontStyle }` |
-| `str.charAt(j) === variable` | ❌ comparison to variable fails | compare to string **literal** only |
-| `c >= 'a' && c <= 'z'` range compare | ❌ character range comparisons fail | `ALPHA_STR.indexOf(c) >= 0` where ALPHA_STR is a module-level const |
-| `/regex/.test(str)` | ❌ regex literals fail | replace with indexOf or explicit char checks |
-| `??` nullish coalescing | ❌ not compiled | explicit `if (x !== undefined)` |
-| `?.` optional chaining | ❌ not compiled | explicit null checks |
-| `for...of` on arrays | ⚠️ may not work | `for (let i = 0; i < arr.length; i++)` |
-| `arr.map(fn)` | ⚠️ may not work | explicit `for` loop with `push` |
+**Threading**: `parallelMap`, `parallelFilter`, `spawn` from `perry/thread` for data-parallel work.
+The `core/utils/parallel.ts` shim provides sequential fallback for Bun tests.
 
-### Perry-Safe Patterns to Use
-- **Array iteration**: `for (let i = 0; i < arr.length; i++)` with `arr[i]`
-- **Keyword lookup**: explicit `if/else if` chain comparing to string literals
-- **Object property push**: prefer local arrays; redesign class-field arrays to avoid mutation methods
-- **Object literals**: always use explicit `key: value` syntax, never ES6 shorthand `{ key }`
-- **String scanning**: compare `str.charAt(j)` only to string literals, never to a variable holding the quote character
-- **Record lookups**: replace `RECORD[variable]` with an explicit `if/else if` chain
-- **Character classification**: use `CONST_STR.indexOf(c) >= 0` where `CONST_STR` is a module-level string constant (e.g., `const DIGITS = '0123456789'`). NEVER use `c >= '0' && c <= '9'` — range comparisons on characters fail in Perry AOT.
+**Module-level state**: Cursor position, undo stacks, and tokenization state use module-level
+variables (not class fields) as a proven pattern for cross-function mutable state in Perry.
 
 ### Input Event Architecture (Perry mode)
 Perry's AOT runtime does NOT fire `setInterval` or `requestAnimationFrame` after startup. C function

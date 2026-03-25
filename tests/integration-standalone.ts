@@ -270,11 +270,11 @@ async function run() {
   });
 
   // 10. Diff computation
-  check('Diff computation', () => {
+  await checkAsync('Diff computation', async () => {
     const modified = COMPLEX_SOURCE.replace('DataProcessor', 'StreamProcessor')
       + '\n// Extra line\n';
 
-    const diffResult = computeDiff(COMPLEX_SOURCE, modified);
+    const diffResult = await computeDiff(COMPLEX_SOURCE, modified);
     assert(diffResult.hunks.length > 0, 'should have diff hunks');
 
     const inlineDiff = computeInlineDiff(
@@ -284,7 +284,7 @@ async function run() {
     const changed = inlineDiff.filter(s => s.type !== 'unchanged');
     assert(changed.length > 0, 'should have inline changes');
 
-    vm.diffView.computeDiff(COMPLEX_SOURCE, modified);
+    await vm.diffView.computeDiff(COMPLEX_SOURCE, modified);
     assert(vm.diffView.diff !== null, 'diff view should have diff');
 
     return `${diffResult.hunks.length} hunks, ${diffResult.totalAdded} added, ${diffResult.totalDeleted} deleted`;

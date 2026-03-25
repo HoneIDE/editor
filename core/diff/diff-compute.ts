@@ -6,6 +6,7 @@
  */
 
 import { DiffResult, DiffHunk } from './diff-model';
+import { parallelMap } from '../utils/parallel';
 
 interface EditOp {
   type: 'insert' | 'delete' | 'equal';
@@ -16,7 +17,7 @@ interface EditOp {
 /**
  * Compute a line-level diff between two text contents.
  */
-export function computeDiff(originalText: string, modifiedText: string): DiffResult {
+export async function computeDiff(originalText: string, modifiedText: string): Promise<DiffResult> {
   const originalLines = originalText.length === 0 ? [] : originalText.split('\n');
   const modifiedLines = modifiedText.length === 0 ? [] : modifiedText.split('\n');
 
@@ -26,7 +27,7 @@ export function computeDiff(originalText: string, modifiedText: string): DiffRes
 /**
  * Compute diff between two arrays of lines.
  */
-export function computeLineDiff(originalLines: string[], modifiedLines: string[]): DiffResult {
+export async function computeLineDiff(originalLines: string[], modifiedLines: string[]): Promise<DiffResult> {
   const N = originalLines.length;
   const M = modifiedLines.length;
 
@@ -60,9 +61,9 @@ export function computeLineDiff(originalLines: string[], modifiedLines: string[]
     };
   }
 
-  // Hash lines for fast comparison
-  const originalHashes = originalLines.map(hashLine);
-  const modifiedHashes = modifiedLines.map(hashLine);
+  // Hash lines for fast comparison (parallel for large files)
+  const originalHashes = await parallelMap(originalLines, hashLine);
+  const modifiedHashes = await parallelMap(modifiedLines, hashLine);
 
   // Myers algorithm
   const editOps = myersDiff(originalLines, modifiedLines, originalHashes, modifiedHashes);

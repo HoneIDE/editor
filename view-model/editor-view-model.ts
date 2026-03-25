@@ -23,9 +23,7 @@ import { registerMulticursorCommands } from '../core/commands/multicursor';
 import type { ISyntaxEngine } from '../core/tokenizer/tokenizer-interface';
 import { getLineTokensDirect } from '../core/tokenizer/keyword-syntax-engine';
 
-// Perry-safe: module-level variables for direct tokenization state.
-// Class field mutations aren't visible in getters (Perry captures initial values).
-// Module-level variables ARE read fresh on each function/getter call.
+// Module-level variables for direct tokenization state.
 let _perryLangIsMarkdown: number = 0;
 let _perryFenceCache: string = '';
 let _perryUseDirectTokens: number = 0;
@@ -39,9 +37,14 @@ let _perryCursorLine = 0;
 let _perryCursorCol = 0;
 let _perryAnchorLine = -1;  // -1 = no selection
 let _perryAnchorCol = 0;
+let _perryClipboard = '';  // Module-level clipboard (Perry can't read class fields reliably)
 
 export function getPerryCursorState(): { line: number; col: number; anchorLine: number; anchorCol: number } {
   return { line: _perryCursorLine, col: _perryCursorCol, anchorLine: _perryAnchorLine, anchorCol: _perryAnchorCol };
+}
+
+export function getPerryClipboard(): string {
+  return _perryClipboard;
 }
 
 export function setPerryCursorPos(line: number, col: number): void {
@@ -583,7 +586,7 @@ function _tokenizeCodeLine(line: string, inBlockComment: number): LineToken[] {
     // Whitespace and other
     let j = i;
     while (j < len &&
-           _WORD_CHARS.indexOf(line.charAt(j)) < 0 &&
+           !_WORD_CHARS.indexOf(line.charAt(j)) >= 0 &&
            _OPERATORS.indexOf(line.charAt(j)) < 0 &&
            '{}[]().,;@#'.indexOf(line.charAt(j)) < 0 &&
            line.charAt(j) !== '/' &&
@@ -733,7 +736,6 @@ export class EditorViewModel {
   private _charWidth: number = 8; // default, updated by native renderer
   private _perryMode: boolean = false; // set true to use Perry-safe command handlers
   private _clipboardText: string = ''; // internal clipboard for Perry-safe copy/paste
-  // Single listener — Perry-safe (no array push/splice/for...of needed).
   private _listener: ChangeListener | null = null;
 
   // Token/decoration providers (set by syntax engine)
@@ -741,26 +743,21 @@ export class EditorViewModel {
   private _decorationProvider: ((lineNumber: number) => LineDecoration[]) | null = null;
   private _foldStateProvider: ((lineNumber: number) => 'expanded' | 'collapsed' | 'none') | null = null;
 
-  // Perry-safe direct tokenization: bypass _tokenProvider closure entirely.
-  // When set to 1, visibleLines calls this.syntaxEngine.getLineTokens() directly.
+  // Direct tokenization mode: when set to 1, visibleLines inlines tokenization.
   private _useDirectTokens: number = 0;
-
-  // Perry-safe language tracking: engine property access fails after first frame.
-  // Track markdown flag and fence cache string directly on the ViewModel.
   _langIsMarkdown: number = 0;
   _fenceCache: string = '';
 
   constructor(doc: EditorDocument, theme?: EditorTheme, syntaxEngine?: ISyntaxEngine) {
     this.document = doc;
-    this._theme = theme !== undefined ? theme : DARK_THEME;
+    this._theme = theme ?? DARK_THEME;
 
     this.cursorManager = new CursorManager(doc.buffer);
     this.viewport = new ViewportManager();
     this.undoManager = new UndoManager(doc.buffer);
     this.commandRegistry = new CommandRegistry();
 
-    // Phase 1 subsystems — use provided engine or a no-op stub
-    this.syntaxEngine = syntaxEngine !== undefined ? syntaxEngine : NO_OP_SYNTAX_ENGINE;
+    this.syntaxEngine = syntaxEngine ?? NO_OP_SYNTAX_ENGINE;
     this.tokenCache = new IncrementalTokenCache(this.syntaxEngine);
     this.foldState = new FoldState();
     this.findWidget = new FindWidgetController();
@@ -795,10 +792,7 @@ export class EditorViewModel {
       this.updateFoldRanges();
     }
 
-    // Wire token provider from syntax engine.
-    // NOTE: bypasses IncrementalTokenCache — Perry's class-field Array.push
-    // dispatch is broken (same issue as LineIndex), causing an infinite loop
-    // in the cache-growth while loop. Call the syntax engine directly instead.
+    // Wire token provider from syntax engine (bypasses IncrementalTokenCache).
     this._tokenProvider = (lineNumber: number) => {
       return this.syntaxEngine.getLineTokens(doc.buffer, lineNumber, this._theme);
     };
@@ -895,13 +889,11 @@ export class EditorViewModel {
 
   /** Subscribe to state changes. */
   onChange(listener: ChangeListener): () => void {
-    // Perry-safe: single nullable field — no array, no push, no for...of.
     this._listener = listener;
     return () => { this._listener = null; };
   }
 
   private notifyChange(): void {
-    // Perry-safe: plain null check on a single field.
     if (this._listener !== null && this._listener !== undefined) {
       this._listener();
     }
@@ -926,15 +918,11 @@ export class EditorViewModel {
     const visRange = this.viewport.getVisibleRange();
 
     const lineNumbers: number[] = [];
-    let i = visRange.startLine;
-    while (i < visRange.endLine) {
+    for (let i = visRange.startLine; i < visRange.endLine; i++) {
       lineNumbers.push(i);
-      i = i + 1;
     }
 
-    // Perry-safe: inline tokenization. Uses module-level functions in the SAME
-    // file (Perry AOT drops cross-module function calls from getters).
-    // Dispatches between markdown (_tokenizeMdLine) and code (_tokenizeCodeLine).
+    // Direct tokenization path: inline tokenization using module-level functions.
     if (_perryUseDirectTokens === 1) {
       const result: RenderedLine[] = [];
       const buf = this.document.buffer;
@@ -1436,9 +1424,11 @@ export class EditorViewModel {
         const endOff = this.document.buffer.getLineOffset(endLine) + endCol;
         const text = this.document.buffer.getTextRange(startOff, endOff);
         this._clipboardText = text;
+        _perryClipboard = text;
       } else {
         const lineText = this.document.buffer.getLine(cursor0.line);
         this._clipboardText = lineText + '\n';
+        _perryClipboard = lineText + '\n';
       }
       return true;
     }
@@ -1713,16 +1703,32 @@ export class EditorViewModel {
         // Double click: select word
         this.cursorManager.reset(line, column);
         this.executeCommand('editor.action.selectWord');
+        // Sync perry anchor from the selection set by selectWord
+        const _dblCursor = this.cursorManager.cursors[0];
+        if (_dblCursor.selectionAnchor) {
+          _perryAnchorLine = _dblCursor.selectionAnchor.line;
+          _perryAnchorCol = _dblCursor.selectionAnchor.column;
+          _perryCursorLine = _dblCursor.line;
+          _perryCursorCol = _dblCursor.column;
+        }
       } else if (event.clickCount === 3) {
         // Triple click: select line
         this.cursorManager.reset(line, 0);
         this.executeCommand('editor.action.selectLine');
+        // Sync perry anchor from the selection set by selectLine
+        const _tplCursor = this.cursorManager.cursors[0];
+        if (_tplCursor.selectionAnchor) {
+          _perryAnchorLine = _tplCursor.selectionAnchor.line;
+          _perryAnchorCol = _tplCursor.selectionAnchor.column;
+          _perryCursorLine = _tplCursor.line;
+          _perryCursorCol = _tplCursor.column;
+        }
       } else {
         this.cursorManager.reset(line, column);
+        _perryCursorLine = line;
+        _perryCursorCol = column;
+        _perryAnchorLine = -1;
       }
-      _perryCursorLine = line;
-      _perryCursorCol = column;
-      _perryAnchorLine = -1;
     }
 
     this._cursorBlink.resetBlink();

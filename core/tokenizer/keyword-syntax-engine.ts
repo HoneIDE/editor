@@ -163,32 +163,36 @@ const LANGUAGE_LINE_COMMENTS: Record<string, string> = {
   xml: '',
 };
 
-// Perry AOT: Object.keys() is not supported in native codegen.
-// List languages explicitly instead of deriving from the Record.
-const SUPPORTED_LANGUAGES = [
-  'typescript', 'javascript', 'python', 'rust', 'html', 'css', 'json', 'markdown', 'c', 'cpp',
-  'go', 'java', 'swift', 'shell', 'ruby', 'php', 'yaml', 'toml', 'sql', 'xml',
-];
+const SUPPORTED_LANGUAGES = Object.keys(LANGUAGE_KEYWORDS);
 
 // ---------------------------------------------------------------------------
 // Token classification helpers
 // ---------------------------------------------------------------------------
 
-// Use indexOf instead of character range comparisons (c >= 'a' && c <= 'z').
-// Perry AOT native codegen does NOT support range-based string comparisons;
-// indexOf on a module-level constant string is the safe equivalent.
-const WORD_CHARS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$';
-const UPPER_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-const DECIMAL_CHARS = '0123456789';
-const HEX_CHARS = '0123456789abcdefABCDEF';
-const OCTAL_CHARS = '01234567';
-
 function isWordChar(c: string): boolean {
-  return WORD_CHARS.indexOf(c) >= 0;
+  const ch = c.charCodeAt(0);
+  return (ch >= 97 && ch <= 122) || (ch >= 65 && ch <= 90) ||
+         (ch >= 48 && ch <= 57) || ch === 95 || ch === 36;
 }
 
 function isUpperCase(c: string): boolean {
-  return UPPER_CHARS.indexOf(c) >= 0;
+  const ch = c.charCodeAt(0);
+  return ch >= 65 && ch <= 90;
+}
+
+function isDecimalChar(c: string): boolean {
+  const ch = c.charCodeAt(0);
+  return ch >= 48 && ch <= 57;
+}
+
+function isHexChar(c: string): boolean {
+  const ch = c.charCodeAt(0);
+  return (ch >= 48 && ch <= 57) || (ch >= 97 && ch <= 102) || (ch >= 65 && ch <= 70);
+}
+
+function isOctalChar(c: string): boolean {
+  const ch = c.charCodeAt(0);
+  return ch >= 48 && ch <= 55;
 }
 
 const OPERATORS = '=+-*/<>!&|?:%~^';
@@ -198,7 +202,6 @@ const OPERATORS = '=+-*/<>!&|?:%~^';
 // ---------------------------------------------------------------------------
 
 // Build a string where charCodeAt(i) = block comment depth at start of line i.
-// Uses string += which is Perry-safe (no module-level array indexed assignment).
 function buildBlockDepthString(buffer: TextBuffer): string {
   let result = '';
   let depth = 0;
@@ -310,86 +313,22 @@ export class KeywordSyntaxEngine implements ISyntaxEngine {
   private keywords: string[] = [];
   private lineComment: string = '//';
   private parsed: boolean = false;
-  // Perry AOT: class field string === comparison is unreliable for dynamically
-  // assigned strings. Use a numeric flag instead.
   _isMarkdown: number = 0;
-  // Block comment depth cache as a STRING — each char's code is the depth at
-  // that line index.  Strings are Perry-safe (no array indexed assignment).
-  // Built in parse(), read via charCodeAt in isInsideBlockComment.
+  // Block comment depth cache: each char's code = depth at start of that line.
   private _blockDepthCache: string = '';
   private _blockDepthLineCount: number = 0;
 
   setLanguage(languageId: string): void {
     this.languageId = languageId;
-    this._isMarkdown = 0;
-    // Explicit if-else instead of Record[variable] lookup — Perry doesn't support
-    // dynamic key access on module-level Record constants in AOT native codegen.
-    if (languageId === 'typescript' || languageId === 'javascript') {
-      this.keywords = TYPESCRIPT_KEYWORDS;
-      this.lineComment = '//';
-    } else if (languageId === 'python') {
-      this.keywords = PYTHON_KEYWORDS;
-      this.lineComment = '#';
-    } else if (languageId === 'rust') {
-      this.keywords = RUST_KEYWORDS;
-      this.lineComment = '//';
-    } else if (languageId === 'html') {
-      this.keywords = HTML_KEYWORDS;
-      this.lineComment = '';
-    } else if (languageId === 'css') {
-      this.keywords = CSS_KEYWORDS;
-      this.lineComment = '';
-    } else if (languageId === 'json') {
-      this.keywords = JSON_KEYWORDS;
-      this.lineComment = '';
-    } else if (languageId === 'markdown') {
-      this.keywords = MARKDOWN_KEYWORDS;
-      this.lineComment = '';
-      this._isMarkdown = 1;
-    } else if (languageId === 'c' || languageId === 'cpp') {
-      this.keywords = RUST_KEYWORDS;
-      this.lineComment = '//';
-    } else if (languageId === 'go') {
-      this.keywords = GO_KEYWORDS;
-      this.lineComment = '//';
-    } else if (languageId === 'java') {
-      this.keywords = JAVA_KEYWORDS;
-      this.lineComment = '//';
-    } else if (languageId === 'swift') {
-      this.keywords = SWIFT_KEYWORDS;
-      this.lineComment = '//';
-    } else if (languageId === 'shell') {
-      this.keywords = SHELL_KEYWORDS;
-      this.lineComment = '#';
-    } else if (languageId === 'ruby') {
-      this.keywords = RUBY_KEYWORDS;
-      this.lineComment = '#';
-    } else if (languageId === 'php') {
-      this.keywords = PHP_KEYWORDS;
-      this.lineComment = '//';
-    } else if (languageId === 'yaml') {
-      this.keywords = YAML_KEYWORDS;
-      this.lineComment = '#';
-    } else if (languageId === 'toml') {
-      this.keywords = TOML_KEYWORDS;
-      this.lineComment = '#';
-    } else if (languageId === 'sql') {
-      this.keywords = SQL_KEYWORDS;
-      this.lineComment = '--';
-    } else if (languageId === 'xml') {
-      this.keywords = XML_KEYWORDS;
-      this.lineComment = '';
-    } else {
-      this.keywords = [];
-      this.lineComment = '//';
-    }
+    this._isMarkdown = languageId === 'markdown' ? 1 : 0;
+    this.keywords = LANGUAGE_KEYWORDS[languageId] ?? [];
+    this.lineComment = LANGUAGE_LINE_COMMENTS[languageId] ?? '//';
     this.parsed = false;
   }
 
   parse(_buffer: TextBuffer, _changedRanges?: { fromOffset: number; toOffset: number }[]): any {
     this.parsed = true;
-    // Build block comment depth cache as a string (Perry-safe: no array
-    // indexed assignment).  Each char's code = depth at start of that line.
+    // Build block comment depth cache.
     if (this.languageId !== 'python') {
       this._blockDepthCache = buildBlockDepthString(_buffer);
       this._blockDepthLineCount = _buffer.getLineCount();
@@ -410,8 +349,6 @@ export class KeywordSyntaxEngine implements ISyntaxEngine {
     if (lineText.length === 0) return [];
 
     // Markdown gets its own tokenizer — headers, bold, italic, links, code, etc.
-    // Perry AOT: class field string === comparison is unreliable for dynamically
-    // assigned strings. Use numeric flag set in setLanguage() instead.
     if (this._isMarkdown === 1) {
       const inFence = this.isInsideMarkdownFence(buffer, lineNumber);
       return tokenizeMarkdownLine(lineText, theme, inFence);
@@ -531,31 +468,29 @@ export class KeywordSyntaxEngine implements ISyntaxEngine {
       }
 
       // Numbers (decimal, hex, binary, octal, floats).
-      // Use indexOf instead of range comparisons — Perry AOT does not support
-      // c >= '0' && c <= '9' style checks. indexOf on a constant string is safe.
-      if (DECIMAL_CHARS.indexOf(c) >= 0 || (c === '.' && i + 1 < lineText.length && DECIMAL_CHARS.indexOf(lineText.charAt(i + 1)) >= 0)) {
+      if (isDecimalChar(c) || (c === '.' && i + 1 < lineText.length && isDecimalChar(lineText.charAt(i + 1)))) {
         let j = i;
         if (c === '0' && j + 1 < lineText.length) {
           const next = lineText.charAt(j + 1);
           if (next === 'x' || next === 'X') {
             j += 2;
-            while (j < lineText.length && (HEX_CHARS.indexOf(lineText.charAt(j)) >= 0 || lineText.charAt(j) === '_')) j++;
+            while (j < lineText.length && (isHexChar(lineText.charAt(j)) || lineText.charAt(j) === '_')) j++;
           } else if (next === 'b' || next === 'B') {
             j += 2;
             while (j < lineText.length && (lineText.charAt(j) === '0' || lineText.charAt(j) === '1' || lineText.charAt(j) === '_')) j++;
           } else if (next === 'o' || next === 'O') {
             j += 2;
-            while (j < lineText.length && (OCTAL_CHARS.indexOf(lineText.charAt(j)) >= 0 || lineText.charAt(j) === '_')) j++;
+            while (j < lineText.length && (isOctalChar(lineText.charAt(j)) || lineText.charAt(j) === '_')) j++;
           } else {
-            while (j < lineText.length && (DECIMAL_CHARS.indexOf(lineText.charAt(j)) >= 0 || lineText.charAt(j) === '.' || lineText.charAt(j) === 'e' || lineText.charAt(j) === 'E' || lineText.charAt(j) === '_')) j++;
+            while (j < lineText.length && (isDecimalChar(lineText.charAt(j)) || lineText.charAt(j) === '.' || lineText.charAt(j) === 'e' || lineText.charAt(j) === 'E' || lineText.charAt(j) === '_')) j++;
           }
         } else {
-          while (j < lineText.length && (DECIMAL_CHARS.indexOf(lineText.charAt(j)) >= 0 || lineText.charAt(j) === '.' || lineText.charAt(j) === 'e' || lineText.charAt(j) === 'E' || lineText.charAt(j) === '_')) j++;
+          while (j < lineText.length && (isDecimalChar(lineText.charAt(j)) || lineText.charAt(j) === '.' || lineText.charAt(j) === 'e' || lineText.charAt(j) === 'E' || lineText.charAt(j) === '_')) j++;
         }
         // Numeric suffix (Rust: u32, i64, f64, etc.)
         if (this.languageId === 'rust' && j < lineText.length && (lineText.charAt(j) === 'u' || lineText.charAt(j) === 'i' || lineText.charAt(j) === 'f')) {
           j++;
-          while (j < lineText.length && DECIMAL_CHARS.indexOf(lineText.charAt(j)) >= 0) j++;
+          while (j < lineText.length && isDecimalChar(lineText.charAt(j))) j++;
         }
         tokens.push({
           startColumn: i,
@@ -917,10 +852,10 @@ function tokenizeMarkdownLine(line: string, theme: EditorTheme, inFence: boolean
       const indent = len - trimmed.length;
       tokens.push({ startColumn: indent, endColumn: indent + 1, color: theme.tokens.punctuation, fontStyle: 'normal' });
       i = indent + 2;
-    } else if (DECIMAL_CHARS.indexOf(fc) >= 0) {
+    } else if (isDecimalChar(fc)) {
       // Numbered list: digits followed by . and space
       let ni = 0;
-      while (ni < trimmed.length && DECIMAL_CHARS.indexOf(trimmed.charAt(ni)) >= 0) ni++;
+      while (ni < trimmed.length && isDecimalChar(trimmed.charAt(ni))) ni++;
       if (ni < trimmed.length && trimmed.charAt(ni) === '.' && ni + 1 < trimmed.length && trimmed.charAt(ni + 1) === ' ') {
         const indent = len - trimmed.length;
         tokens.push({ startColumn: indent, endColumn: indent + ni + 1, color: theme.tokens.punctuation, fontStyle: 'normal' });

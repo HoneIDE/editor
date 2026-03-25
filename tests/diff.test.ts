@@ -5,61 +5,61 @@ import { computeInlineDiff } from '../core/diff/inline-diff';
 import type { DiffHunk } from '../core/diff/diff-model';
 
 describe('computeDiff', () => {
-  test('identical texts produce no hunks', () => {
-    const result = computeDiff('hello\nworld', 'hello\nworld');
+  test('identical texts produce no hunks', async () => {
+    const result = await computeDiff('hello\nworld', 'hello\nworld');
     expect(result.hunks.length).toBe(0);
     expect(result.totalAdded).toBe(0);
     expect(result.totalDeleted).toBe(0);
   });
 
-  test('empty original to non-empty modified', () => {
-    const result = computeDiff('', 'hello\nworld');
+  test('empty original to non-empty modified', async () => {
+    const result = await computeDiff('', 'hello\nworld');
     expect(result.hunks.length).toBe(1);
     expect(result.hunks[0].type).toBe('add');
     expect(result.totalAdded).toBe(2);
   });
 
-  test('non-empty original to empty modified', () => {
-    const result = computeDiff('hello\nworld', '');
+  test('non-empty original to empty modified', async () => {
+    const result = await computeDiff('hello\nworld', '');
     expect(result.hunks.length).toBe(1);
     expect(result.hunks[0].type).toBe('delete');
     expect(result.totalDeleted).toBe(2);
   });
 
-  test('single line addition', () => {
-    const result = computeDiff('a\nc', 'a\nb\nc');
+  test('single line addition', async () => {
+    const result = await computeDiff('a\nc', 'a\nb\nc');
     expect(result.totalAdded).toBe(1);
     expect(result.hunks.length).toBe(1);
     expect(result.hunks[0].type).toBe('add');
   });
 
-  test('single line deletion', () => {
-    const result = computeDiff('a\nb\nc', 'a\nc');
+  test('single line deletion', async () => {
+    const result = await computeDiff('a\nb\nc', 'a\nc');
     expect(result.totalDeleted).toBe(1);
     expect(result.hunks.length).toBe(1);
     expect(result.hunks[0].type).toBe('delete');
   });
 
-  test('modification (delete + add)', () => {
-    const result = computeDiff('a\nb\nc', 'a\nB\nc');
+  test('modification (delete + add)', async () => {
+    const result = await computeDiff('a\nb\nc', 'a\nB\nc');
     expect(result.hunks.length).toBe(1);
     expect(result.hunks[0].type).toBe('modify');
   });
 
-  test('both empty produces no hunks', () => {
-    const result = computeDiff('', '');
+  test('both empty produces no hunks', async () => {
+    const result = await computeDiff('', '');
     expect(result.hunks.length).toBe(0);
   });
 
-  test('multi-hunk diff', () => {
+  test('multi-hunk diff', async () => {
     const original = 'a\nb\nc\nd\ne\nf\ng';
     const modified = 'a\nB\nc\nd\ne\nF\ng';
-    const result = computeDiff(original, modified);
+    const result = await computeDiff(original, modified);
     expect(result.hunks.length).toBe(2);
   });
 
-  test('hunks have pending state', () => {
-    const result = computeDiff('a', 'b');
+  test('hunks have pending state', async () => {
+    const result = await computeDiff('a', 'b');
     for (const hunk of result.hunks) {
       expect(hunk.state).toBe('pending');
     }
@@ -67,8 +67,8 @@ describe('computeDiff', () => {
 });
 
 describe('computeLineDiff', () => {
-  test('array-based diff', () => {
-    const result = computeLineDiff(['a', 'b', 'c'], ['a', 'c']);
+  test('array-based diff', async () => {
+    const result = await computeLineDiff(['a', 'b', 'c'], ['a', 'c']);
     expect(result.totalDeleted).toBe(1);
     expect(result.hunks[0].type).toBe('delete');
   });
@@ -191,7 +191,6 @@ describe('computeInlineDiff', () => {
 
   test('character-level changes', () => {
     const segments = computeInlineDiff('hello world', 'hello earth');
-    // Should have: "hello " unchanged, "world"/"earth" changed
     const unchangedCount = segments.filter(s => s.type === 'unchanged').length;
     const changedCount = segments.filter(s => s.type !== 'unchanged').length;
     expect(unchangedCount).toBeGreaterThan(0);

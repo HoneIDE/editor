@@ -84,7 +84,7 @@ export class TextBuffer {
 
   /**
    * Incrementally update _lineStarts after an insert.
-   * Perry-safe: builds a NEW array (no splice/push on class field arrays).
+   * Builds a new array — splice on class-field arrays is not yet supported in Perry.
    */
   private _updateLineStartsInsert(offset: number, text: string): void {
     const old = this._lineStarts;
@@ -101,20 +101,14 @@ export class TextBuffer {
 
     // Build new array: [before] + [new line starts] + [shifted after]
     const result: number[] = [];
-
-    // Copy starts up to and including the line containing offset
     for (let i = 0; i <= lineNum; i++) {
       result.push(old[i]);
     }
-
-    // Add new line starts from inserted text
     for (let i = 0; i < text.length; i++) {
       if (text.charCodeAt(i) === 10) {
         result.push(offset + i + 1);
       }
     }
-
-    // Copy and shift remaining starts
     for (let i = lineNum + 1; i < old.length; i++) {
       result.push(old[i] + insertLen);
     }
@@ -125,24 +119,19 @@ export class TextBuffer {
 
   /**
    * Incrementally update _lineStarts after a delete.
-   * Perry-safe: builds a NEW array (no splice on class field arrays).
+   * Builds a new array — splice on class-field arrays is not yet supported in Perry.
    */
   private _updateLineStartsDelete(offset: number, length: number): void {
     const old = this._lineStarts;
     const deleteEnd = offset + length;
 
-    // Build new array: keep starts before/at offset, skip starts in deleted range, shift the rest
     const result: number[] = [];
-
     for (let i = 0; i < old.length; i++) {
       if (old[i] <= offset) {
-        // Before or at the deletion point — keep as-is
         result.push(old[i]);
       } else if (old[i] > deleteEnd) {
-        // After the deleted range — shift back
         result.push(old[i] - length);
       }
-      // Starts within (offset, deleteEnd] are dropped
     }
 
     this._lineStarts = result;
@@ -250,23 +239,10 @@ export class TextBuffer {
     // Perry AOT: [...edits].sort() uses spread + closure comparator, both broken.
     // Sort in place using a Perry-safe insertion sort (edits are usually small).
     const n = edits.length;
-    // Copy to local array first (index assignment is Perry-safe)
-    const sorted: TextEdit[] = [];
-    for (let _si = 0; _si < n; _si++) { sorted[_si] = edits[_si]; }
-    // Insertion sort descending by offset (Perry-safe: no closure comparator)
-    for (let _si = 1; _si < n; _si++) {
-      const cur = sorted[_si];
-      let _sj = _si - 1;
-      while (_sj >= 0 && sorted[_sj].offset < cur.offset) {
-        sorted[_sj + 1] = sorted[_sj];
-        _sj--;
-      }
-      sorted[_sj + 1] = cur;
-    }
+    // Sort descending by offset so later edits don't shift earlier offsets.
+    const sorted = edits.slice().sort((a, b) => b.offset - a.offset);
 
-    // Perry AOT: for...of on arrays is broken; use index loop
-    for (let _ei = 0; _ei < sorted.length; _ei++) {
-      const edit = sorted[_ei];
+    for (const edit of sorted) {
       if (edit.deleteCount > 0) {
         this.delete(edit.offset, edit.deleteCount);
       }
@@ -276,10 +252,7 @@ export class TextBuffer {
     }
   }
 
-  /**
-   * Create an immutable snapshot of the current buffer state.
-   * Captures _text (plain string) — Perry-safe, no rope traversal needed.
-   */
+  /** Create an immutable snapshot of the current buffer state. */
   snapshot(): BufferSnapshot {
     const id = ++snapshotIdCounter;
     const capturedText = this._text;

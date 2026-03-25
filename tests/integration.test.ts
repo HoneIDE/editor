@@ -356,12 +356,12 @@ describe('Full-Stack Integration', () => {
   // -------------------------------------------------------
   // 10. Diff computation
   // -------------------------------------------------------
-  test('diff computation — hunks, inline char diff, navigation', () => {
+  test('diff computation — hunks, inline char diff, navigation', async () => {
     const modified = originalSource.replace('DataProcessor', 'StreamProcessor')
       .replace('legacyProcess', 'oldProcess')
       + '\n// Added trailing line\n';
 
-    const diffResult = computeDiff(originalSource, modified);
+    const diffResult = await computeDiff(originalSource, modified);
     expect(diffResult.hunks.length).toBeGreaterThan(0);
     expect(diffResult.totalAdded + diffResult.totalDeleted).toBeGreaterThan(0);
 
@@ -381,7 +381,7 @@ describe('Full-Stack Integration', () => {
     }
 
     // DiffViewModel integration
-    vm.diffView.computeDiff(originalSource, modified);
+    await vm.diffView.computeDiff(originalSource, modified);
     expect(vm.diffView.diff).not.toBeNull();
     expect(vm.diffView.diff!.hunks.length).toBeGreaterThan(0);
   });

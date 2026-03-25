@@ -35,8 +35,8 @@ export class DiffViewModel {
   }
 
   /** Compute diff between original and modified text. */
-  computeDiff(originalText: string, modifiedText: string): void {
-    this._diff = computeDiff(originalText, modifiedText);
+  async computeDiff(originalText: string, modifiedText: string): Promise<void> {
+    this._diff = await computeDiff(originalText, modifiedText);
     this._currentHunkIndex = this._diff.hunks.length > 0 ? 0 : -1;
   }
 

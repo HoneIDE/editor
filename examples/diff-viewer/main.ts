@@ -66,7 +66,7 @@ export default Counter;
 
 // --- Compute diff ---
 
-const diff = computeDiff(originalCode, modifiedCode);
+const diff = await computeDiff(originalCode, modifiedCode);
 const mergedHunks = mergeAdjacentHunks(diff.hunks, 3);
 
 console.log('=== Diff Viewer Example ===\n');
