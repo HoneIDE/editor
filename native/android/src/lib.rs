@@ -304,6 +304,38 @@ fn draw_editor(env: &mut jni::JNIEnv, canvas: &JObject, view: &EditorView) {
                   JValue::Object(&paint)]);
         }
 
+        // Draw find highlights for this line (BEFORE text, so text renders on top)
+        for fh in view.get_find_highlights() {
+            if fh.line + 1 == line.line_number {
+                let byte_col = fh.col as usize;
+                let char_col = if byte_col <= line.text.len() {
+                    line.text[..byte_col].chars().count()
+                } else {
+                    byte_col
+                };
+                let byte_end = (fh.col + fh.len) as usize;
+                let char_len = if byte_end <= line.text.len() {
+                    line.text[byte_col..byte_end].chars().count()
+                } else {
+                    fh.len as usize
+                };
+                let hx = gutter_width + (char_col as f32) * char_width;
+                let hw = (char_len as f32) * char_width;
+                let line_h = (view.get_line_height() as f32) * d;
+                // Current match: orange, other: yellow
+                let color: i32 = if fh.current > 0 {
+                    0x59E8AB54_u32 as i32 // rgba(0.91, 0.67, 0.33, 0.35)
+                } else {
+                    0x33E3C254_u32 as i32 // rgba(0.89, 0.76, 0.33, 0.20)
+                };
+                let _ = env.call_method(&paint, "setColor", "(I)V", &[JValue::Int(color)]);
+                let _ = env.call_method(canvas, "drawRect", "(FFFFLandroid/graphics/Paint;)V",
+                    &[JValue::Float(hx), JValue::Float(y_px),
+                      JValue::Float(hx + hw), JValue::Float(y_px + line_h),
+                      JValue::Object(&paint)]);
+            }
+        }
+
         // Draw tokens
         if line.tokens.is_empty() {
             // Default color — draw whole line

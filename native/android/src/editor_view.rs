@@ -693,6 +693,10 @@ impl EditorView {
         self.max_line_number
     }
 
+    pub fn get_find_highlights(&self) -> &[FindHighlight] {
+        &self.find_highlights
+    }
+
     // ── Color setters ───────────────────────────────────────────
 
     /// Convert 0.0–1.0 RGB to ARGB u32 (full opacity).
