@@ -185,6 +185,29 @@ pub extern "C" fn hone_editor_render_decorations(
     view.render_decorations(json_str);
 }
 
+/// Set persistent find highlights (NOT cleared by begin_frame).
+/// Perry params: ["i64", "i64"]
+#[no_mangle]
+pub extern "C" fn hone_editor_set_find_highlights(
+    view: *mut EditorView,
+    json: i64,
+) {
+    let view = unsafe { &mut *view };
+    let json_str = unsafe { perry_str(json) };
+    if json_str.is_empty() || json_str == "[]" {
+        view.clear_find_highlights();
+    } else {
+        view.set_find_highlights(json_str);
+    }
+}
+
+/// Clear find highlights.
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_find_highlights(view: *mut EditorView) {
+    let view = unsafe { &mut *view };
+    view.clear_find_highlights();
+}
+
 /// Render ghost text (semi-transparent inline completion).
 /// Perry params: ["i64", "i64", "f64", "f64", "i64"]
 #[no_mangle]

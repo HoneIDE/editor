@@ -107,6 +107,24 @@ pub fn hone_editor_end_frame(view: *mut EditorView) {
     view.end_frame();
 }
 
+/// Set persistent find highlights.
+#[wasm_bindgen]
+pub fn hone_editor_set_find_highlights_str(view: *mut EditorView, json: &str) {
+    let view = unsafe { &mut *view };
+    if json.is_empty() || json == "[]" {
+        view.clear_find_highlights();
+    } else {
+        view.set_find_highlights(json);
+    }
+}
+
+/// Clear find highlights.
+#[wasm_bindgen]
+pub fn hone_editor_clear_find_highlights(view: *mut EditorView) {
+    let view = unsafe { &mut *view };
+    view.clear_find_highlights();
+}
+
 // === Editor Color Settings (no-op stubs) ===
 
 /// Set the editor background color.

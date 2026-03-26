@@ -149,6 +149,16 @@ pub struct CursorData {
     pub style: i32,
 }
 
+/// Find highlight stored as line/col/len — pixel positions computed at draw time
+/// from frame_lines y_offsets, so scrolling stays correct.
+#[derive(Debug, Deserialize)]
+pub struct FindHighlight {
+    pub line: i32,      // 0-based line number
+    pub col: i32,       // 0-based column
+    pub len: i32,       // match length in characters
+    pub current: i32,   // 1 = current match, 0 = other
+}
+
 #[derive(Debug, Deserialize)]
 pub struct DecorationOverlay {
     pub x: f64,
@@ -194,6 +204,9 @@ pub struct EditorView {
     cursors: Vec<CursorData>,
     selections: Vec<SelectionRegion>,
     decorations: Vec<DecorationOverlay>,
+    /// Find highlights — NOT cleared by begin_frame. Stored as line/col/len,
+    /// pixel positions computed at draw time from frame_lines y_offsets.
+    find_highlights: Vec<FindHighlight>,
     ghost_text: Option<GhostTextData>,
     scroll_offset: f64,
     max_line_number: i32,
@@ -280,6 +293,7 @@ impl EditorView {
             cursors: Vec::new(),
             selections: Vec::new(),
             decorations: Vec::new(),
+            find_highlights: Vec::new(),
             ghost_text: None,
             scroll_offset: 0.0,
             max_line_number: 0,
@@ -1029,6 +1043,17 @@ impl EditorView {
         self.decorations.append(&mut decors);
     }
 
+    /// Set persistent find highlights as line/col/len/current entries.
+    /// NOT cleared by begin_frame — persists until explicitly changed.
+    pub fn set_find_highlights(&mut self, json: &str) {
+        self.find_highlights = serde_json::from_str(json).unwrap_or_default();
+    }
+
+    /// Clear find highlights.
+    pub fn clear_find_highlights(&mut self) {
+        self.find_highlights.clear();
+    }
+
     pub fn render_ghost_text(&mut self, text: &str, x: f64, y: f64, color: &str) {
         self.ghost_text = Some(GhostTextData {
             text: text.to_string(),
@@ -1363,6 +1388,8 @@ impl EditorView {
         );
         ctx.fill_rect(CGRect::new(&CGPoint::new(0.0, 0.0), &CGSize::new(gutter_w, self.height)));
 
+        let ts_line_h = self.ts_line_height();
+
         for line in &self.frame_lines {
             let num_str = format!("{}", line.line_number);
             let num_width = self.renderer.char_width * num_str.len() as f64;
@@ -1371,6 +1398,37 @@ impl EditorView {
                 ctx, &num_str, num_x, line.y_offset,
                 &self.renderer.normal, self.renderer.ascent, self.gutter_fg_color,
             );
+
+            // Draw find highlights for this line (BEFORE text, so text renders on top)
+            for fh in &self.find_highlights {
+                if fh.line + 1 == line.line_number {
+                    let char_w = self.renderer.char_width;
+                    let byte_col = fh.col as usize;
+                    let char_col = if byte_col <= line.text.len() {
+                        line.text[..byte_col].chars().count()
+                    } else {
+                        byte_col
+                    };
+                    let byte_end = (fh.col + fh.len) as usize;
+                    let char_len = if byte_end <= line.text.len() {
+                        line.text[byte_col..byte_end].chars().count()
+                    } else {
+                        fh.len as usize
+                    };
+                    let hx = gutter_w + char_col as f64 * char_w;
+                    let hw = char_len as f64 * char_w;
+                    if fh.current > 0 {
+                        ctx.set_rgb_fill_color(0.91, 0.67, 0.33, 0.35);
+                    } else {
+                        ctx.set_rgb_fill_color(0.89, 0.76, 0.33, 0.20);
+                    }
+                    ctx.fill_rect(CGRect::new(
+                        &CGPoint::new(hx, line.y_offset),
+                        &CGSize::new(hw, ts_line_h),
+                    ));
+                }
+            }
+
             text_renderer::draw_line(
                 ctx, &line.text, &line.tokens, gutter_w, line.y_offset,
                 &self.renderer, self.default_text_color,

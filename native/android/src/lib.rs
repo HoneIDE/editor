@@ -965,7 +965,21 @@ pub extern "C" fn hone_editor_clear_diagnostics(_view: *mut EditorView) {}
 pub extern "C" fn hone_editor_set_breakpoints(_view: *mut EditorView, _data: f64) {}
 #[no_mangle]
 pub extern "C" fn hone_editor_set_fold_ranges(_view: *mut EditorView, _data: f64) {}
+/// Set persistent find highlights (NOT cleared by begin_frame).
 #[no_mangle]
-pub extern "C" fn hone_editor_set_find_highlights(_view: *mut EditorView, _json: *const u8) {}
+pub extern "C" fn hone_editor_set_find_highlights(view: *mut EditorView, json: *const u8) {
+    let view = unsafe { &mut *view };
+    let json_str = str_from_header(json);
+    if json_str.is_empty() || json_str == "[]" {
+        view.clear_find_highlights();
+    } else {
+        view.set_find_highlights(json_str);
+    }
+}
+
+/// Clear find highlights.
 #[no_mangle]
-pub extern "C" fn hone_editor_clear_find_highlights(_view: *mut EditorView) {}
+pub extern "C" fn hone_editor_clear_find_highlights(view: *mut EditorView) {
+    let view = unsafe { &mut *view };
+    view.clear_find_highlights();
+}

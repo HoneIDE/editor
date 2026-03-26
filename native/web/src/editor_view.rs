@@ -83,6 +83,16 @@ impl EditorView {
         // Production: requestAnimationFrame for next repaint
     }
 
+    pub fn set_find_highlights(&mut self, _json: &str) {
+        self.needs_display = true;
+        // Production: create/update find highlight overlay <div> elements
+    }
+
+    pub fn clear_find_highlights(&mut self) {
+        self.needs_display = true;
+        // Production: remove find highlight overlay <div> elements
+    }
+
     pub fn begin_frame(&mut self) {
         self.needs_display = false;
         // Production: batch DOM mutations

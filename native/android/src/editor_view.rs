@@ -159,6 +159,16 @@ pub struct CursorData {
     pub style: i32,
 }
 
+/// Find highlight stored as line/col/len — pixel positions computed at draw time
+/// from frame_lines y_offsets, so scrolling stays correct.
+#[derive(Debug, Deserialize)]
+pub struct FindHighlight {
+    pub line: i32,      // 0-based line number
+    pub col: i32,       // 0-based column
+    pub len: i32,       // match length in characters
+    pub current: i32,   // 1 = current match, 0 = other
+}
+
 #[derive(Debug, Deserialize)]
 pub struct DecorationOverlay {
     pub x: f64,
@@ -224,6 +234,9 @@ pub struct EditorView {
     cursors: Vec<CursorData>,
     selections: Vec<SelectionRegion>,
     decorations: Vec<DecorationOverlay>,
+    /// Find highlights — NOT cleared by begin_frame. Stored as line/col/len,
+    /// pixel positions computed at draw time from frame_lines y_offsets.
+    find_highlights: Vec<FindHighlight>,
     ghost_text: Option<GhostTextData>,
     max_line_number: i32,
 
@@ -287,6 +300,7 @@ impl EditorView {
             cursors: Vec::new(),
             selections: Vec::new(),
             decorations: Vec::new(),
+            find_highlights: Vec::new(),
             ghost_text: None,
             max_line_number: 0,
             text_input_callback: None,
@@ -473,6 +487,17 @@ impl EditorView {
         let mut decors: Vec<DecorationOverlay> =
             serde_json::from_str(decorations_json).unwrap_or_default();
         self.decorations.append(&mut decors);
+    }
+
+    /// Set persistent find highlights as line/col/len/current entries.
+    /// NOT cleared by begin_frame — persists until explicitly changed.
+    pub fn set_find_highlights(&mut self, json: &str) {
+        self.find_highlights = serde_json::from_str(json).unwrap_or_default();
+    }
+
+    /// Clear find highlights.
+    pub fn clear_find_highlights(&mut self) {
+        self.find_highlights.clear();
     }
 
     pub fn render_ghost_text(&mut self, text: &str, x: f64, y: f64, color: &str) {

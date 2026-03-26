@@ -449,11 +449,24 @@ pub extern "C" fn hone_editor_set_cursor_color(view: *mut EditorView, r: f64, g:
 
 // === Missing FFI stubs (declared in package.json but not yet implemented) ===
 
+/// Set persistent find highlights (NOT cleared by begin_frame).
 #[no_mangle]
-pub extern "C" fn hone_editor_set_find_highlights(_view: *mut EditorView, _json: i64) {}
+pub extern "C" fn hone_editor_set_find_highlights(view: *mut EditorView, json: i64) {
+    let view = unsafe { &mut *view };
+    let json_str = unsafe { perry_str(json) };
+    if json_str.is_empty() || json_str == "[]" {
+        view.clear_find_highlights();
+    } else {
+        view.set_find_highlights(json_str);
+    }
+}
 
+/// Clear find highlights.
 #[no_mangle]
-pub extern "C" fn hone_editor_clear_find_highlights(_view: *mut EditorView) {}
+pub extern "C" fn hone_editor_clear_find_highlights(view: *mut EditorView) {
+    let view = unsafe { &mut *view };
+    view.clear_find_highlights();
+}
 
 #[no_mangle]
 pub extern "C" fn hone_editor_set_ts_mode(_view: *mut EditorView, _mode: f64) {}
