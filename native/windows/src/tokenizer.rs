@@ -6,15 +6,15 @@
 
 use crate::text_renderer::RenderToken;
 
-// --- VS Code dark theme colors (must match DARK_THEME in view-model/theme.ts) ---
-const COLOR_KEYWORD:  &str = "#569cd6";
-const COLOR_STRING:   &str = "#ce9178";
-const COLOR_COMMENT:  &str = "#6a9955";
-const COLOR_VARIABLE: &str = "#9cdcfe";
-const COLOR_TYPE:     &str = "#4ec9b0";
-const COLOR_FUNCTION: &str = "#dcdcaa";
-const COLOR_NUMBER:   &str = "#b5cea8";
-const COLOR_DEFAULT:  &str = "#d4d4d4";
+// --- Light theme colors (visible on light backgrounds used by Mango) ---
+const COLOR_KEYWORD:  &str = "#0000ff";
+const COLOR_STRING:   &str = "#a31515";
+const COLOR_COMMENT:  &str = "#008000";
+const COLOR_VARIABLE: &str = "#001080";
+const COLOR_TYPE:     &str = "#267f99";
+const COLOR_FUNCTION: &str = "#795e26";
+const COLOR_NUMBER:   &str = "#098658";
+const COLOR_DEFAULT:  &str = "#333333";
 
 const TYPESCRIPT_KEYWORDS: &[&str] = &[
     "import", "export", "from", "const", "let", "var", "function", "return",

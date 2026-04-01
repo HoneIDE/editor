@@ -508,9 +508,11 @@ pub extern "C" fn hone_editor_set_breakpoints(_view: *mut EditorView, _json: i64
 pub extern "C" fn hone_editor_set_fold_ranges(_view: *mut EditorView, _json: i64) {}
 
 #[no_mangle]
-pub extern "C" fn hone_editor_get_scroll_delta(view: *mut EditorView) -> f64 {
-    let view = unsafe { &*view };
-    view.scroll_delta_accum
+pub extern "C" fn hone_editor_get_scroll_delta(_view: *mut EditorView) -> f64 {
+    // Return 0: scrolling is handled entirely on the Rust side by modifying
+    // frame_lines y_offsets. Reporting delta to TS would cause it to re-render
+    // at scrollTop=0 (Perry AOT can't update viewport.scroll), undoing the scroll.
+    0.0
 }
 
 #[no_mangle]

@@ -991,8 +991,9 @@ impl EditorView {
 
     /// Called from the WndProc's WM_MOUSEWHEEL handler.
     pub fn on_scroll(&mut self, dx: f64, dy: f64) {
-        // Accumulate delta for TS polling via hone_editor_get_scroll_delta
-        self.scroll_delta_accum += dy;
+        // Don't accumulate delta for TS polling — Perry AOT can't update
+        // viewport.scroll, so TS re-renders would reset scroll to top.
+        // Handle scrolling entirely on the Rust side by modifying frame_lines.
 
         if let Some(cb) = self.scroll_callback {
             let self_ptr = self as *mut EditorView;
@@ -1123,12 +1124,14 @@ impl EditorView {
         tokens_json: &str,
         y_offset: f64,
     ) {
-        let mut tokens: Vec<RenderToken> = serde_json::from_str(tokens_json).unwrap_or_default();
-        // Fallback: if TS sent empty tokens (AOT mode may fail to generate them),
-        // use the Rust-side tokenizer for basic syntax coloring.
-        if tokens.is_empty() && !text.is_empty() {
-            tokens = crate::tokenizer::tokenize_line(text);
-        }
+        // Always use the Rust-side tokenizer on Windows. TS-generated tokens
+        // may have wrong colors (Perry AOT theme resolution issues) or wrong
+        // byte offsets, so the Rust tokenizer provides consistent light-theme colors.
+        let tokens = if !text.is_empty() {
+            crate::tokenizer::tokenize_line(text)
+        } else {
+            Vec::new()
+        };
         if line_number > self.max_line_number {
             self.max_line_number = line_number;
         }
