@@ -715,11 +715,13 @@ export class Editor {
       hone_editor_set_gutter_width(h, 52);
       this._directRenderText(_currentBufferText);
     } else {
-      // macOS path — coordinator.render() handles everything
+      // Desktop path — render only when needed
       const rustNeedsLines = hone_editor_needs_lines(h);
       if (hadEvents > 0 || scrollChanged > 0 || sizeChanged > 0 || needsRender > 0 || rustNeedsLines > 0) {
         hone_editor_set_gutter_width(h, this._vm.gutterWidth);
-        this._coordinator.render();
+        // Use direct FFI render (coordinator.render() uses interface dispatch
+        // which doesn't work in Perry's AOT mode on Windows/Linux).
+        this._directRenderText(_currentBufferText);
       }
     }
     // Re-push persistent decorations after render (begin_frame clears them)
@@ -986,6 +988,10 @@ export class Editor {
     const sz = 14;
     const lh = sz + sz / 2;
     const scrollTop = this._vm.viewport.scroll.scrollTop;
+    const vm = this._vm;
+    const doc = this._doc;
+    const theme = vm.theme;
+    const engine = vm.syntaxEngine as KeywordSyntaxEngine;
 
     hone_editor_begin_frame(handle as number);
 
@@ -998,8 +1004,25 @@ export class Editor {
       if (ch === 10) {
         const lineContent = text.substring(lineStart, i);
         const yOffset = lineNum * lh - scrollTop;
-        // Empty tokens "[]": Rust tokenizer retokenizes on each edit in AOT mode.
-        hone_editor_render_line(handle as number, lineNum + 1, lineContent as any, '[]' as any, yOffset);
+
+        // Generate syntax tokens via TS-side KeywordSyntaxEngine
+        let packed = '';
+        if (lineNum < doc.buffer.getLineCount()) {
+          const tokens = engine.getLineTokens(doc.buffer, lineNum, theme);
+          for (let _ti = 0; _ti < tokens.length; _ti++) {
+            const t = tokens[_ti];
+            let hex = t.color;
+            if (hex.length > 0 && hex.charCodeAt(0) === 35) hex = hex.substring(1);
+            let styleInt = 0;
+            if (t.fontStyle === 'italic') styleInt = 1;
+            if (t.fontStyle === 'bold') styleInt = 2;
+            if (t.fontStyle === 'heading-lg') styleInt = 3;
+            if (t.fontStyle === 'heading-md') styleInt = 4;
+            packed += t.startColumn + ',' + t.endColumn + ',' + hex + ',' + styleInt + '|';
+          }
+        }
+
+        hone_editor_render_line(handle as number, lineNum + 1, lineContent as any, packed as any, yOffset);
         lineNum++;
         lineStart = i + 1;
       }

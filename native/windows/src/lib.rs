@@ -473,10 +473,7 @@ pub extern "C" fn hone_editor_set_ts_mode(_view: *mut EditorView, _mode: f64) {}
 
 #[no_mangle]
 pub extern "C" fn hone_editor_is_ios() -> f64 {
-    // Return 1.0 so the TypeScript poll loop uses the direct render path
-    // (_directRenderText) instead of coordinator.render(), which relies on
-    // interface dispatch that doesn't work in Perry's AOT mode.
-    1.0
+    0.0
 }
 
 #[no_mangle]
