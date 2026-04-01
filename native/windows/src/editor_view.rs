@@ -217,6 +217,8 @@ pub struct EditorView {
     find_highlights: Vec<FindHighlight>,
     ghost_text: Option<GhostTextData>,
     scroll_offset: f64,
+    /// Accumulated scroll delta for TS polling (positive = scroll down).
+    pub scroll_delta_accum: f64,
     max_line_number: i32,
 
     // Input callbacks
@@ -318,6 +320,7 @@ impl EditorView {
             find_highlights: Vec::new(),
             ghost_text: None,
             scroll_offset: 0.0,
+            scroll_delta_accum: 0.0,
             max_line_number: 0,
             text_input_callback: None,
             action_callback: None,
@@ -988,6 +991,9 @@ impl EditorView {
 
     /// Called from the WndProc's WM_MOUSEWHEEL handler.
     pub fn on_scroll(&mut self, dx: f64, dy: f64) {
+        // Accumulate delta for TS polling via hone_editor_get_scroll_delta
+        self.scroll_delta_accum += dy;
+
         if let Some(cb) = self.scroll_callback {
             let self_ptr = self as *mut EditorView;
             cb(self_ptr, dx, dy);
@@ -1117,7 +1123,12 @@ impl EditorView {
         tokens_json: &str,
         y_offset: f64,
     ) {
-        let tokens: Vec<RenderToken> = serde_json::from_str(tokens_json).unwrap_or_default();
+        let mut tokens: Vec<RenderToken> = serde_json::from_str(tokens_json).unwrap_or_default();
+        // Fallback: if TS sent empty tokens (AOT mode may fail to generate them),
+        // use the Rust-side tokenizer for basic syntax coloring.
+        if tokens.is_empty() && !text.is_empty() {
+            tokens = crate::tokenizer::tokenize_line(text);
+        }
         if line_number > self.max_line_number {
             self.max_line_number = line_number;
         }

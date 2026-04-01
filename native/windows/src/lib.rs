@@ -508,8 +508,9 @@ pub extern "C" fn hone_editor_set_breakpoints(_view: *mut EditorView, _json: i64
 pub extern "C" fn hone_editor_set_fold_ranges(_view: *mut EditorView, _json: i64) {}
 
 #[no_mangle]
-pub extern "C" fn hone_editor_get_scroll_delta(_view: *mut EditorView) -> f64 {
-    0.0
+pub extern "C" fn hone_editor_get_scroll_delta(view: *mut EditorView) -> f64 {
+    let view = unsafe { &*view };
+    view.scroll_delta_accum
 }
 
 #[no_mangle]
@@ -531,7 +532,10 @@ pub extern "C" fn hone_editor_get_view_height(view: *mut EditorView) -> f64 {
 }
 
 #[no_mangle]
-pub extern "C" fn hone_editor_clear_scroll_delta(_view: *mut EditorView) {}
+pub extern "C" fn hone_editor_clear_scroll_delta(view: *mut EditorView) {
+    let view = unsafe { &mut *view };
+    view.scroll_delta_accum = 0.0;
+}
 
 #[no_mangle]
 pub extern "C" fn hone_editor_needs_lines(_view: *mut EditorView) -> f64 {
