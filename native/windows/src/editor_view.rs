@@ -991,10 +991,17 @@ impl EditorView {
 
     /// Called from the WndProc's WM_MOUSEWHEEL handler.
     pub fn on_scroll(&mut self, dx: f64, dy: f64) {
-        // Don't accumulate delta for TS polling — Perry AOT can't update
-        // viewport.scroll, so TS re-renders would reset scroll to top.
-        // Handle scrolling entirely on the Rust side by modifying frame_lines.
+        // Apply scroll at draw time via scroll_offset, not by modifying frame_lines.
+        // This survives TS re-renders that send new frame_lines at scrollTop=0.
+        let scale = self.dpi_scale();
+        let dy_dip = dy / scale;
+        self.scroll_offset += dy_dip;
+        // Clamp: don't scroll past top
+        if self.scroll_offset > 0.0 { self.scroll_offset = 0.0; }
+        self.invalidate();
+        return;
 
+        // --- Original scroll code below (kept for reference, never reached) ---
         if let Some(cb) = self.scroll_callback {
             let self_ptr = self as *mut EditorView;
             cb(self_ptr, dx, dy);
@@ -1674,10 +1681,16 @@ impl EditorView {
             rt.FillRectangle(&gutter_rect, &brush);
         }
 
-        // 3. Draw each buffered line
+        // 3. Draw each buffered line (apply Rust-side scroll_offset)
         let ts_line_h = self.ts_line_height();
+        let scroll_y = self.scroll_offset;
 
         for line in &self.frame_lines {
+            let y = line.y_offset + scroll_y;
+
+            // Skip lines above/below visible area
+            if y + ts_line_h < 0.0 { continue; }
+
             // Draw line number in gutter (right-aligned)
             let num_str = format!("{}", line.line_number);
             let num_width = self.renderer.char_width * num_str.len() as f64;
@@ -1687,7 +1700,7 @@ impl EditorView {
                 rt,
                 &num_str,
                 num_x,
-                line.y_offset,
+                y,
                 &self.renderer.normal,
                 self.gutter_fg_color,
             );
@@ -1719,9 +1732,9 @@ impl EditorView {
                         let brush = rt.CreateSolidColorBrush(&color, None).unwrap();
                         let rect = D2D_RECT_F {
                             left: hx as f32,
-                            top: line.y_offset as f32,
+                            top: y as f32,
                             right: (hx + hw) as f32,
-                            bottom: (line.y_offset + ts_line_h) as f32,
+                            bottom: (y + ts_line_h) as f32,
                         };
                         rt.FillRectangle(&rect, &brush);
                     }
@@ -1734,7 +1747,7 @@ impl EditorView {
                 &line.text,
                 &line.tokens,
                 gutter_w,
-                line.y_offset,
+                y,
                 &self.renderer,
                 self.default_text_color,
             );
@@ -1801,7 +1814,7 @@ impl EditorView {
             }
         }
 
-        // 5. Draw selection rectangles
+        // 5. Draw selection rectangles (with scroll offset)
         for sel in &self.selections {
             unsafe {
                 let brush = rt
@@ -1809,9 +1822,9 @@ impl EditorView {
                     .unwrap();
                 let rect = D2D_RECT_F {
                     left: sel.x as f32,
-                    top: sel.y as f32,
+                    top: (sel.y + scroll_y) as f32,
                     right: (sel.x + sel.w) as f32,
-                    bottom: (sel.y + sel.h) as f32,
+                    bottom: (sel.y + sel.h + scroll_y) as f32,
                 };
                 rt.FillRectangle(&rect, &brush);
             }
@@ -1834,6 +1847,7 @@ impl EditorView {
     }
 
     fn draw_cursors(&self, rt: &ID2D1HwndRenderTarget) {
+        let scroll_y = self.scroll_offset;
         let draw_one = |cursor: &CursorData| {
             let (w, h) = match cursor.style {
                 0 => (2.0, self.renderer.line_height),
@@ -1842,9 +1856,9 @@ impl EditorView {
                 _ => (2.0, self.renderer.line_height),
             };
             let y = if cursor.style == 2 {
-                cursor.y + self.renderer.line_height - 2.0
+                cursor.y + self.renderer.line_height - 2.0 + scroll_y
             } else {
-                cursor.y
+                cursor.y + scroll_y
             };
             unsafe {
                 let brush = rt
