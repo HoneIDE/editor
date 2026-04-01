@@ -39,7 +39,7 @@ fn ensure_gtk_init() {
 
 /// Extract a Rust `&str` from a Perry string pointer.
 ///
-/// Perry strings have layout: `[len: u32, capacity: u32, data: u8[len]]`.
+/// Perry strings have layout: `[len: u32, capacity: u32, refcount: u32, data: u8[len]]`.
 /// The pointer passed via FFI points to the start of this struct.
 /// Returns `""` if the pointer is null or invalid.
 unsafe fn perry_str<'a>(ptr: i64) -> &'a str {
@@ -51,8 +51,8 @@ unsafe fn perry_str<'a>(ptr: i64) -> &'a str {
     if len == 0 {
         return "";
     }
-    // Safety: data starts at offset 8 (after len + capacity u32s)
-    let data = std::slice::from_raw_parts((p + 8) as *const u8, len);
+    // Safety: data starts at offset 12 (after len + capacity + refcount u32s)
+    let data = std::slice::from_raw_parts((p + 12) as *const u8, len);
     std::str::from_utf8_unchecked(data)
 }
 
