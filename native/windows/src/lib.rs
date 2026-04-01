@@ -513,13 +513,21 @@ pub extern "C" fn hone_editor_get_scroll_delta(_view: *mut EditorView) -> f64 {
 }
 
 #[no_mangle]
-pub extern "C" fn hone_editor_get_view_width(_view: *mut EditorView) -> f64 {
-    0.0
+pub extern "C" fn hone_editor_get_view_width(view: *mut EditorView) -> f64 {
+    let view = unsafe { &*view };
+    let hwnd = view.hwnd();
+    let mut rc = windows::Win32::Foundation::RECT::default();
+    unsafe { let _ = windows::Win32::UI::WindowsAndMessaging::GetClientRect(hwnd, &mut rc); }
+    (rc.right - rc.left) as f64
 }
 
 #[no_mangle]
-pub extern "C" fn hone_editor_get_view_height(_view: *mut EditorView) -> f64 {
-    0.0
+pub extern "C" fn hone_editor_get_view_height(view: *mut EditorView) -> f64 {
+    let view = unsafe { &*view };
+    let hwnd = view.hwnd();
+    let mut rc = windows::Win32::Foundation::RECT::default();
+    unsafe { let _ = windows::Win32::UI::WindowsAndMessaging::GetClientRect(hwnd, &mut rc); }
+    (rc.bottom - rc.top) as f64
 }
 
 #[no_mangle]
