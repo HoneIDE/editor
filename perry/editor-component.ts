@@ -1006,23 +1006,23 @@ export class Editor {
         const yOffset = lineNum * lh - scrollTop;
 
         // Generate syntax tokens via TS-side KeywordSyntaxEngine
-        let packed = '';
+        // Format as JSON array matching Rust RenderToken: {s, e, c, st}
+        let tokensJson = '[]';
         if (lineNum < doc.buffer.getLineCount()) {
           const tokens = engine.getLineTokens(doc.buffer, lineNum, theme);
-          for (let _ti = 0; _ti < tokens.length; _ti++) {
-            const t = tokens[_ti];
-            let hex = t.color;
-            if (hex.length > 0 && hex.charCodeAt(0) === 35) hex = hex.substring(1);
-            let styleInt = 0;
-            if (t.fontStyle === 'italic') styleInt = 1;
-            if (t.fontStyle === 'bold') styleInt = 2;
-            if (t.fontStyle === 'heading-lg') styleInt = 3;
-            if (t.fontStyle === 'heading-md') styleInt = 4;
-            packed += t.startColumn + ',' + t.endColumn + ',' + hex + ',' + styleInt + '|';
+          if (tokens.length > 0) {
+            let parts = '[';
+            for (let _ti = 0; _ti < tokens.length; _ti++) {
+              if (_ti > 0) parts += ',';
+              const t = tokens[_ti];
+              parts += '{"s":' + t.startColumn + ',"e":' + t.endColumn + ',"c":"' + t.color + '","st":"' + t.fontStyle + '"}';
+            }
+            parts += ']';
+            tokensJson = parts;
           }
         }
 
-        hone_editor_render_line(handle as number, lineNum + 1, lineContent as any, packed as any, yOffset);
+        hone_editor_render_line(handle as number, lineNum + 1, lineContent as any, tokensJson as any, yOffset);
         lineNum++;
         lineStart = i + 1;
       }
