@@ -43,8 +43,8 @@ unsafe fn perry_str<'a>(ptr: i64) -> &'a str {
     if len == 0 {
         return "";
     }
-    // Safety: data starts at offset 8 (after len + capacity u32s)
-    let data = std::slice::from_raw_parts((p + 8) as *const u8, len);
+    // Safety: data starts at offset 12 (after StringHeader: length u32 + capacity u32 + refcount u32)
+    let data = std::slice::from_raw_parts((p + 12) as *const u8, len);
     std::str::from_utf8_unchecked(data)
 }
 
