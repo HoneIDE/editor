@@ -1293,15 +1293,9 @@ impl EditorView {
     pub fn resize(&mut self, width: u32, height: u32) {
         self.width = width as f64;
         self.height = height as f64;
-        if let Some(ref rt) = self.render_target {
-            let size = D2D_SIZE_U {
-                width: width.max(1),
-                height: height.max(1),
-            };
-            unsafe {
-                let _ = rt.Resize(&size);
-            }
-        }
+        // Drop and recreate the render target on next paint to ensure
+        // it matches the new HWND size (Resize() alone may not update the clip).
+        self.render_target = None;
     }
 
     /// Called from WM_PAINT — paint the frame buffer using Direct2D.
@@ -1649,7 +1643,6 @@ impl EditorView {
         unsafe {
             rt.Clear(Some(&self.background_color));
         }
-
 
         let gutter_w = self.gutter_width();
 
