@@ -500,6 +500,16 @@ pub fn create_editor_nsview(width: f64, height: f64, state: *mut EditorView) -> 
         );
         let view: id = msg_send![view, initWithFrame: frame];
         let _: () = msg_send![view, setWantsLayer: YES];
+        // Ensure the layer rasterizes at Retina resolution and re-rasterizes
+        // on every setNeedsDisplay (not just translate the cached content).
+        let layer: id = msg_send![view, layer];
+        if layer != nil {
+            let screen: id = msg_send![class!(NSScreen), mainScreen];
+            let scale: f64 = msg_send![screen, backingScaleFactor];
+            let _: () = msg_send![layer, setContentsScale: scale];
+            // Redraw on every display cycle, never reuse translated content
+            let _: () = msg_send![view, setLayerContentsRedrawPolicy: 3i64]; // NSViewLayerContentsRedrawOnSetNeedsDisplay
+        }
 
         (*(view as *mut Object)).set_ivar(EDITOR_STATE_IVAR, state as *mut c_void);
 

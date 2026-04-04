@@ -474,6 +474,27 @@ pub extern "C" fn hone_editor_clear_scroll_delta(view: *mut EditorView) {
     view.rust_scroll_delta = 0.0;
 }
 
+/// Get the accumulated horizontal scroll delta (in pixels) since the last clear.
+#[no_mangle]
+pub extern "C" fn hone_editor_get_scroll_delta_x(view: *mut EditorView) -> f64 {
+    let view = unsafe { &*view };
+    view.rust_scroll_delta_x
+}
+
+/// Clear the accumulated horizontal scroll delta after TypeScript has synced.
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_scroll_delta_x(view: *mut EditorView) {
+    let view = unsafe { &mut *view };
+    view.rust_scroll_delta_x = 0.0;
+}
+
+/// Get the current horizontal scroll position (pixels).
+#[no_mangle]
+pub extern "C" fn hone_editor_get_scroll_x(view: *mut EditorView) -> f64 {
+    let view = unsafe { &*view };
+    view.scroll_x
+}
+
 /// Returns 1.0 if Rust needs TypeScript to provide lines (cache miss during scroll),
 /// 0.0 otherwise.
 #[no_mangle]

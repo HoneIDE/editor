@@ -45,7 +45,7 @@ pub struct FontSet {
     pub normal: CTFont,
     pub bold: CTFont,
     pub italic: CTFont,
-    /// Bold font at ~1.3x size for h1/h2 headings.
+    /// Bold font at ~1.4x size for h1/h2 headings.
     pub heading_large: CTFont,
     /// Bold font at ~1.15x size for h3+ headings.
     pub heading_medium: CTFont,
@@ -54,6 +54,19 @@ pub struct FontSet {
     pub descent: f64,
     pub leading: f64,
     pub line_height: f64,
+    /// Line height for h1/h2 heading font.
+    pub heading_large_line_height: f64,
+    /// Line height for h3+ heading font.
+    pub heading_medium_line_height: f64,
+    /// How much the heading-lg text extends above the normal baseline origin.
+    /// = heading_large_ascent - normal_ascent
+    pub heading_large_y_shift: f64,
+    /// Same for heading-md.
+    pub heading_medium_y_shift: f64,
+    /// Character width for heading-lg font (monospace advance of 'M').
+    pub heading_large_char_width: f64,
+    /// Character width for heading-md font.
+    pub heading_medium_char_width: f64,
 }
 
 impl FontSet {
@@ -97,8 +110,26 @@ impl FontSet {
         let leading = normal.leading();
         let line_height = (ascent + descent + leading).ceil();
 
+        // Compute heading line heights from their actual font metrics
+        let hl_ascent = heading_large.ascent();
+        let hl_descent = heading_large.descent();
+        let hl_leading = heading_large.leading();
+        let heading_large_line_height = (hl_ascent + hl_descent + hl_leading).ceil();
+        // How much the heading text extends above where normal text would start.
+        // draw_line sets baseline at y + normal_ascent, so heading glyphs extend
+        // from (y + ascent - hl_ascent) upward. The shift is hl_ascent - ascent.
+        let heading_large_y_shift = hl_ascent - ascent;
+
+        let hm_ascent = heading_medium.ascent();
+        let hm_descent = heading_medium.descent();
+        let hm_leading = heading_medium.leading();
+        let heading_medium_line_height = (hm_ascent + hm_descent + hm_leading).ceil();
+        let heading_medium_y_shift = hm_ascent - ascent;
+
         // Measure the advance width of 'M' for monospace char width
         let char_width = measure_string_width(&normal, "M");
+        let heading_large_char_width = measure_string_width(&heading_large, "M");
+        let heading_medium_char_width = measure_string_width(&heading_medium, "M");
 
         FontSet {
             normal,
@@ -111,6 +142,12 @@ impl FontSet {
             descent,
             leading,
             line_height,
+            heading_large_line_height,
+            heading_medium_line_height,
+            heading_large_y_shift,
+            heading_medium_y_shift,
+            heading_large_char_width,
+            heading_medium_char_width,
         }
     }
 

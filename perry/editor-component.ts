@@ -71,6 +71,8 @@ declare function hone_editor_paste_from_clipboard(handle: number): void;
 // === Scroll delta + line cache FFI ===
 declare function hone_editor_get_scroll_delta(handle: number): number;
 declare function hone_editor_clear_scroll_delta(handle: number): void;
+declare function hone_editor_get_scroll_delta_x(handle: number): number;
+declare function hone_editor_clear_scroll_delta_x(handle: number): void;
 declare function hone_editor_needs_lines(handle: number): number;
 declare function hone_editor_clear_line_cache(handle: number): void;
 
@@ -690,12 +692,24 @@ export class Editor {
       }
     }
 
-    // Sync scroll delta
+    // Sync scroll delta (vertical)
     const scrollDelta = hone_editor_get_scroll_delta(h);
     let scrollChanged = 0;
     if (scrollDelta !== 0) {
       this._vm.viewport.scroll.scrollBy(0, -scrollDelta);
       hone_editor_clear_scroll_delta(h);
+      scrollChanged = 1;
+    }
+
+    // Sync horizontal scroll delta
+    // Rust scroll_x increases when scrolling right; TS scrollLeft should match.
+    // Rust already clamps scroll_x to valid range, so set a large maxScrollWidth
+    // to prevent TypeScript's clamp() from resetting scrollLeft to 0.
+    const scrollDeltaX = hone_editor_get_scroll_delta_x(h);
+    if (scrollDeltaX !== 0) {
+      this._vm.viewport.scroll.setMaxScrollWidth(100000);
+      this._vm.viewport.scroll.scrollBy(scrollDeltaX, 0);
+      hone_editor_clear_scroll_delta_x(h);
       scrollChanged = 1;
     }
 

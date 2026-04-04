@@ -18,6 +18,12 @@ use std::ffi::{c_char, CString};
 use crate::text_renderer::{self, FontSet, RenderToken};
 use crate::view;
 
+extern "C" {
+    fn CGContextSetShouldSmoothFonts(c: *mut std::ffi::c_void, smooth: bool);
+    fn CGContextSetAllowsFontSmoothing(c: *mut std::ffi::c_void, allow: bool);
+    fn CGContextSetShouldAntialias(c: *mut std::ffi::c_void, antialias: bool);
+}
+
 // ── Callback types ──────────────────────────────────────────────
 
 /// Called when the user types printable text. `text` is a null-terminated UTF-8 C string.
@@ -254,6 +260,11 @@ pub struct EditorView {
     // Accumulated scroll delta (in pixels) that TypeScript can read to sync its viewport state.
     // Positive = content moved down, negative = content moved up.
     pub rust_scroll_delta: f64,
+    // Accumulated horizontal scroll delta for TypeScript sync.
+    pub rust_scroll_delta_x: f64,
+    // Current horizontal scroll offset (pixels). 0 = no horizontal scroll.
+    // Increases as content scrolls to the right (leftmost content hidden).
+    pub scroll_x: f64,
     // Set true when scroll reveals lines not present in the cache — TypeScript should provide them.
     pub needs_lines: bool,
 
@@ -312,6 +323,8 @@ impl EditorView {
             line_backgrounds: HashMap::new(),
             line_cache: HashMap::new(),
             rust_scroll_delta: 0.0,
+            rust_scroll_delta_x: 0.0,
+            scroll_x: 0.0,
             needs_lines: false,
             line_diagnostics: HashMap::new(),
             gutter_diagnostics: HashMap::new(),
@@ -450,13 +463,13 @@ impl EditorView {
             cb(self_ptr, x, y);
             return;
         }
-        // Queue for TypeScript's polling loop.
-        // click_count is stored in action_id field (unused for MOUSE_DOWN otherwise).
+        // Adjust x for heading lines (wider chars) so TypeScript computes correct column.
+        let adj_x = self.adjust_click_x_for_heading(x, y);
         self.pending_events.push(PendingEvent {
             event_type: event_type::MOUSE_DOWN,
             char_code: 0,
             action_id: click_count,
-            x,
+            x: adj_x,
             y,
         });
     }
@@ -465,16 +478,56 @@ impl EditorView {
     /// Queues event for TypeScript. TypeScript handles selection extension.
     pub fn on_mouse_drag(&mut self, x: f64, y: f64) {
         if self.mouse_down_callback.is_some() {
-            // Standalone Rust demo uses callbacks — skip event queuing.
             return;
         }
+        let adj_x = self.adjust_click_x_for_heading(x, y);
         self.pending_events.push(PendingEvent {
             event_type: event_type::MOUSE_DRAG,
             char_code: 0,
             action_id: 0,
-            x,
+            x: adj_x,
             y,
         });
+    }
+
+    /// Adjust a screen click x-coordinate for heading lines.
+    /// Heading fonts have wider characters than the normal font. TypeScript uses
+    /// normal charWidth in pixelToPosition(), so we convert from heading-space to
+    /// normal-space so TypeScript computes the correct column.
+    fn adjust_click_x_for_heading(&self, screen_x: f64, y: f64) -> f64 {
+        let gw = self.gutter_width();
+        if screen_x <= gw { return screen_x; }
+
+        let ts_lh = self.ts_line_height();
+        for line in &self.frame_lines {
+            let ly = line.y_offset.round();
+            if y >= ly && y < ly + ts_lh {
+                // Check if this line has heading tokens
+                let mut heading_cw = 0.0;
+                for token in &line.tokens {
+                    if token.st == "heading-lg" {
+                        heading_cw = self.renderer.heading_large_char_width;
+                        break;
+                    }
+                    if token.st == "heading-md" {
+                        heading_cw = self.renderer.heading_medium_char_width;
+                        break;
+                    }
+                }
+                if heading_cw <= 0.0 { return screen_x; } // not a heading
+
+                let normal_cw = self.renderer.char_width;
+                // Document-space x from gutter (accounting for scroll)
+                let doc_x = screen_x + self.scroll_x - gw;
+                // Column in heading text
+                let col = doc_x / heading_cw;
+                // Convert back to what TypeScript expects:
+                // TS computes: col = (event_x + scrollLeft - gw) / normal_cw
+                // scrollLeft ≈ scroll_x, so: event_x = col * normal_cw - scroll_x + gw
+                return col * normal_cw - self.scroll_x + gw;
+            }
+        }
+        screen_x
     }
 
     pub fn set_scroll_callback(&mut self, cb: ScrollCallback) {
@@ -508,127 +561,143 @@ impl EditorView {
             return;
         }
 
-        // Clamp the scroll delta so content never drifts outside its valid range.
-        let ts_line_h = self.ts_line_height();
+        let mut needs_redraw = false;
 
-        // Use max_line_number (total lines in document) for content height, not just
-        // the number of lines currently in frame_lines.
-        let total_lines = if self.max_line_number > 0 {
-            self.max_line_number as f64
-        } else {
-            self.frame_lines.len() as f64
-        };
-        let total_content_h = total_lines * ts_line_h;
+        // ── Vertical scroll ─────────────────────────────────────────
+        if dy.abs() > 0.1 {
+            let ts_line_h = self.ts_line_height();
+            let total_lines = if self.max_line_number > 0 {
+                self.max_line_number as f64
+            } else {
+                self.frame_lines.len() as f64
+            };
+            let total_content_h = total_lines * ts_line_h;
 
-        // Compute effective scroll position from current frame state.
-        // In TS-authoritative mode, set_viewport_range recomputes y_offsets each sync,
-        // so we derive the virtual scrollTop from the first visible line's position.
-        let first_line_num = self.frame_lines[0].line_number;
-        let first_y = self.frame_lines[0].y_offset;
-        let effective_scroll_top = (first_line_num as f64 - 1.0) * ts_line_h - first_y;
+            let first_line_num = self.frame_lines[0].line_number;
+            let first_y = self.frame_lines[0].y_offset;
+            let effective_scroll_top = (first_line_num as f64 - 1.0) * ts_line_h - first_y;
 
-        let actual_dy = if total_content_h <= self.height {
-            // Content fits in the view — no scrolling needed at all.
-            0.0
-        } else {
-            let max_scroll = total_content_h - self.height;
-            // After applying dy, new scrollTop = effective_scroll_top - dy
-            // Clamp: 0 <= new_scroll_top <= max_scroll
-            let new_scroll_top = (effective_scroll_top - dy).clamp(0.0, max_scroll);
-            effective_scroll_top - new_scroll_top
-        };
+            let actual_dy = if total_content_h <= self.height {
+                0.0
+            } else {
+                let max_scroll = total_content_h - self.height;
+                let new_scroll_top = (effective_scroll_top - dy).clamp(0.0, max_scroll);
+                effective_scroll_top - new_scroll_top
+            };
 
-        if actual_dy.abs() < 0.1 {
-            return;
-        }
+            if actual_dy.abs() >= 0.1 {
+                self.rust_scroll_delta += actual_dy;
 
-        // Accumulate scroll delta so TypeScript can sync its viewport state.
-        self.rust_scroll_delta += actual_dy;
-
-        // Rust-side scroll: shift all stored y_offsets so draw() reflects the new position.
-        for line in &mut self.frame_lines {
-            line.y_offset += actual_dy;
-        }
-        if let Some(ref mut c) = self.cursor {
-            c.y += actual_dy;
-        }
-        for sel in &mut self.selections {
-            sel.y += actual_dy;
-        }
-        for decor in &mut self.decorations {
-            decor.y += actual_dy;
-        }
-        // find_highlights use line/col — no y shift needed (computed at draw time)
-
-        // Remove lines that scrolled entirely out of view and add cached lines
-        // that scrolled into view.
-        if ts_line_h > 1.0 {
-            let view_h = self.height;
-            self.frame_lines.retain(|l| {
-                l.y_offset + ts_line_h > -ts_line_h && l.y_offset < view_h + ts_line_h
-            });
-
-            // Try to fill gaps at the top.
-            let max_fill = (view_h / ts_line_h) as usize + 2;
-            let mut filled = 0usize;
-            loop {
-                if filled >= max_fill { break; }
-                let first_line_num = match self.frame_lines.first() {
-                    Some(l) => l.line_number,
-                    None => break,
-                };
-                let first_y = self.frame_lines[0].y_offset;
-                if first_y > 0.0 && first_line_num > 1 {
-                    let needed_line = first_line_num - 1;
-                    if let Some(cached) = self.line_cache.get(&needed_line) {
-                        self.frame_lines.insert(0, LineRenderData {
-                            line_number: needed_line,
-                            text: cached.text.clone(),
-                            tokens: cached.tokens.clone(),
-                            y_offset: first_y - ts_line_h,
-                            line_bg: cached.line_bg,
-                        });
-                        filled += 1;
-                    } else {
-                        self.needs_lines = true;
-                        break;
-                    }
-                } else {
-                    break;
+                // Round y_offsets to integer points after shifting.
+                // Fractional positions cause Core Text to use different anti-aliasing
+                // (grayscale vs subpixel) on layer-backed views, producing blurry text
+                // that persists until the next full re-render from TypeScript.
+                for line in &mut self.frame_lines {
+                    line.y_offset = (line.y_offset + actual_dy).round();
                 }
-            }
-
-            // Try to fill gaps at the bottom.
-            filled = 0;
-            loop {
-                if filled >= max_fill { break; }
-                let last_line_num = match self.frame_lines.last() {
-                    Some(l) => l.line_number,
-                    None => break,
-                };
-                let last_y = self.frame_lines.last().unwrap().y_offset;
-                if last_y + ts_line_h < view_h && last_line_num < self.max_line_number {
-                    let needed_line = last_line_num + 1;
-                    if let Some(cached) = self.line_cache.get(&needed_line) {
-                        self.frame_lines.push(LineRenderData {
-                            line_number: needed_line,
-                            text: cached.text.clone(),
-                            tokens: cached.tokens.clone(),
-                            y_offset: last_y + ts_line_h,
-                            line_bg: cached.line_bg,
-                        });
-                        filled += 1;
-                    } else {
-                        self.needs_lines = true;
-                        break;
-                    }
-                } else {
-                    break;
+                if let Some(ref mut c) = self.cursor {
+                    c.y = (c.y + actual_dy).round();
                 }
+                for sel in &mut self.selections {
+                    sel.y = (sel.y + actual_dy).round();
+                }
+                for decor in &mut self.decorations {
+                    decor.y = (decor.y + actual_dy).round();
+                }
+
+                // Fill gaps from line cache
+                if ts_line_h > 1.0 {
+                    let view_h = self.height;
+                    self.frame_lines.retain(|l| {
+                        l.y_offset + ts_line_h > -ts_line_h && l.y_offset < view_h + ts_line_h
+                    });
+
+                    let max_fill = (view_h / ts_line_h) as usize + 2;
+                    let mut filled = 0usize;
+                    loop {
+                        if filled >= max_fill { break; }
+                        let first_line_num = match self.frame_lines.first() {
+                            Some(l) => l.line_number,
+                            None => break,
+                        };
+                        let first_y = self.frame_lines[0].y_offset;
+                        if first_y > 0.0 && first_line_num > 1 {
+                            let needed_line = first_line_num - 1;
+                            if let Some(cached) = self.line_cache.get(&needed_line) {
+                                self.frame_lines.insert(0, LineRenderData {
+                                    line_number: needed_line,
+                                    text: cached.text.clone(),
+                                    tokens: cached.tokens.clone(),
+                                    y_offset: first_y - ts_line_h,
+                                    line_bg: cached.line_bg,
+                                });
+                                filled += 1;
+                            } else {
+                                self.needs_lines = true;
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+
+                    filled = 0;
+                    loop {
+                        if filled >= max_fill { break; }
+                        let last_line_num = match self.frame_lines.last() {
+                            Some(l) => l.line_number,
+                            None => break,
+                        };
+                        let last_y = self.frame_lines.last().unwrap().y_offset;
+                        if last_y + ts_line_h < view_h && last_line_num < self.max_line_number {
+                            let needed_line = last_line_num + 1;
+                            if let Some(cached) = self.line_cache.get(&needed_line) {
+                                self.frame_lines.push(LineRenderData {
+                                    line_number: needed_line,
+                                    text: cached.text.clone(),
+                                    tokens: cached.tokens.clone(),
+                                    y_offset: last_y + ts_line_h,
+                                    line_bg: cached.line_bg,
+                                });
+                                filled += 1;
+                            } else {
+                                self.needs_lines = true;
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                }
+
+                needs_redraw = true;
             }
         }
 
-        view::invalidate_view(self.nsview);
+        // ── Horizontal scroll ───────────────────────────────────────
+        if dx.abs() > 0.1 {
+            let gutter_w = self.gutter_width();
+            let max_text_width = self.frame_lines.iter()
+                .map(|l| l.text.len() as f64 * self.renderer.char_width)
+                .fold(0.0f64, f64::max);
+            let content_width = max_text_width + 40.0; // right padding
+            let view_content_width = self.width - gutter_w;
+            let max_scroll_x = (content_width - view_content_width).max(0.0);
+            // Positive dx = swipe right = see content more to the left = scroll_x decreases
+            let new_scroll_x = (self.scroll_x - dx).clamp(0.0, max_scroll_x);
+            let delta_x = new_scroll_x - self.scroll_x;
+            let rounded_x = new_scroll_x.round();
+            let actual_delta = rounded_x - self.scroll_x;
+            if actual_delta.abs() > 0.01 {
+                self.scroll_x = rounded_x;
+                self.rust_scroll_delta_x += actual_delta;
+                needs_redraw = true;
+            }
+        }
+
+        if needs_redraw {
+            view::invalidate_view(self.nsview);
+        }
     }
 
     pub fn add_context_menu_item(&mut self, title: &str, action_id: &str) {
@@ -664,12 +733,13 @@ impl EditorView {
     }
 
     /// Begin a frame batch. Clears per-frame state (cursor, decorations, ghost text)
-    /// but NOT frame_lines — those are rebuilt by set_viewport or persist from scroll.
+    /// and frame_lines (they'll be rebuilt by render_line or set_viewport_range).
     pub fn begin_frame(&mut self) {
         self.cursor = None;
         self.cursors.clear();
         self.decorations.clear();
         self.ghost_text = None;
+        self.frame_lines.clear();
         self.needs_lines = false;
     }
 
@@ -884,6 +954,14 @@ impl EditorView {
     /// Called from the NSView drawRect: handler with a valid CGContextRef.
     pub fn draw(&self, raw_ctx: core_graphics::sys::CGContextRef, dirty_rect: NSRect) {
         let ctx = unsafe { CGContext::from_existing_context_ptr(raw_ctx) };
+        // Force consistent font rendering regardless of event context.
+        // macOS may disable font smoothing during scroll events, causing
+        // text to appear lighter/thinner until the next non-scroll redraw.
+        unsafe {
+            CGContextSetShouldSmoothFonts(raw_ctx as *mut _, true);
+            CGContextSetAllowsFontSmoothing(raw_ctx as *mut _, true);
+            CGContextSetShouldAntialias(raw_ctx as *mut _, true);
+        }
         let actual_height = dirty_rect.size.height.max(self.height);
         self.draw_with_context(&ctx, actual_height);
     }
@@ -904,8 +982,180 @@ impl EditorView {
         ctx.fill_rect(bounds);
 
         let gutter_w = self.gutter_width();
+        // Round scroll_x to integer points for crisp rendering on all displays.
+        // Rust-side scroll accumulates fractional deltas; sub-point positions
+        // cause blurry Core Text output (different anti-aliasing pattern).
+        let sx = self.scroll_x.round();
 
-        // 2. Draw gutter background
+        // 2. Draw each buffered line — content area (scrollable)
+        let ts_line_h = self.ts_line_height_px.unwrap_or(self.renderer.line_height);
+        let text_x = gutter_w - sx; // pre-compute, already integer
+        for line in &self.frame_lines {
+            // Round y to integer points once — use for ALL elements on this line.
+            let ly = line.y_offset.round();
+
+            // Draw per-line background color (for diff highlighting) — full width, no scroll
+            if let Some(&(r, g, b, a)) = self.line_backgrounds.get(&line.line_number) {
+                ctx.set_rgb_fill_color(r, g, b, a);
+                let line_rect = CGRect::new(
+                    &CGPoint::new(0.0, ly),
+                    &CGSize::new(self.width, ts_line_h),
+                );
+                ctx.fill_rect(line_rect);
+            }
+
+            // Draw code block / token-specified line background — no scroll
+            if let Some((r, g, b)) = line.line_bg {
+                ctx.set_rgb_fill_color(r, g, b, 1.0);
+                let line_rect = CGRect::new(
+                    &CGPoint::new(gutter_w, ly),
+                    &CGSize::new(self.width - gutter_w, ts_line_h),
+                );
+                ctx.fill_rect(line_rect);
+            }
+
+            // Draw find highlights for this line (BEFORE text, so text renders on top)
+            for fh in &self.find_highlights {
+                if fh.line + 1 == line.line_number {
+                    let char_w = self.renderer.char_width;
+                    let byte_col = fh.col as usize;
+                    let char_col = if byte_col <= line.text.len() {
+                        line.text[..byte_col].chars().count()
+                    } else {
+                        byte_col
+                    };
+                    let byte_end = (fh.col + fh.len) as usize;
+                    let char_len = if byte_end <= line.text.len() {
+                        line.text[byte_col..byte_end].chars().count()
+                    } else {
+                        fh.len as usize
+                    };
+                    let hx = (gutter_w + char_col as f64 * char_w - sx).round();
+                    let hw = (char_len as f64 * char_w).round();
+                    if fh.current > 0 {
+                        ctx.set_rgb_fill_color(0.91, 0.67, 0.33, 0.35);
+                    } else {
+                        ctx.set_rgb_fill_color(0.89, 0.76, 0.33, 0.20);
+                    }
+                    let hr = CGRect::new(
+                        &CGPoint::new(hx, ly),
+                        &CGSize::new(hw, ts_line_h),
+                    );
+                    ctx.fill_rect(hr);
+                }
+            }
+
+            // Draw text content with tokens
+            text_renderer::draw_line(
+                ctx,
+                &line.text,
+                &line.tokens,
+                text_x,
+                ly,
+                &self.renderer,
+                self.default_text_color,
+            );
+
+            // Draw Error Lens-style inline diagnostic message after the line text
+            if let Some((_severity, ref message, ref color_hex)) = self.line_diagnostics.get(&line.line_number) {
+                let text_end_x = (gutter_w + self.renderer.char_width * line.text.len() as f64 + 16.0 - sx).round();
+                let (mr, mg, mb) = text_renderer::parse_hex_color(color_hex);
+                text_renderer::draw_text(
+                    ctx,
+                    message,
+                    text_end_x,
+                    ly,
+                    &self.renderer.normal,
+                    self.renderer.ascent,
+                    (mr, mg, mb),
+                );
+            }
+        }
+
+        // 3. Draw decorations (underlines, backgrounds) — offset by scroll_x
+        for decor in &self.decorations {
+            let (r, g, b) = text_renderer::parse_hex_color(&decor.color);
+            let dx = decor.x - sx;
+            match decor.kind.as_str() {
+                "background" => {
+                    ctx.set_rgb_fill_color(r, g, b, 0.3);
+                    let rect = CGRect::new(
+                        &CGPoint::new(dx, decor.y),
+                        &CGSize::new(decor.w, decor.h),
+                    );
+                    ctx.fill_rect(rect);
+                }
+                "underline" => {
+                    ctx.set_rgb_stroke_color(r, g, b, 1.0);
+                    ctx.set_line_width(1.0);
+                    let y_bottom = decor.y + decor.h - 1.0;
+                    ctx.move_to_point(dx, y_bottom);
+                    ctx.add_line_to_point(dx + decor.w, y_bottom);
+                    ctx.stroke_path();
+                }
+                "underline-wavy" => {
+                    ctx.set_rgb_stroke_color(r, g, b, 1.0);
+                    ctx.set_line_width(1.0);
+                    let y_base = decor.y + decor.h - 1.0;
+                    let wave_height = 2.0;
+                    let wave_len = 4.0;
+                    let mut x = dx;
+                    ctx.move_to_point(x, y_base);
+                    let mut up = true;
+                    while x < dx + decor.w {
+                        let y_target = if up { y_base - wave_height } else { y_base };
+                        x += wave_len;
+                        ctx.add_line_to_point(x, y_target);
+                        up = !up;
+                    }
+                    ctx.stroke_path();
+                }
+                _ => {}
+            }
+        }
+
+        // 4. Draw selection rectangles — offset by scroll_x, heading-aware height+position+width
+        let gw = gutter_w;
+        for sel in &self.selections {
+            ctx.set_rgb_fill_color(
+                self.selection_color.0,
+                self.selection_color.1,
+                self.selection_color.2,
+                self.selection_color.3,
+            );
+            let (h, y_shift, cw_ratio) = self.line_metrics_at_y(sel.y);
+            // Scale selection x and width for heading char width.
+            // sel.x = startCol * normal_cw + gutterWidth, so content part = sel.x - gw
+            let adj_x = if cw_ratio != 1.0 {
+                (sel.x - gw) * cw_ratio + gw
+            } else {
+                sel.x
+            };
+            let adj_w = sel.w * cw_ratio;
+            let rect = CGRect::new(
+                &CGPoint::new((adj_x - sx).round(), (sel.y - y_shift).round()),
+                &CGSize::new(adj_w.round(), h),
+            );
+            ctx.fill_rect(rect);
+        }
+
+        // 5. Draw ghost text — offset by scroll_x
+        if let Some(ref ghost) = self.ghost_text {
+            text_renderer::draw_text(
+                ctx,
+                &ghost.text,
+                ghost.x - sx,
+                ghost.y,
+                &self.renderer.normal,
+                self.renderer.ascent,
+                ghost.color,
+            );
+        }
+
+        // 6. Draw cursors — offset by scroll_x, heading-aware height
+        self.draw_cursors(ctx, sx);
+
+        // 7. Re-draw gutter on top (covers any content that scrolled under it)
         ctx.set_rgb_fill_color(
             self.gutter_bg_color.0,
             self.gutter_bg_color.1,
@@ -918,35 +1168,16 @@ impl EditorView {
         );
         ctx.fill_rect(gutter_rect);
 
-        // 3. Draw each buffered line
-        let ts_line_h = self.ts_line_height_px.unwrap_or(self.renderer.line_height);
+        // 8. Draw gutter items on top of gutter background
         for line in &self.frame_lines {
-            // Draw per-line background color (for diff highlighting)
-            if let Some(&(r, g, b, a)) = self.line_backgrounds.get(&line.line_number) {
-                ctx.set_rgb_fill_color(r, g, b, a);
-                let line_rect = CGRect::new(
-                    &CGPoint::new(0.0, line.y_offset),
-                    &CGSize::new(self.width, ts_line_h),
-                );
-                ctx.fill_rect(line_rect);
-            }
+            let ly = line.y_offset.round(); // consistent rounded y
 
-            // Draw code block / token-specified line background
-            if let Some((r, g, b)) = line.line_bg {
-                ctx.set_rgb_fill_color(r, g, b, 1.0);
-                let line_rect = CGRect::new(
-                    &CGPoint::new(gutter_w, line.y_offset),
-                    &CGSize::new(self.width - gutter_w, ts_line_h),
-                );
-                ctx.fill_rect(line_rect);
-            }
-
-            // Draw breakpoint indicator (red filled circle)
+            // Breakpoint indicator
             if self.breakpoint_lines.contains(&line.line_number) {
-                ctx.set_rgb_fill_color(0.9, 0.2, 0.2, 1.0); // bright red
+                ctx.set_rgb_fill_color(0.9, 0.2, 0.2, 1.0);
                 let bp_size = 10.0;
                 let bp_x = 2.0;
-                let bp_y = line.y_offset + (ts_line_h - bp_size) / 2.0;
+                let bp_y = ly + (ts_line_h - bp_size) / 2.0;
                 let bp_rect = CGRect::new(
                     &CGPoint::new(bp_x, bp_y),
                     &CGSize::new(bp_size, bp_size),
@@ -954,20 +1185,18 @@ impl EditorView {
                 ctx.fill_ellipse_in_rect(bp_rect);
             }
 
-            // Draw fold indicator (triangle right = collapsed, triangle down = expanded)
+            // Fold indicator
             if let Some(&collapsed) = self.fold_indicators.get(&line.line_number) {
                 let tri_size = 8.0;
                 let tri_x = gutter_w - 16.0;
-                let tri_y = line.y_offset + (ts_line_h - tri_size) / 2.0;
+                let tri_y = ly + (ts_line_h - tri_size) / 2.0;
                 ctx.set_rgb_fill_color(0.5, 0.5, 0.5, 0.8);
                 ctx.begin_path();
                 if collapsed {
-                    // Right-pointing triangle ▶
                     ctx.move_to_point(tri_x, tri_y);
                     ctx.add_line_to_point(tri_x + tri_size, tri_y + tri_size / 2.0);
                     ctx.add_line_to_point(tri_x, tri_y + tri_size);
                 } else {
-                    // Down-pointing triangle ▼
                     ctx.move_to_point(tri_x, tri_y);
                     ctx.add_line_to_point(tri_x + tri_size, tri_y);
                     ctx.add_line_to_point(tri_x + tri_size / 2.0, tri_y + tri_size);
@@ -976,18 +1205,18 @@ impl EditorView {
                 ctx.fill_path();
             }
 
-            // Draw gutter diagnostic icon (colored circle for errors/warnings)
+            // Gutter diagnostic icon
             if let Some(&severity) = self.gutter_diagnostics.get(&line.line_number) {
                 let (dr, dg, db) = match severity {
-                    1 => (0.957, 0.278, 0.278), // error: red #f44747
-                    2 => (0.800, 0.655, 0.0),   // warning: yellow #cca700
-                    3 => (0.310, 0.757, 1.0),   // info: blue #4fc1ff
-                    _ => (0.5, 0.5, 0.5),       // hint: gray
+                    1 => (0.957, 0.278, 0.278),
+                    2 => (0.800, 0.655, 0.0),
+                    3 => (0.310, 0.757, 1.0),
+                    _ => (0.5, 0.5, 0.5),
                 };
                 ctx.set_rgb_fill_color(dr, dg, db, 1.0);
                 let icon_size = 8.0;
                 let icon_x = 4.0;
-                let icon_y = line.y_offset + (ts_line_h - icon_size) / 2.0;
+                let icon_y = ly + (ts_line_h - icon_size) / 2.0;
                 let icon_rect = CGRect::new(
                     &CGPoint::new(icon_x, icon_y),
                     &CGSize::new(icon_size, icon_size),
@@ -995,169 +1224,42 @@ impl EditorView {
                 ctx.fill_ellipse_in_rect(icon_rect);
             }
 
-            // Draw line number in gutter (right-aligned)
+            // Line number
             let num_str = format!("{}", line.line_number);
             let num_width = self.renderer.char_width * num_str.len() as f64;
-            // Right-align: gutter_w - 20px (fold+diff area) - num_width
             let num_x = gutter_w - 20.0 - num_width;
-
             text_renderer::draw_text(
                 ctx,
                 &num_str,
                 num_x,
-                line.y_offset,
+                ly,
                 &self.renderer.normal,
                 self.renderer.ascent,
                 self.gutter_fg_color,
             );
-
-            // Draw find highlights for this line (BEFORE text, so text renders on top)
-            for fh in &self.find_highlights {
-                if fh.line + 1 == line.line_number {
-                    let char_w = self.renderer.char_width;
-                    // Convert byte offset to character count for correct positioning with multi-byte UTF-8
-                    let byte_col = fh.col as usize;
-                    let char_col = if byte_col <= line.text.len() {
-                        line.text[..byte_col].chars().count()
-                    } else {
-                        byte_col // fallback
-                    };
-                    let byte_end = (fh.col + fh.len) as usize;
-                    let char_len = if byte_end <= line.text.len() {
-                        line.text[byte_col..byte_end].chars().count()
-                    } else {
-                        fh.len as usize
-                    };
-                    let hx = gutter_w + char_col as f64 * char_w;
-                    let hw = char_len as f64 * char_w;
-                    if fh.current > 0 {
-                        // Current match: orange background
-                        ctx.set_rgb_fill_color(0.91, 0.67, 0.33, 0.35);
-                    } else {
-                        // Other matches: subtle yellow background
-                        ctx.set_rgb_fill_color(0.89, 0.76, 0.33, 0.20);
-                    }
-                    let hr = CGRect::new(
-                        &CGPoint::new(hx, line.y_offset),
-                        &CGSize::new(hw, ts_line_h),
-                    );
-                    ctx.fill_rect(hr);
-                }
-            }
-
-            // Draw text content with tokens starting at gutter_w
-            text_renderer::draw_line(
-                ctx,
-                &line.text,
-                &line.tokens,
-                gutter_w,
-                line.y_offset,
-                &self.renderer,
-                self.default_text_color,
-            );
-
-            // Draw Error Lens-style inline diagnostic message after the line text
-            if let Some((severity, ref message, ref color_hex)) = self.line_diagnostics.get(&line.line_number) {
-                let text_end_x = gutter_w + self.renderer.char_width * line.text.len() as f64 + 16.0;
-                let (mr, mg, mb) = text_renderer::parse_hex_color(color_hex);
-                // Draw message with reduced opacity
-                text_renderer::draw_text(
-                    ctx,
-                    message,
-                    text_end_x,
-                    line.y_offset,
-                    &self.renderer.normal,
-                    self.renderer.ascent,
-                    (mr, mg, mb),
-                );
-            }
         }
-
-        // 4. Draw decorations (underlines, backgrounds)
-        for decor in &self.decorations {
-            let (r, g, b) = text_renderer::parse_hex_color(&decor.color);
-            match decor.kind.as_str() {
-                "background" => {
-                    ctx.set_rgb_fill_color(r, g, b, 0.3);
-                    let rect = CGRect::new(
-                        &CGPoint::new(decor.x, decor.y),
-                        &CGSize::new(decor.w, decor.h),
-                    );
-                    ctx.fill_rect(rect);
-                }
-                "underline" => {
-                    ctx.set_rgb_stroke_color(r, g, b, 1.0);
-                    ctx.set_line_width(1.0);
-                    let y_bottom = decor.y + decor.h - 1.0;
-                    ctx.move_to_point(decor.x, y_bottom);
-                    ctx.add_line_to_point(decor.x + decor.w, y_bottom);
-                    ctx.stroke_path();
-                }
-                "underline-wavy" => {
-                    ctx.set_rgb_stroke_color(r, g, b, 1.0);
-                    ctx.set_line_width(1.0);
-                    let y_base = decor.y + decor.h - 1.0;
-                    let wave_height = 2.0;
-                    let wave_len = 4.0;
-                    let mut x = decor.x;
-                    ctx.move_to_point(x, y_base);
-                    let mut up = true;
-                    while x < decor.x + decor.w {
-                        let y_target = if up { y_base - wave_height } else { y_base };
-                        x += wave_len;
-                        ctx.add_line_to_point(x, y_target);
-                        up = !up;
-                    }
-                    ctx.stroke_path();
-                }
-                _ => {}
-            }
-        }
-
-        // 5. Draw selection rectangles
-        for sel in &self.selections {
-            ctx.set_rgb_fill_color(
-                self.selection_color.0,
-                self.selection_color.1,
-                self.selection_color.2,
-                self.selection_color.3,
-            );
-            let rect = CGRect::new(
-                &CGPoint::new(sel.x, sel.y),
-                &CGSize::new(sel.w, sel.h),
-            );
-            ctx.fill_rect(rect);
-        }
-
-        // 6. Draw ghost text
-        if let Some(ref ghost) = self.ghost_text {
-            text_renderer::draw_text(
-                ctx,
-                &ghost.text,
-                ghost.x,
-                ghost.y,
-                &self.renderer.normal,
-                self.renderer.ascent,
-                ghost.color,
-            );
-        }
-
-        // 7. Draw cursors
-        self.draw_cursors(ctx);
     }
 
-    fn draw_cursors(&self, ctx: &CGContext) {
+    fn draw_cursors(&self, ctx: &CGContext, scroll_x: f64) {
+        let gw = self.gutter_width();
         let draw_one = |cursor: &CursorData| {
+            let (lh, y_shift, cw_ratio) = self.line_metrics_at_y(cursor.y);
             let (w, h) = match cursor.style {
-                0 => (2.0, self.renderer.line_height), // Line cursor
-                1 => (self.renderer.char_width, self.renderer.line_height), // Block cursor
-                2 => (self.renderer.char_width, 2.0),  // Underline cursor
-                _ => (2.0, self.renderer.line_height),
+                0 => (2.0, lh),                         // Line cursor
+                1 => (self.renderer.char_width * cw_ratio, lh), // Block cursor
+                2 => (self.renderer.char_width * cw_ratio, 2.0), // Underline cursor
+                _ => (2.0, lh),
             };
             let y = if cursor.style == 2 {
-                cursor.y + self.renderer.line_height - 2.0
+                cursor.y + lh - y_shift - 2.0
             } else {
-                cursor.y
+                cursor.y - y_shift
+            };
+            // Scale cursor x for heading char width
+            let cx = if cw_ratio != 1.0 {
+                (cursor.x - gw) * cw_ratio + gw
+            } else {
+                cursor.x
             };
             ctx.set_rgb_fill_color(
                 self.cursor_color.0,
@@ -1166,24 +1268,47 @@ impl EditorView {
                 1.0,
             );
             let rect = CGRect::new(
-                &CGPoint::new(cursor.x, y),
+                &CGPoint::new((cx - scroll_x).round(), y.round()),
                 &CGSize::new(w, h),
             );
             ctx.fill_rect(rect);
         };
 
-        // Primary cursor
         if let Some(ref c) = self.cursor {
             draw_one(c);
         }
-
-        // Multi-cursors
         for c in &self.cursors {
             draw_one(c);
         }
     }
 
     // ── Helpers ──────────────────────────────────────────────────
+
+    /// Get the effective line height, y-shift, and char width ratio for a line.
+    /// Returns (height, y_shift, cw_ratio) where:
+    /// - height: scaled TS line height for headings, normal for other lines
+    /// - y_shift: pixels to move cursor/selection UP to align with heading text
+    /// - cw_ratio: heading_char_width / normal_char_width (1.0 for non-headings)
+    fn line_metrics_at_y(&self, y: f64) -> (f64, f64, f64) {
+        let ts_lh = self.ts_line_height();
+        let normal_cw = self.renderer.char_width;
+        for line in &self.frame_lines {
+            if (line.y_offset - y).abs() < 2.0 {
+                for token in &line.tokens {
+                    if token.st == "heading-lg" {
+                        let ratio = self.renderer.heading_large_char_width / normal_cw;
+                        return ((ts_lh * 1.4).ceil(), self.renderer.heading_large_y_shift, ratio);
+                    }
+                    if token.st == "heading-md" {
+                        let ratio = self.renderer.heading_medium_char_width / normal_cw;
+                        return ((ts_lh * 1.15).ceil(), self.renderer.heading_medium_y_shift, ratio);
+                    }
+                }
+                return (ts_lh, 0.0, 1.0);
+            }
+        }
+        (ts_lh, 0.0, 1.0)
+    }
 
     /// Get the TypeScript line height. Prefers the value set by set_viewport,
     /// falls back to inferring from frame_lines spacing, then font metrics.
