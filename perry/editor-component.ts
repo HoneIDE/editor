@@ -678,6 +678,7 @@ export class Editor {
    */
   flushEvents(): void {
     const h = this.nativeHandle as number;
+    if (h === null || h < 1) return; // Guard against uninitialized/freed handle
 
     // Sync view dimensions
     let sizeChanged = 0;
