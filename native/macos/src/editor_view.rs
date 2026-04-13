@@ -1047,18 +1047,14 @@ impl EditorView {
                 }
             }
 
-            // Draw text content — use simple draw_text path for now.
-            // The CTLine/attributed-string draw_line path produces invisible
-            // text when the editor is embedded in a perry/ui NSStackView
-            // (likely a CGContext text matrix interaction). draw_text uses
-            // the same Core Text machinery but without per-token coloring.
-            text_renderer::draw_text(
+            // Draw text content with tokens
+            text_renderer::draw_line(
                 ctx,
                 &line.text,
+                &line.tokens,
                 text_x,
                 ly,
-                &self.renderer.normal,
-                self.renderer.ascent,
+                &self.renderer,
                 self.default_text_color,
             );
 
