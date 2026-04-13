@@ -243,6 +243,7 @@ pub struct EditorView {
     line_cache: HashMap<i32, CachedLine>,
     // Accumulated scroll delta (in pixels) that TypeScript can read.
     pub rust_scroll_delta: f64,
+    pub rust_scroll_delta_x: f64,
     // Set true when scroll reveals lines not present in the cache.
     pub needs_lines: bool,
 
@@ -314,6 +315,7 @@ impl EditorView {
             line_backgrounds: HashMap::new(),
             line_cache: HashMap::new(),
             rust_scroll_delta: 0.0,
+            rust_scroll_delta_x: 0.0,
             needs_lines: false,
             context_menu_items: Vec::new(),
             background_color: (0.118, 0.118, 0.118),
