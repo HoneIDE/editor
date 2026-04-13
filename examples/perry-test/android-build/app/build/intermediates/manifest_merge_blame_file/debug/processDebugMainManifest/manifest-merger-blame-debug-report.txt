@@ -1,0 +1,64 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="com.perry.template"
+4    android:versionCode="1"
+5    android:versionName="1.0" >
+6
+7    <uses-sdk
+8        android:minSdkVersion="24"
+9        android:targetSdkVersion="35" />
+10
+11    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+11-->/Users/amlug/projects/hone/hone-editor/examples/perry-test/android-build/app/src/main/AndroidManifest.xml:5:5-79
+11-->/Users/amlug/projects/hone/hone-editor/examples/perry-test/android-build/app/src/main/AndroidManifest.xml:5:22-76
+12    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+12-->/Users/amlug/projects/hone/hone-editor/examples/perry-test/android-build/app/src/main/AndroidManifest.xml:6:5-81
+12-->/Users/amlug/projects/hone/hone-editor/examples/perry-test/android-build/app/src/main/AndroidManifest.xml:6:22-78
+13
+14    <permission
+14-->[androidx.core:core:1.12.0] /Users/amlug/.gradle/caches/9.4.0/transforms/93f5a7d6a0abcbb36fff9aeb22d9ee8f/transformed/core-1.12.0/AndroidManifest.xml:22:5-24:47
+15        android:name="com.perry.template.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+15-->[androidx.core:core:1.12.0] /Users/amlug/.gradle/caches/9.4.0/transforms/93f5a7d6a0abcbb36fff9aeb22d9ee8f/transformed/core-1.12.0/AndroidManifest.xml:23:9-81
+16        android:protectionLevel="signature" />
+16-->[androidx.core:core:1.12.0] /Users/amlug/.gradle/caches/9.4.0/transforms/93f5a7d6a0abcbb36fff9aeb22d9ee8f/transformed/core-1.12.0/AndroidManifest.xml:24:9-44
+17
+18    <uses-permission android:name="com.perry.template.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
+18-->[androidx.core:core:1.12.0] /Users/amlug/.gradle/caches/9.4.0/transforms/93f5a7d6a0abcbb36fff9aeb22d9ee8f/transformed/core-1.12.0/AndroidManifest.xml:26:5-97
+18-->[androidx.core:core:1.12.0] /Users/amlug/.gradle/caches/9.4.0/transforms/93f5a7d6a0abcbb36fff9aeb22d9ee8f/transformed/core-1.12.0/AndroidManifest.xml:26:22-94
+19
+20    <application
+20-->/Users/amlug/projects/hone/hone-editor/examples/perry-test/android-build/app/src/main/AndroidManifest.xml:8:5-23:19
+21        android:allowBackup="true"
+21-->/Users/amlug/projects/hone/hone-editor/examples/perry-test/android-build/app/src/main/AndroidManifest.xml:9:9-35
+22        android:appComponentFactory="androidx.core.app.CoreComponentFactory"
+22-->[androidx.core:core:1.12.0] /Users/amlug/.gradle/caches/9.4.0/transforms/93f5a7d6a0abcbb36fff9aeb22d9ee8f/transformed/core-1.12.0/AndroidManifest.xml:28:18-86
+23        android:debuggable="true"
+24        android:extractNativeLibs="false"
+25        android:label="Perry App"
+25-->/Users/amlug/projects/hone/hone-editor/examples/perry-test/android-build/app/src/main/AndroidManifest.xml:10:9-34
+26        android:theme="@android:style/Theme.Material.Light.NoActionBar" >
+26-->/Users/amlug/projects/hone/hone-editor/examples/perry-test/android-build/app/src/main/AndroidManifest.xml:11:9-72
+27        <activity
+27-->/Users/amlug/projects/hone/hone-editor/examples/perry-test/android-build/app/src/main/AndroidManifest.xml:13:9-22:20
+28            android:name="com.perry.app.PerryActivity"
+28-->/Users/amlug/projects/hone/hone-editor/examples/perry-test/android-build/app/src/main/AndroidManifest.xml:14:13-42
+29            android:configChanges="orientation|screenSize|keyboardHidden"
+29-->/Users/amlug/projects/hone/hone-editor/examples/perry-test/android-build/app/src/main/AndroidManifest.xml:17:13-74
+30            android:exported="true"
+30-->/Users/amlug/projects/hone/hone-editor/examples/perry-test/android-build/app/src/main/AndroidManifest.xml:15:13-36
+31            android:theme="@style/Theme.Perry.Splash" >
+31-->/Users/amlug/projects/hone/hone-editor/examples/perry-test/android-build/app/src/main/AndroidManifest.xml:16:13-54
+32            <intent-filter>
+32-->/Users/amlug/projects/hone/hone-editor/examples/perry-test/android-build/app/src/main/AndroidManifest.xml:18:13-21:29
+33                <action android:name="android.intent.action.MAIN" />
+33-->/Users/amlug/projects/hone/hone-editor/examples/perry-test/android-build/app/src/main/AndroidManifest.xml:19:17-69
+33-->/Users/amlug/projects/hone/hone-editor/examples/perry-test/android-build/app/src/main/AndroidManifest.xml:19:25-66
+34
+35                <category android:name="android.intent.category.LAUNCHER" />
+35-->/Users/amlug/projects/hone/hone-editor/examples/perry-test/android-build/app/src/main/AndroidManifest.xml:20:17-77
+35-->/Users/amlug/projects/hone/hone-editor/examples/perry-test/android-build/app/src/main/AndroidManifest.xml:20:27-74
+36            </intent-filter>
+37        </activity>
+38    </application>
+39
+40</manifest>

@@ -924,7 +924,9 @@ impl EditorView {
     fn gutter_width(&self) -> f64 {
         // In ts_mode, use TypeScript's gutter width for pixel-perfect alignment.
         if let Some(w) = self.ts_gutter_width {
-            return w;
+            if !w.is_nan() && w > 0.0 {
+                return w;
+            }
         }
         let digits = if self.max_line_number <= 0 {
             2
@@ -990,7 +992,7 @@ impl EditorView {
         // 2. Draw each buffered line — content area (scrollable)
         let ts_line_h = self.ts_line_height_px.unwrap_or(self.renderer.line_height);
         let text_x = gutter_w - sx; // pre-compute, already integer
-        for line in &self.frame_lines {
+        for (li, line) in self.frame_lines.iter().enumerate() {
             // Round y to integer points once — use for ALL elements on this line.
             let ly = line.y_offset.round();
 
@@ -1045,14 +1047,18 @@ impl EditorView {
                 }
             }
 
-            // Draw text content with tokens
-            text_renderer::draw_line(
+            // Draw text content — use simple draw_text path for now.
+            // The CTLine/attributed-string draw_line path produces invisible
+            // text when the editor is embedded in a perry/ui NSStackView
+            // (likely a CGContext text matrix interaction). draw_text uses
+            // the same Core Text machinery but without per-token coloring.
+            text_renderer::draw_text(
                 ctx,
                 &line.text,
-                &line.tokens,
                 text_x,
                 ly,
-                &self.renderer,
+                &self.renderer.normal,
+                self.renderer.ascent,
                 self.default_text_color,
             );
 

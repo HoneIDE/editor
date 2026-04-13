@@ -24,12 +24,12 @@ import { KeywordSyntaxEngine } from '../core/tokenizer/keyword-syntax-engine';
 
 declare function hone_editor_create(width: number, height: number): number;
 declare function hone_editor_destroy(handle: number): void;
-declare function hone_editor_set_font(handle: number, family: number, size: number): void;
-declare function hone_editor_render_line(handle: number, lineNumber: number, text: number, tokensJson: number, yOffset: number): void;
+declare function hone_editor_set_font(handle: number, family: string, size: number): void;
+declare function hone_editor_render_line(handle: number, lineNumber: number, text: string, tokensJson: string, yOffset: number): void;
 declare function hone_editor_set_cursor(handle: number, x: number, y: number, style: number): void;
-declare function hone_editor_set_selection(handle: number, regionsJson: number): void;
+declare function hone_editor_set_selection(handle: number, regionsJson: string): void;
 declare function hone_editor_scroll(handle: number, offsetY: number): void;
-declare function hone_editor_measure_text(handle: number, text: number): number;
+declare function hone_editor_measure_text(handle: number, text: string): number;
 declare function hone_editor_invalidate(handle: number): void;
 declare function hone_editor_begin_frame(handle: number): void;
 declare function hone_editor_end_frame(handle: number): void;
@@ -1002,7 +1002,7 @@ export class Editor {
     // fontSize 14, lineHeight 1.5 → lineHeightPx = 21 (same as coordinator default)
     const sz = 14;
     const lh = sz + sz / 2;
-    const scrollTop = this._vm.viewport.scroll.scrollTop;
+    let scrollTop = 0;
     const vm = this._vm;
     const doc = this._doc;
     const theme = vm.theme;
@@ -1037,7 +1037,7 @@ export class Editor {
           }
         }
 
-        hone_editor_render_line(handle as number, lineNum + 1, lineContent as any, tokensJson as any, yOffset);
+        hone_editor_render_line(handle as number, lineNum + 1, lineContent, tokensJson, yOffset);
         lineNum++;
         lineStart = i + 1;
       }
