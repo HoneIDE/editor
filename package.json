@@ -1,6 +1,6 @@
 {
   "name": "@honeide/editor",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "High-performance, cross-platform code editor surface",
   "main": "core/index.ts",
   "types": "core/index.ts",
@@ -119,6 +119,10 @@
         "android": {
           "crate": "native/android/",
           "lib": "libhone_editor_android.so"
+        },
+        "harmonyos": {
+          "crate": "native/harmonyos/",
+          "lib": "libhone_editor_harmonyos.a"
         },
         "web": {
           "crate": "native/web/",

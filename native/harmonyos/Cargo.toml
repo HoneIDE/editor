@@ -1,0 +1,17 @@
+[package]
+name = "hone-editor-harmonyos"
+version = "0.1.0"
+edition = "2021"
+description = "HarmonyOS native rendering for Hone Editor (no-op stub; ArkTS-side rendering deferred)"
+
+[lib]
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+libc = "0.2"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

@@ -70,6 +70,10 @@ tests/          Unit and integration tests
 - macOS and iOS share Core Text rendering code
 - Only `native/` Rust FFI crates are platform-specific
 - FFI contract is identical across all platforms (same function signatures)
+- **HarmonyOS** (`native/harmonyos/`) is currently a no-op stub: every
+  `hone_editor_*` symbol link-resolves so Perry-compiled apps embedding
+  the editor load on the device, but the surface renders blank. Real
+  ArkTS-side rendering (canvas + `@ohos.pasteboard` + IME) is a follow-up.
 
 ## Perry AOT Codegen Notes
 Perry v0.4.14+ compiles standard TypeScript patterns correctly, including: `?.`, `??`, `for...of`,

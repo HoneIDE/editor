@@ -58,6 +58,14 @@ export default {
       minSdk: 26,
       ndk: '26.1.10909125',
     },
+    harmonyos: {
+      ffi: 'native/harmonyos/',
+      arch: ['aarch64'],
+      // No-op stub today — link-resolves every `hone_editor_*` FFI symbol so
+      // libentry.so loads on the device, but the editor surface renders
+      // blank. Real ArkTS-side rendering (canvas + pasteboard + IME) is a
+      // separate follow-up.
+    },
     web: {
       ffi: 'native/web/',
       wasmTarget: 'wasm32-unknown-unknown',
