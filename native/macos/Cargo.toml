@@ -16,6 +16,7 @@ objc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 libc = "0.2"
+perry-ffi = { path = "../../../../perry/perry/crates/perry-ffi" }
 
 [[example]]
 name = "demo_editor"

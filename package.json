@@ -34,6 +34,7 @@
   },
   "perry": {
     "nativeLibrary": {
+      "abiVersion": "0.5",
       "module": "@honeide/editor",
       "functions": [
         { "name": "hone_editor_create", "params": ["f64", "f64"], "returns": "i64" },
