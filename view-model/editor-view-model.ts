@@ -1054,6 +1054,28 @@ export class EditorViewModel {
     return this._cursorBlink.renderState;
   }
 
+  /** Mirror of viewport.scroll.scrollTop kept on EditorViewModel itself.
+   *  The Perry editor component reads/writes this directly because
+   *  `vm.viewport.scroll.scrollTop` chains through two cross-module
+   *  imported class fields (ViewportManager, ScrollController) and
+   *  Perry's current dispatch doesn't track the receiver class through
+   *  imported chains — `vm.viewport.scroll.scrollTop` returns undefined,
+   *  and `vm.viewport.scroll.scrollBy(...)` silently no-ops. Mirroring
+   *  on this class (same module as the editor component's import target)
+   *  sidesteps both. The inner ScrollController is still updated for
+   *  same-module callers that read it directly. */
+  private _scrollTopMirror: number = 0;
+  private _scrollLeftMirror: number = 0;
+  getScrollTop(): number { return this._scrollTopMirror; }
+  getScrollLeft(): number { return this._scrollLeftMirror; }
+  applyScrollDelta(deltaX: number, deltaY: number): void {
+    this._scrollTopMirror += deltaY;
+    this._scrollLeftMirror += deltaX;
+    if (this._scrollTopMirror < 0) this._scrollTopMirror = 0;
+    if (this._scrollLeftMirror < 0) this._scrollLeftMirror = 0;
+    this.viewport.scroll.scrollBy(deltaX, deltaY);
+  }
+
   // === Event Handlers ===
 
   /** Execute a command by ID. */

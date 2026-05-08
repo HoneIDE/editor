@@ -693,23 +693,21 @@ export class Editor {
       }
     }
 
-    // Sync scroll delta (vertical)
+    // Sync scroll delta (vertical) — go through `vm.applyScrollDelta`
+    // instead of `vm.viewport.scroll.scrollBy` so the call dispatches to
+    // a directly-imported class. The deeper chain silently no-ops.
     const scrollDelta = hone_editor_get_scroll_delta(h);
     let scrollChanged = 0;
     if (scrollDelta !== 0) {
-      this._vm.viewport.scroll.scrollBy(0, -scrollDelta);
+      this._vm.applyScrollDelta(0, -scrollDelta);
       hone_editor_clear_scroll_delta(h);
       scrollChanged = 1;
     }
 
-    // Sync horizontal scroll delta
-    // Rust scroll_x increases when scrolling right; TS scrollLeft should match.
-    // Rust already clamps scroll_x to valid range, so set a large maxScrollWidth
-    // to prevent TypeScript's clamp() from resetting scrollLeft to 0.
+    // Sync horizontal scroll delta (same reason as vertical above).
     const scrollDeltaX = hone_editor_get_scroll_delta_x(h);
     if (scrollDeltaX !== 0) {
-      this._vm.viewport.scroll.setMaxScrollWidth(100000);
-      this._vm.viewport.scroll.scrollBy(scrollDeltaX, 0);
+      this._vm.applyScrollDelta(scrollDeltaX, 0);
       hone_editor_clear_scroll_delta_x(h);
       scrollChanged = 1;
     }
@@ -1002,8 +1000,10 @@ export class Editor {
     // fontSize 14, lineHeight 1.5 → lineHeightPx = 21 (same as coordinator default)
     const sz = 14;
     const lh = sz + sz / 2;
-    let scrollTop = 0;
     const vm = this._vm;
+    // EditorViewModel mirrors scrollTop on itself for direct access — see
+    // `_scrollTopMirror` on the EditorViewModel class for why.
+    const scrollTop = vm.getScrollTop();
     const doc = this._doc;
     const theme = vm.theme;
     const engine = vm.syntaxEngine as KeywordSyntaxEngine;

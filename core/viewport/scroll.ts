@@ -24,6 +24,13 @@ export class ScrollController {
   get scrollTop(): number { return this._scrollTop; }
   get scrollLeft(): number { return this._scrollLeft; }
 
+  /** Method form of scrollTop. Use this from cross-module callers — Perry's
+   *  chained-getter dispatch through imported class fields can return
+   *  undefined, but cross-module method dispatch through `js_native_call_method`
+   *  works correctly. */
+  getScrollTop(): number { return this._scrollTop; }
+  getScrollLeft(): number { return this._scrollLeft; }
+
   setViewport(width: number, height: number): void {
     this.viewportWidth = width;
     this.viewportHeight = height;
