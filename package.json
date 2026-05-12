@@ -1,6 +1,6 @@
 {
   "name": "@honeide/editor",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "High-performance, cross-platform code editor surface",
   "main": "core/index.ts",
   "types": "core/index.ts",
@@ -8,13 +8,35 @@
     ".": "./core/index.ts",
     "./perry": "./perry/index.ts"
   },
+  "files": [
+    "core/",
+    "perry/",
+    "view-model/",
+    "perry.config.ts",
+    "native/*/src/**",
+    "native/*/Cargo.toml",
+    "native/*/Cargo.lock",
+    "native/*/README.md",
+    "native/*/build.rs"
+  ],
   "scripts": {
     "test": "bun test",
     "test:watch": "bun test --watch",
     "bench": "bun run tests/benchmarks/keystroke-latency.ts && bun run tests/benchmarks/large-file-open.ts && bun run tests/benchmarks/scroll-perf.ts"
   },
-  "keywords": ["editor", "code-editor", "perry", "native"],
+  "keywords": ["hone", "editor", "code-editor", "perry", "native"],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HoneIDE/editor.git"
+  },
+  "bugs": {
+    "url": "https://github.com/HoneIDE/editor/issues"
+  },
+  "homepage": "https://hone.codes",
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "@lezer/common": "^1.2.3",
     "@lezer/highlight": "^1.2.1",
