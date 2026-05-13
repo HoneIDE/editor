@@ -300,3 +300,35 @@ describe('Word Boundary', () => {
     expect(getWordAtColumn('', 0)).toEqual([0, 0]);
   });
 });
+
+// SHIP-V1-GAPS.md #80: column / box selection.
+describe('setColumnSelection', () => {
+  function makeCursor(text: string) {
+    const buf = new TextBuffer(text);
+    return { buf, cm: new CursorManager(buf) };
+  }
+  test('one cursor per line in range with matching anchors/heads', () => {
+    const { cm } = makeCursor('aaaa\nbbbb\ncccc');
+    cm.setColumnSelection(0, 1, 2, 3);
+    expect(cm.cursors.length).toBe(3);
+    expect(cm.cursors[0].line).toBe(0);
+    expect(cm.cursors[0].selectionAnchor?.column).toBe(1);
+    expect(cm.cursors[0].column).toBe(3);
+    expect(cm.cursors[2].line).toBe(2);
+  });
+
+  test('clamps columns to short lines', () => {
+    const { cm } = makeCursor('aa\nbbbb\nc');
+    cm.setColumnSelection(0, 1, 2, 3);
+    expect(cm.cursors[0].column).toBe(2);   // 'aa' length
+    expect(cm.cursors[1].column).toBe(3);   // 'bbbb' fits
+    expect(cm.cursors[2].column).toBe(1);   // 'c' length
+  });
+
+  test('zero-width selection still produces cursors', () => {
+    const { cm } = makeCursor('aa\nbb\ncc');
+    cm.setColumnSelection(0, 1, 2, 1);
+    expect(cm.cursors.length).toBe(3);
+    expect(cm.cursors[0].selectionAnchor).toBeNull();
+  });
+});

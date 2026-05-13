@@ -1,7 +1,7 @@
 import { describe, test, expect } from 'bun:test';
 import { TextBuffer } from '../core/buffer/text-buffer';
 import { FoldState } from '../core/folding/fold-state';
-import { computeIndentFoldRanges } from '../core/folding/fold-provider';
+import { computeIndentFoldRanges, computeRegionFoldRanges, computeFoldRanges } from '../core/folding/fold-provider';
 
 function makeBuffer(text: string): TextBuffer {
   return new TextBuffer(text);
@@ -170,5 +170,71 @@ describe('FoldState', () => {
     fs.setAvailableRanges(sampleRanges);
     fs.fold(99);
     expect(fs.foldedCount).toBe(0);
+  });
+});
+
+// SHIP-V1-GAPS.md #87: region-marker folding tests.
+describe('computeRegionFoldRanges', () => {
+  test('pairs //#region with //#endregion', () => {
+    const buf = makeBuffer([
+      '// #region Setup',
+      'const x = 1;',
+      'const y = 2;',
+      '// #endregion',
+      '',
+      'console.log(x, y);',
+    ].join('\n'));
+    const ranges = computeRegionFoldRanges(buf);
+    expect(ranges.length).toBe(1);
+    expect(ranges[0].startLine).toBe(0);
+    expect(ranges[0].endLine).toBe(3);
+  });
+
+  test('supports nested regions (LIFO)', () => {
+    const buf = makeBuffer([
+      '// #region Outer',
+      'a',
+      '  // #region Inner',
+      '  b',
+      '  // #endregion',
+      '// #endregion',
+    ].join('\n'));
+    const ranges = computeRegionFoldRanges(buf);
+    expect(ranges.length).toBe(2);
+    // Inner closes first (LIFO).
+    expect(ranges[0].startLine).toBe(2);
+    expect(ranges[0].endLine).toBe(4);
+    expect(ranges[1].startLine).toBe(0);
+    expect(ranges[1].endLine).toBe(5);
+  });
+
+  test('drops unmatched start', () => {
+    const buf = makeBuffer([
+      '// #region Orphan',
+      'a',
+      'b',
+    ].join('\n'));
+    expect(computeRegionFoldRanges(buf).length).toBe(0);
+  });
+
+  test('drops unmatched end', () => {
+    const buf = makeBuffer([
+      'a',
+      '// #endregion',
+    ].join('\n'));
+    expect(computeRegionFoldRanges(buf).length).toBe(0);
+  });
+
+  test('computeFoldRanges merges regions with indent fallback', () => {
+    const buf = makeBuffer([
+      '// #region Block',
+      'function f() {',
+      '  return 1;',
+      '}',
+      '// #endregion',
+    ].join('\n'));
+    const ranges = computeFoldRanges(buf);
+    // One indent-based fold (the function body) plus one region fold.
+    expect(ranges.length).toBe(2);
   });
 });

@@ -12,6 +12,7 @@ mod editor_view;
 mod metal_blitter;
 pub mod tokenizer;
 pub mod string_header;
+pub mod tree_sitter_bridge;
 
 pub use editor_view::EditorView;
 

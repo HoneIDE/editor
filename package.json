@@ -116,7 +116,17 @@
         { "name": "hone_editor_set_selection_color", "params": ["i64", "f64", "f64", "f64", "f64"], "returns": "void" },
         { "name": "hone_editor_set_cursor_color", "params": ["i64", "f64", "f64", "f64"], "returns": "void" },
         { "name": "hone_editor_copy_to_clipboard", "params": ["i64", "i64"], "returns": "void" },
-        { "name": "hone_editor_paste_from_clipboard", "params": ["i64"], "returns": "void" }
+        { "name": "hone_editor_paste_from_clipboard", "params": ["i64"], "returns": "void" },
+
+        { "name": "hone_editor_ts_parse", "params": ["i64", "f64"], "returns": "f64" },
+        { "name": "hone_editor_ts_clear", "params": [], "returns": "void" },
+        { "name": "hone_editor_ts_token_count", "params": [], "returns": "f64" },
+        { "name": "hone_editor_ts_token_start", "params": ["f64"], "returns": "f64" },
+        { "name": "hone_editor_ts_token_end", "params": ["f64"], "returns": "f64" },
+        { "name": "hone_editor_ts_token_scope", "params": ["f64"], "returns": "i64" },
+
+        { "name": "hone_editor_set_tokenizer_language", "params": ["f64"], "returns": "void" },
+        { "name": "hone_editor_set_token_colors", "params": ["f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64"], "returns": "void" }
       ],
       "targets": {
         "macos": {

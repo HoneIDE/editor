@@ -47,20 +47,58 @@ export function computeIndentFoldRanges(buffer: TextBuffer): FoldRange[] {
 }
 
 /**
+ * SHIP-V1-GAPS.md #87: region-marker folding.
+ *
+ * Scans the buffer for `#region` / `#endregion` markers and returns matched
+ * fold ranges. Recognises the most common comment styles:
+ *   //  #region | //  #endregion        (TS, JS, Rust, Go, C, C++, Java, Swift)
+ *   #   #region | #   #endregion        (Python, Ruby, Shell, TOML, YAML — when
+ *                                        the user opts into the convention)
+ *   <!--#region--> | <!--#endregion-->   (HTML, XML, Markdown)
+ *   /* #region * / | /* #endregion * /  (block-comment variants)
+ *
+ * We don't enforce a specific comment prefix — we look for `#region` /
+ * `#endregion` anywhere on a line. Unmatched starts or ends are dropped.
+ * Nested regions are supported (LIFO stack pairing).
+ */
+export function computeRegionFoldRanges(buffer: TextBuffer): FoldRange[] {
+  const ranges: FoldRange[] = [];
+  const stack: number[] = [];
+  const lineCount = buffer.getLineCount();
+  for (let i = 0; i < lineCount; i++) {
+    const line = buffer.getLine(i);
+    // Check the simpler `#endregion` first — it's a substring of `#region`
+    // matching, but `#endregion` must take priority.
+    if (line.indexOf('#endregion') >= 0) {
+      const start = stack.pop();
+      if (start !== undefined && i > start) {
+        ranges.push({ startLine: start, endLine: i });
+      }
+    } else if (line.indexOf('#region') >= 0) {
+      stack.push(i);
+    }
+  }
+  return ranges;
+}
+
+/**
  * Compute fold ranges using syntax tree.
  * Falls back to indent-based if no syntax engine or unsupported language.
+ * Region-marker ranges are always merged in.
  */
 export function computeFoldRanges(
   buffer: TextBuffer,
   syntaxEngine?: ISyntaxEngine,
 ): FoldRange[] {
+  const regions = computeRegionFoldRanges(buffer);
   if (syntaxEngine) {
     const syntaxRanges = syntaxEngine.getFoldRanges(buffer);
     if (syntaxRanges.length > 0) {
-      return syntaxRanges;
+      return regions.length > 0 ? syntaxRanges.concat(regions) : syntaxRanges;
     }
   }
-  return computeIndentFoldRanges(buffer);
+  const indentRanges = computeIndentFoldRanges(buffer);
+  return regions.length > 0 ? indentRanges.concat(regions) : indentRanges;
 }
 
 /**

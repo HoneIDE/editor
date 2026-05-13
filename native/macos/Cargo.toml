@@ -18,8 +18,29 @@ serde_json = "1"
 libc = "0.2"
 perry-ffi = { path = "../../../../perry/perry/crates/perry-ffi" }
 
+# Tree-sitter for TextMate-quality highlighting. Phase 0 PoC validated TS+Python;
+# Phase 1 (SHIP-V1-GAPS.md #16) expands to the languages the IDE ships out of the box.
+# All grammars must agree on the same tree-sitter major.minor — newer grammar
+# crates may bind a Language to a different tree-sitter version. Pin to a set
+# that all resolve through tree-sitter 0.22.
+tree-sitter = "0.22"
+tree-sitter-typescript = "0.21"
+tree-sitter-python = "0.21"
+tree-sitter-rust = "0.21"
+tree-sitter-javascript = "0.21"
+tree-sitter-json = "0.21"
+tree-sitter-css = "0.21"
+# Go, HTML, Markdown only have older crates pinned to tree-sitter 0.20 — defer
+# to a follow-up that bumps tree-sitter or builds these from upstream sources.
+# tree-sitter-go = "0.20"
+# tree-sitter-html = "0.20"
+# tree-sitter-md = "0.2"
+
 [[example]]
 name = "demo_editor"
 
 [[example]]
 name = "demo_window"
+
+[[example]]
+name = "demo_treesitter"

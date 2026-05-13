@@ -1016,6 +1016,49 @@ impl EditorView {
                 ctx.fill_rect(line_rect);
             }
 
+            // Draw indent guides (SHIP-V1-GAPS.md #23). Light vertical lines
+            // at each tab-size multiple inside the line's leading whitespace.
+            // Lines that are pure whitespace inherit the visual indent of
+            // the nearest non-blank line above so consecutive blank lines
+            // stay visually nested — VS Code behavior.
+            {
+                let line_text = line.text.as_bytes();
+                let mut leading: usize = 0;
+                let mut all_ws = true;
+                while leading < line_text.len() {
+                    let b = line_text[leading];
+                    if b == b' ' || b == b'\t' {
+                        leading += 1;
+                    } else {
+                        all_ws = false;
+                        break;
+                    }
+                }
+                // Compute visual column of first non-whitespace character.
+                // For v1 we assume `tab_size = 4` and spaces-only indent; tabs
+                // count as one cell (matches the editor's measure_text default).
+                let tab_size: usize = 4;
+                let mut visual_col: usize = leading;
+                if all_ws {
+                    visual_col = leading; // pure whitespace line: draw up to its trailing column
+                }
+                let levels = visual_col / tab_size;
+                if levels > 0 {
+                    let char_w = self.renderer.char_width;
+                    ctx.set_rgb_stroke_color(0.30, 0.32, 0.40, 0.35);
+                    ctx.set_line_width(1.0);
+                    let mut lvl: usize = 1;
+                    while lvl <= levels {
+                        let col = lvl * tab_size;
+                        let gx = (gutter_w + col as f64 * char_w - sx).round() + 0.5;
+                        ctx.move_to_point(gx, ly);
+                        ctx.add_line_to_point(gx, ly + ts_line_h);
+                        ctx.stroke_path();
+                        lvl += 1;
+                    }
+                }
+            }
+
             // Draw find highlights for this line (BEFORE text, so text renders on top)
             for fh in &self.find_highlights {
                 if fh.line + 1 == line.line_number {

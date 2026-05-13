@@ -15,6 +15,7 @@ import { NativeRenderCoordinator, RenderCoordinatorConfig } from '../native/rend
 import { DARK_THEME, LIGHT_THEME, EditorTheme } from '../view-model/theme';
 import type { NativeEditorFFI, NativeViewHandle } from '../native/ffi-bridge';
 import { KeywordSyntaxEngine } from '../core/tokenizer/keyword-syntax-engine';
+import { CompositeEngine } from '../core/tokenizer/composite-engine';
 
 // ============================================================
 // FFI function declarations — resolved by Perry's codegen from
@@ -35,6 +36,22 @@ declare function hone_editor_begin_frame(handle: number): void;
 declare function hone_editor_end_frame(handle: number): void;
 declare function hone_editor_render_ghost_text(handle: number, text: number, x: number, y: number, color: number): void;
 declare function hone_editor_render_decorations(handle: number, decorationsJson: number): void;
+// Tree-sitter bridge (SHIP-V1-GAPS.md #16). Parses the full source once via
+// `hone_editor_ts_parse`; per-line tokenization slices the cached scopes by
+// byte range. langId: 0 = TypeScript, 1 = Python (Phase 1 expands the set).
+declare function hone_editor_ts_parse(source: string, langId: number): number;
+declare function hone_editor_ts_clear(): void;
+declare function hone_editor_ts_token_count(): number;
+declare function hone_editor_ts_token_start(idx: number): number;
+declare function hone_editor_ts_token_end(idx: number): number;
+declare function hone_editor_ts_token_scope(idx: number): string;
+// SHIP-V1-GAPS.md #17: per-language live tokenizer + theme-aware palette.
+// Set on language switch (tab change) and on theme switch respectively.
+declare function hone_editor_set_tokenizer_language(langId: number): void;
+declare function hone_editor_set_token_colors(
+  keyword: number, str: number, comment: number, variable: number,
+  typename: number, fn: number, num: number, def: number,
+): void;
 declare function hone_editor_set_find_highlights(handle: number, json: number): void;
 declare function hone_editor_clear_find_highlights(handle: number): void;
 declare function hone_editor_set_cursors(handle: number, cursorsJson: number): void;
@@ -282,6 +299,47 @@ export interface EditorOptions {
   readOnly?: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// Helpers for the Rust-side per-language tokenizer (SHIP-V1-GAPS.md #17).
+// ---------------------------------------------------------------------------
+
+/** Parse "#RRGGBB" (and "#RRGGBBAA") into a 24-bit integer for FFI. */
+function hexToInt(hex: string): number {
+  if (hex.length < 7 || hex.charCodeAt(0) !== 35) return 0;
+  let n = 0;
+  for (let i = 1; i < 7; i++) {
+    const c = hex.charCodeAt(i);
+    let d = 0;
+    if (c >= 48 && c <= 57) d = c - 48;
+    else if (c >= 97 && c <= 102) d = c - 87;
+    else if (c >= 65 && c <= 70) d = c - 55;
+    n = n * 16 + d;
+  }
+  return n;
+}
+
+/**
+ * Map a language id string to the Rust LangId enum.
+ * Order must match `lang_from_i32` in `tokenizer.rs`.
+ *   0=TS 1=JS 2=Python 3=Rust 4=Go 5=Swift 6=Java 7=C/C++.
+ * Unknown languages fall back to TypeScript (most permissive grammar in the set).
+ */
+function tokenizerLangId(languageId: string): number {
+  if (languageId.length === 0) return 0;
+  const c0 = languageId.charCodeAt(0);
+  const c1 = languageId.length >= 2 ? languageId.charCodeAt(1) : 0;
+  if (c0 === 116 && c1 === 121) return 0; // 't','y' typescript
+  if (c0 === 116 && c1 === 115) return 0; // 't','s' tsx → TS
+  if (c0 === 106) return 1;               // 'j' javascript / jsx
+  if (c0 === 112 && c1 === 121) return 2; // 'p','y' python
+  if (c0 === 114 && c1 === 117) return 3; // 'r','u' rust
+  if (c0 === 103 && c1 === 111) return 4; // 'g','o'
+  if (c0 === 115 && c1 === 119) return 5; // 's','w' swift
+  if (c0 === 106 && c1 === 97) return 6;  // 'j','a' java
+  if (c0 === 99) return 7;                // 'c' c, cpp
+  return 0;
+}
+
 /**
  * Perry-embeddable code editor component.
  */
@@ -324,7 +382,9 @@ export class Editor {
     const doc = new EditorDocument('untitled', initialContent, language);
     this._doc = doc;
 
-    const syntaxEngine = new KeywordSyntaxEngine();
+    // CompositeEngine routes per-language: tree-sitter for TS/JS/TSX/JSX/Python
+    // (SHIP-V1-GAPS.md #16); KeywordSyntaxEngine fallback for everything else.
+    const syntaxEngine = new CompositeEngine();
     const vm = new EditorViewModel(doc, theme, syntaxEngine);
     vm.setPerryMode(true);
     vm.setDirectTokens(1);
@@ -472,6 +532,9 @@ export class Editor {
       this._isMd = 0;
       setPerryMarkdownState(0, '');
     }
+    // SHIP-V1-GAPS.md #17: push the language id to the Rust live tokenizer
+    // so on-keystroke retokenization uses the right keyword table.
+    hone_editor_set_tokenizer_language(tokenizerLangId(languageId));
     const coordinator = this._coordinator;
     coordinator.invalidate();
   }
@@ -593,6 +656,24 @@ export class Editor {
   getCursorColumn(): number {
     const state = getPerryCursorState();
     return state.col;
+  }
+
+  /**
+   * Set the cursor position (0-based line + column).
+   * SHIP-V1-GAPS.md #43: used by the IDE to restore cursor on session reload.
+   */
+  setCursorPosition(line: number, col: number): void {
+    setPerryCursorPos(line, col);
+  }
+
+  /** Read the editor's vertical scroll offset in pixels. */
+  getScrollTop(): number {
+    return this._vm.viewport.scroll.scrollTop;
+  }
+
+  /** Scroll the editor to the given pixel offset (top-left origin). */
+  setScrollTop(scrollTop: number): void {
+    this._vm.viewport.scroll.scrollTo(scrollTop);
   }
 
   createPerryWidget(): unknown {
@@ -1050,9 +1131,30 @@ export class Editor {
    * Switch syntax highlighting token colors between dark (0) and light (1) mode.
    * Call before setContent or after theme switch.
    * Also invalidates the line cache so tokens re-render with new colors.
+   *
+   * SHIP-V1-GAPS.md #19: also pushes the new EditorTheme into the ViewModel,
+   * which invalidates the token cache. For tree-sitter-routed languages the
+   * scope strings stay valid and only the color resolution re-runs.
    */
   setThemeMode(mode: number): void {
     setPerryTokenTheme(mode);
+    const newTheme = mode === 1 ? LIGHT_THEME : DARK_THEME;
+    this._vm.setTheme(newTheme);
+    // SHIP-V1-GAPS.md #17: push the active token palette to the Rust live
+    // tokenizer so on-keystroke retokenization uses the right colors. Colors
+    // are encoded as 24-bit RGB integers (the FFI takes f64s to avoid string
+    // allocation through Perry's native bridge).
+    const t = newTheme.tokens;
+    hone_editor_set_token_colors(
+      hexToInt(t.keyword),
+      hexToInt(t.string),
+      hexToInt(t.comment),
+      hexToInt(t.variableName),
+      hexToInt(t.typeName),
+      hexToInt(t.functionName),
+      hexToInt(t.number),
+      hexToInt(newTheme.foreground),
+    );
     // Clear Rust line cache so tokens are re-pushed with new colors
     const handle = this.nativeHandle;
     if (handle !== null) {

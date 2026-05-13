@@ -19,6 +19,15 @@ export interface TabStop {
   length: number;
   /** Tab stop number ($1, $2, etc. — $0 is always last). */
   index: number;
+  /** SHIP-V1-GAPS.md #83: choices for `${N|a,b,c|}` — undefined when not a choice stop. */
+  choices?: string[];
+  /**
+   * SHIP-V1-GAPS.md #83: transform for `${N/regex/sub/flags}`. The renderer
+   * applies the regex to whatever the user types into the stop. `flags`
+   * follows standard JS RegExp flag semantics; `sub` may contain `$1`..`$9`
+   * group backrefs.
+   */
+  transform?: { regex: string; sub: string; flags: string };
 }
 
 /** Result of expanding a snippet. */
@@ -86,17 +95,92 @@ export function expandSnippet(
         const closeIdx = findClosingBrace(template, i + 2);
         if (closeIdx > 0) {
           const inner = template.slice(i + 2, closeIdx);
+
+          // SHIP-V1-GAPS.md #83 — `${N|a,b,c|}` choice stop.
+          const pipeIdx = inner.indexOf('|');
+          if (pipeIdx > 0 && inner.charCodeAt(inner.length - 1) === 124) {
+            const stopNum = parseInt(inner.slice(0, pipeIdx));
+            if (!isNaN(stopNum)) {
+              const optsRaw = inner.slice(pipeIdx + 1, inner.length - 1);
+              const opts: string[] = [];
+              let s = 0;
+              for (let k = 0; k <= optsRaw.length; k++) {
+                if (k === optsRaw.length || optsRaw.charCodeAt(k) === 44) {
+                  if (k > s) opts.push(optsRaw.slice(s, k));
+                  s = k + 1;
+                }
+              }
+              const first = opts.length > 0 ? opts[0] : '';
+              tabStops.push({
+                offset: result.length,
+                length: first.length,
+                index: stopNum,
+                choices: opts,
+              });
+              result += first;
+              i = closeIdx + 1;
+              continue;
+            }
+          }
+
+          // SHIP-V1-GAPS.md #83 — `${N/regex/sub/flags}` transform stop.
+          // We look for two unescaped slashes after the numeric prefix.
+          const slashIdx = inner.indexOf('/');
+          if (slashIdx > 0) {
+            const stopNum = parseInt(inner.slice(0, slashIdx));
+            if (!isNaN(stopNum)) {
+              // Find second + third slashes, respecting backslash escapes.
+              let mid = -1;
+              let end = -1;
+              for (let k = slashIdx + 1; k < inner.length; k++) {
+                if (inner.charCodeAt(k) === 92) { k++; continue; } // skip escape
+                if (inner.charCodeAt(k) === 47) {
+                  if (mid < 0) mid = k;
+                  else { end = k; break; }
+                }
+              }
+              if (mid > slashIdx && end > mid) {
+                const regex = inner.slice(slashIdx + 1, mid);
+                const sub = inner.slice(mid + 1, end);
+                const flags = inner.slice(end + 1);
+                tabStops.push({
+                  offset: result.length,
+                  length: 0,
+                  index: stopNum,
+                  transform: { regex: regex, sub: sub, flags: flags },
+                });
+                i = closeIdx + 1;
+                continue;
+              }
+            }
+          }
+
           const colonIdx = inner.indexOf(':');
           if (colonIdx >= 0) {
             const stopNum = parseInt(inner.slice(0, colonIdx));
-            const defaultText = inner.slice(colonIdx + 1);
+            // SHIP-V1-GAPS.md #83 — nested placeholders: recursively expand
+            // the default text so `${1:func(${2:arg})}` produces two stops.
             if (!isNaN(stopNum)) {
+              const defaultRaw = inner.slice(colonIdx + 1);
+              const nested = expandSnippet(defaultRaw, variables, '');
+              const baseOffset = result.length;
               tabStops.push({
-                offset: result.length,
-                length: defaultText.length,
+                offset: baseOffset,
+                length: nested.text.length,
                 index: stopNum,
               });
-              result += defaultText;
+              // Re-anchor the nested tab stops to our offset.
+              for (let k = 0; k < nested.tabStops.length; k++) {
+                const ts = nested.tabStops[k];
+                tabStops.push({
+                  offset: baseOffset + ts.offset,
+                  length: ts.length,
+                  index: ts.index,
+                  choices: ts.choices,
+                  transform: ts.transform,
+                });
+              }
+              result += nested.text;
               i = closeIdx + 1;
               continue;
             }

@@ -173,6 +173,40 @@ export class CursorManager {
     this.mergeCursors();
   }
 
+  /**
+   * SHIP-V1-GAPS.md #80 — column / box selection.
+   *
+   * Replaces the cursor set with one cursor per line in `[startLine..endLine]`,
+   * each anchored at min(startCol,endCol) and head at max(startCol,endCol).
+   * Lines shorter than startCol get a zero-length cursor at the line end so
+   * `addNextOccurrence`-style follow-up actions stay aligned.
+   *
+   * Callers wire this to Alt+drag from the editor surface; the column-select
+   * mouse-tracker lives in the Rust event handler — this is the document-side
+   * primitive it calls into.
+   */
+  setColumnSelection(startLine: number, startCol: number, endLine: number, endCol: number): void {
+    const fromLine = Math.min(startLine, endLine);
+    const toLine = Math.max(startLine, endLine);
+    const leftCol = Math.min(startCol, endCol);
+    const rightCol = Math.max(startCol, endCol);
+    this._cursors = [];
+    for (let l = fromLine; l <= toLine; l++) {
+      const lineLen = this.buffer.getLine(l).length;
+      const a = Math.min(leftCol, lineLen);
+      const b = Math.min(rightCol, lineLen);
+      this._cursors.push({
+        line: l,
+        column: b,
+        selectionAnchor: a === b ? null : { line: l, column: a },
+        desiredColumn: b,
+      });
+    }
+    this._cursorsSorted = false;
+    this.sortCursors();
+    this.mergeCursors();
+  }
+
   /** Select all occurrences of the current selection (or word under cursor). */
   selectAllOccurrences(): void {
     const primary = this._cursors[0];

@@ -814,6 +814,11 @@ export class EditorViewModel {
     this._theme = theme;
     const lineHeightPx = theme.fontSize * theme.lineHeight;
     this.viewport.lineHeightCache.setBaseLineHeight(lineHeightPx);
+    // SHIP-V1-GAPS.md #19: token colors now resolve from scope strings at render
+    // time (TreeSitterEngine + resolveTokenScope), so a theme change just needs
+    // to drop the cached LineToken color slabs. Scopes are re-resolved on the
+    // next getLineTokens() call against the new theme.
+    this.tokenCache.invalidateAll();
     this.notifyChange();
   }
 
