@@ -1,6 +1,6 @@
 {
   "name": "@honeide/editor",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "High-performance, cross-platform code editor surface",
   "main": "core/index.ts",
   "types": "core/index.ts",
@@ -13,11 +13,13 @@
     "perry/",
     "view-model/",
     "perry.config.ts",
+    "native/NATIVE_CRATES.md",
     "native/*/src/**",
     "native/*/Cargo.toml",
     "native/*/Cargo.lock",
     "native/*/README.md",
     "native/*/build.rs",
+    "native/*/examples/**",
     "native/web/dom-ffi.ts",
     "native/web/tree-sitter-bridge.ts"
   ],

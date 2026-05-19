@@ -167,6 +167,23 @@ cargo run --example demo_editor_ios
 
 Launches a fully interactive editor in the iOS Simulator with touch input, soft keyboard, and syntax highlighting.
 
+## Consuming the native crates from npm
+
+The npm tarball ships every native rendering crate's Rust source so consumers
+can build them as part of their Perry-AOT pipeline. Two prerequisites apply
+until upstream Perry work lands — see [`native/NATIVE_CRATES.md`](native/NATIVE_CRATES.md)
+for the full story:
+
+1. `perry-ffi` is currently an unpublished workspace crate inside Perry's
+   monorepo. Either keep a Perry checkout next to your project, or add a
+   `[patch.crates-io]` in your workspace root pointing at it. Tracking issue:
+   [PerryTS/perry#1112](https://github.com/PerryTS/perry/issues/1112).
+2. Each crate's `Cargo.toml` declares `[[example]]` blocks; the `examples/`
+   directory is shipped as of `0.3.1`.
+
+The **web target** doesn't need any of this — it compiles TypeScript → WASM
+via Perry and the renderer is TypeScript, so there's no Rust crate to build.
+
 ## Design Decisions
 
 - **No external editor dependencies** — no CodeMirror, Monaco, or ProseMirror. Fully self-contained.
