@@ -197,6 +197,50 @@ function isOctalChar(c: string): boolean {
 
 const OPERATORS = '=+-*/<>!&|?:%~^';
 
+// VS Code-style bracket-pair colorization palette. Hard-coded because the
+// theme system's nested-field passing doesn't survive the Perry web codegen
+// boundary today (PerryTS/perry#1071); once it lands these can be sourced
+// from `theme.tokens.regexp / tagName / atom` to match the macOS path.
+const BRACKET_COLORS: string[] = ['#ffd700', '#da70d6', '#179fff'];
+
+// Build a string where charCodeAt(i) === bracket nesting depth at the start of
+// line i. Mirrors `buildBlockDepthString` shape so cache invalidation logic
+// matches. Skips brackets inside strings and line comments.
+function buildBracketDepthString(buffer: TextBuffer): string {
+  let result = '';
+  let depth = 0;
+  const lineCount = buffer.getLineCount();
+  for (let i = 0; i < lineCount; i++) {
+    result += String.fromCharCode(depth);
+    const line = buffer.getLine(i);
+    let j = 0;
+    while (j < line.length) {
+      const ch = line.charAt(j);
+      // Skip strings — Perry doesn't support regex, so scan char-by-char.
+      if (ch === "'" || ch === '"' || ch === '`') {
+        const q = ch;
+        j = j + 1;
+        while (j < line.length) {
+          if (line.charAt(j) === '\\') { j = j + 2; continue; }
+          if (line.charAt(j) === q) { j = j + 1; break; }
+          j = j + 1;
+        }
+        continue;
+      }
+      // Skip line comments (// only — // is fine for TS/JS/Rust/C/etc.).
+      if (ch === '/' && j + 1 < line.length && line.charAt(j + 1) === '/') {
+        break;
+      }
+      if (ch === '{' || ch === '[' || ch === '(') depth = depth + 1;
+      else if (ch === '}' || ch === ']' || ch === ')') {
+        if (depth > 0) depth = depth - 1;
+      }
+      j = j + 1;
+    }
+  }
+  return result;
+}
+
 // ---------------------------------------------------------------------------
 // KeywordSyntaxEngine
 // ---------------------------------------------------------------------------
@@ -317,6 +361,11 @@ export class KeywordSyntaxEngine implements ISyntaxEngine {
   // Block comment depth cache: each char's code = depth at start of that line.
   private _blockDepthCache: string = '';
   private _blockDepthLineCount: number = 0;
+  // Bracket depth at the start of each line (charCodeAt(i) === depth at line i).
+  // Used to pick a cycling color for bracket-pair colorization that's stable
+  // across lines (`{` on line 5 keeps the same color as its matching `}` on
+  // line 10). Built by parse().
+  private _bracketDepthCache: string = '';
 
   setLanguage(languageId: string): void {
     this.languageId = languageId;
@@ -333,6 +382,9 @@ export class KeywordSyntaxEngine implements ISyntaxEngine {
       this._blockDepthCache = buildBlockDepthString(_buffer);
       this._blockDepthLineCount = _buffer.getLineCount();
     }
+    // Build bracket-pair depth cache (independent of comments — strings and
+    // comments are skipped here so brackets inside them don't affect depth).
+    this._bracketDepthCache = buildBracketDepthString(_buffer);
     // Rebuild markdown fence cache on re-parse
     if (this._isMarkdown === 1) {
       this._mdFenceLineCount = 0;
@@ -356,6 +408,15 @@ export class KeywordSyntaxEngine implements ISyntaxEngine {
 
     const tokens: LineToken[] = [];
     let i = 0;
+
+    // Bracket-pair colorization: depth at the START of this line is looked up
+    // from the cache built by parse(). Depth is then mutated locally as we
+    // emit bracket tokens. Don't write back — getLineTokens is per-line.
+    let bracketDepth = 0;
+    const bdCache = this._bracketDepthCache;
+    if (bdCache.length > 0 && lineNumber < bdCache.length) {
+      bracketDepth = bdCache.charCodeAt(lineNumber);
+    }
 
     // Check if we're inside a block comment (computed on demand per line)
     let inBlockComment = false;
@@ -583,12 +644,21 @@ export class KeywordSyntaxEngine implements ISyntaxEngine {
         continue;
       }
 
-      // Punctuation
+      // Punctuation — brackets cycle through three colors based on nesting depth
+      // (bracket-pair colorization). Non-bracket punctuation uses theme color.
       if ('{}[]().,;@#'.indexOf(c) >= 0) {
+        const isOpen = c === '{' || c === '[' || c === '(';
+        const isClose = c === '}' || c === ']' || c === ')';
+        let color: string = theme.tokens.punctuation;
+        if (isOpen || isClose) {
+          if (isClose) bracketDepth = Math.max(0, bracketDepth - 1);
+          color = BRACKET_COLORS[bracketDepth % BRACKET_COLORS.length];
+          if (isOpen) bracketDepth++;
+        }
         tokens.push({
           startColumn: i,
           endColumn: i + 1,
-          color: theme.tokens.punctuation,
+          color: color,
           fontStyle: 'normal',
         });
         i++;

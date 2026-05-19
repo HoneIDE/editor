@@ -44,7 +44,7 @@ export { SyntaxEngine } from './tokenizer/syntax-engine';
 export type { ISyntaxEngine, FoldRange } from './tokenizer/tokenizer-interface';
 export { KeywordSyntaxEngine } from './tokenizer/keyword-syntax-engine';
 export { IncrementalTokenCache } from './tokenizer/incremental';
-export { resolveTagColor, resolveTagStyle } from './tokenizer/token-theme';
+export { resolveTagColor, resolveTagStyle } from './tokenizer/tag-theme';
 
 // Search
 export { searchAll, searchNext, searchPrev, type SearchMatch, type SearchOptions } from './search/search-engine';

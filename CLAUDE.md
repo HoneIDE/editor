@@ -157,7 +157,12 @@ ALL interaction directly by mutating `frame_lines` in place and calling `setNeed
 - Windows: ⬜ DirectWrite — needs `tokenizer.rs` port + same EditorView patterns
 - Linux: ⬜ Pango/Cairo — needs `tokenizer.rs` port + same EditorView patterns
 - Android: ⬜ Canvas/Skia JNI — needs `tokenizer.rs` port + same EditorView patterns
-- Web: ⬜ DOM spans — RAF likely fires here; TypeScript re-render may work without Rust tokenizer
+- Web: ✅ TypeScript DOM renderer at `native/web/dom-ffi.ts`. No Rust crate — Perry's
+  web target compiles the editor TS to WASM and imports JS-side `hone_editor_*`. Find
+  highlights / diagnostics / breakpoints / fold ranges render as DOM overlay layers.
+  Syntax highlighting works structurally but token COLORS are blocked on Perry
+  PerryTS/perry#1071 (cross-module nested-object access returns `undefined`). Build:
+  `bun run examples/web/build.ts` → `examples/web/dist/{hone-editor.wasm, hone-editor.js, index.html}`.
 
 ## Commands
 Run tests: `bun test`
@@ -171,7 +176,7 @@ Build Windows crate: `cd native/windows && cargo build`
 Run Windows interactive demo: `cd native/windows && cargo run --example demo_editor`
 Run iOS interactive demo: `cd native/ios && cargo run --example demo_editor_ios`
 Run Android interactive demo: `cd native/android && bash run-demo.sh`
-Run Web interactive demo: `cd native/web && bash run-demo.sh`
+Build for web: `bun run examples/web/build.ts` — produces `examples/web/dist/{hone-editor.wasm, hone-editor.js, index.html}`. The build orchestrates: (1) `perry compile examples/web/entry.ts --target web --output hone-editor.wasm` for the raw WASM; (2) a second Perry compile to .html to extract the JS runtime bridge; (3) bundles `native/web/dom-ffi.ts` + the bridge + a `mount()` API into `hone-editor.js`. Consumers: `import { mount } from './hone-editor.js'; await mount(document.getElementById('editor'));`
 
 ## Development Phases (from PROJECT_PLAN.md)
 

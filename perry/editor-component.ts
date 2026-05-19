@@ -16,6 +16,7 @@ import { DARK_THEME, LIGHT_THEME, EditorTheme } from '../view-model/theme';
 import type { NativeEditorFFI, NativeViewHandle } from '../native/ffi-bridge';
 import { KeywordSyntaxEngine } from '../core/tokenizer/keyword-syntax-engine';
 import { CompositeEngine } from '../core/tokenizer/composite-engine';
+import type { ISyntaxEngine } from '../core/tokenizer/tokenizer-interface';
 
 // ============================================================
 // FFI function declarations — resolved by Perry's codegen from
@@ -297,6 +298,13 @@ export interface EditorOptions {
   fontFamily?: string;
   /** Read-only mode. When true, text input and edit actions are blocked. */
   readOnly?: boolean;
+  /**
+   * Override the syntax engine. Defaults to `new CompositeEngine()` which
+   * routes per-language to TreeSitterEngine (TS/JS/Python/etc.) or falls back
+   * to KeywordSyntaxEngine. Pass a `KeywordSyntaxEngine` directly on platforms
+   * that don't have the Rust tree-sitter bridge wired up (e.g. web today).
+   */
+  syntaxEngine?: ISyntaxEngine;
 }
 
 // ---------------------------------------------------------------------------
@@ -384,7 +392,9 @@ export class Editor {
 
     // CompositeEngine routes per-language: tree-sitter for TS/JS/TSX/JSX/Python
     // (SHIP-V1-GAPS.md #16); KeywordSyntaxEngine fallback for everything else.
-    const syntaxEngine = new CompositeEngine();
+    // Web today has no tree-sitter bridge — consumers pass KeywordSyntaxEngine
+    // explicitly via opts.syntaxEngine.
+    const syntaxEngine: ISyntaxEngine = opts?.syntaxEngine ?? new CompositeEngine();
     const vm = new EditorViewModel(doc, theme, syntaxEngine);
     vm.setPerryMode(true);
     vm.setDirectTokens(1);

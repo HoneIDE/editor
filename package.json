@@ -1,6 +1,6 @@
 {
   "name": "@honeide/editor",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "High-performance, cross-platform code editor surface",
   "main": "core/index.ts",
   "types": "core/index.ts",
@@ -17,7 +17,9 @@
     "native/*/Cargo.toml",
     "native/*/Cargo.lock",
     "native/*/README.md",
-    "native/*/build.rs"
+    "native/*/build.rs",
+    "native/web/dom-ffi.ts",
+    "native/web/tree-sitter-bridge.ts"
   ],
   "scripts": {
     "test": "bun test",
@@ -39,15 +41,17 @@
   },
   "dependencies": {
     "@lezer/common": "^1.2.3",
-    "@lezer/highlight": "^1.2.1",
-    "@lezer/javascript": "^1.4.21",
-    "@lezer/html": "^1.3.10",
+    "@lezer/cpp": "^1.1.2",
     "@lezer/css": "^1.1.9",
+    "@lezer/highlight": "^1.2.1",
+    "@lezer/html": "^1.3.10",
+    "@lezer/javascript": "^1.4.21",
     "@lezer/json": "^1.0.3",
     "@lezer/markdown": "^1.3.2",
     "@lezer/python": "^1.1.15",
     "@lezer/rust": "^1.0.2",
-    "@lezer/cpp": "^1.1.2"
+    "tree-sitter-wasms": "^0.1.13",
+    "web-tree-sitter": "0.20.8"
   },
   "devDependencies": {
     "@lezer/generator": "^1.7.2",
@@ -59,74 +63,336 @@
       "abiVersion": "0.5",
       "module": "@honeide/editor",
       "functions": [
-        { "name": "hone_editor_create", "params": ["f64", "f64"], "returns": "i64" },
-        { "name": "hone_editor_destroy", "params": ["i64"], "returns": "void" },
-        { "name": "hone_editor_set_font", "params": ["i64", "i64", "f64"], "returns": "void" },
-        { "name": "hone_editor_render_line", "params": ["i64", "f64", "i64", "i64", "f64"], "returns": "void" },
-        { "name": "hone_editor_set_cursor", "params": ["i64", "f64", "f64", "f64"], "returns": "void" },
-        { "name": "hone_editor_set_selection", "params": ["i64", "i64"], "returns": "void" },
-        { "name": "hone_editor_scroll", "params": ["i64", "f64"], "returns": "void" },
-        { "name": "hone_editor_measure_text", "params": ["i64", "i64"], "returns": "f64" },
-        { "name": "hone_editor_invalidate", "params": ["i64"], "returns": "void" },
-        { "name": "hone_editor_begin_frame", "params": ["i64"], "returns": "void" },
-        { "name": "hone_editor_end_frame", "params": ["i64"], "returns": "void" },
-        { "name": "hone_editor_render_ghost_text", "params": ["i64", "i64", "f64", "f64", "i64"], "returns": "void" },
-        { "name": "hone_editor_render_decorations", "params": ["i64", "i64"], "returns": "void" },
-        { "name": "hone_editor_set_find_highlights", "params": ["i64", "i64"], "returns": "void" },
-        { "name": "hone_editor_clear_find_highlights", "params": ["i64"], "returns": "void" },
-        { "name": "hone_editor_set_cursors", "params": ["i64", "i64"], "returns": "void" },
-        { "name": "hone_editor_attach_to_view", "params": ["i64", "i64"], "returns": "void" },
-        { "name": "hone_editor_nsview", "params": ["i64"], "returns": "i64" },
-        { "name": "hone_editor_set_event_callback", "params": ["i64", "i64"], "returns": "void" },
-        { "name": "hone_editor_pending_event_count", "params": ["i64"], "returns": "f64" },
-        { "name": "hone_editor_get_event_type", "params": ["i64", "f64"], "returns": "f64" },
-        { "name": "hone_editor_get_event_char", "params": ["i64", "f64"], "returns": "f64" },
-        { "name": "hone_editor_get_event_action", "params": ["i64", "f64"], "returns": "f64" },
-        { "name": "hone_editor_get_event_x", "params": ["i64", "f64"], "returns": "f64" },
-        { "name": "hone_editor_get_event_y", "params": ["i64", "f64"], "returns": "f64" },
-        { "name": "hone_editor_clear_events", "params": ["i64"], "returns": "void" },
-        { "name": "hone_editor_set_ts_mode", "params": ["i64", "f64"], "returns": "void" },
-        { "name": "hone_editor_is_ios", "params": [], "returns": "f64" },
-        { "name": "hone_editor_poll_touch", "params": ["i64"], "returns": "f64" },
-        { "name": "hone_editor_set_gutter_width", "params": ["i64", "f64"], "returns": "void" },
-        { "name": "hone_editor_set_read_only", "params": ["i64", "f64"], "returns": "void" },
-        { "name": "hone_editor_set_line_background", "params": ["i64", "f64", "f64", "f64", "f64", "f64"], "returns": "void" },
-        { "name": "hone_editor_clear_line_backgrounds", "params": ["i64"], "returns": "void" },
-        { "name": "hone_editor_set_line_diagnostics", "params": ["i64", "i64"], "returns": "void" },
-        { "name": "hone_editor_clear_diagnostics", "params": ["i64"], "returns": "void" },
-        { "name": "hone_editor_set_breakpoints", "params": ["i64", "i64"], "returns": "void" },
-        { "name": "hone_editor_set_fold_ranges", "params": ["i64", "i64"], "returns": "void" },
-        { "name": "hone_editor_get_scroll_delta", "params": ["i64"], "returns": "f64" },
-        { "name": "hone_editor_get_view_width", "params": ["i64"], "returns": "f64" },
-        { "name": "hone_editor_get_view_height", "params": ["i64"], "returns": "f64" },
-        { "name": "hone_editor_clear_scroll_delta", "params": ["i64"], "returns": "void" },
-        { "name": "hone_editor_get_scroll_delta_x", "params": ["i64"], "returns": "f64" },
-        { "name": "hone_editor_clear_scroll_delta_x", "params": ["i64"], "returns": "void" },
-        { "name": "hone_editor_get_scroll_x", "params": ["i64"], "returns": "f64" },
-        { "name": "hone_editor_needs_lines", "params": ["i64"], "returns": "f64" },
-        { "name": "hone_editor_clear_line_cache", "params": ["i64"], "returns": "void" },
-        { "name": "hone_editor_cache_line", "params": ["i64", "f64", "i64", "i64"], "returns": "void" },
-        { "name": "hone_editor_invalidate_line", "params": ["i64", "f64"], "returns": "void" },
-        { "name": "hone_editor_set_viewport", "params": ["i64", "f64", "f64", "f64", "f64", "f64"], "returns": "void" },
-        { "name": "hone_editor_begin_selections", "params": ["i64", "f64"], "returns": "void" },
-        { "name": "hone_editor_add_selection_rect", "params": ["i64", "f64", "f64", "f64", "f64"], "returns": "void" },
-        { "name": "hone_editor_set_bg_color", "params": ["i64", "f64", "f64", "f64"], "returns": "void" },
-        { "name": "hone_editor_set_fg_color", "params": ["i64", "f64", "f64", "f64"], "returns": "void" },
-        { "name": "hone_editor_set_gutter_fg_color", "params": ["i64", "f64", "f64", "f64"], "returns": "void" },
-        { "name": "hone_editor_set_selection_color", "params": ["i64", "f64", "f64", "f64", "f64"], "returns": "void" },
-        { "name": "hone_editor_set_cursor_color", "params": ["i64", "f64", "f64", "f64"], "returns": "void" },
-        { "name": "hone_editor_copy_to_clipboard", "params": ["i64", "i64"], "returns": "void" },
-        { "name": "hone_editor_paste_from_clipboard", "params": ["i64"], "returns": "void" },
-
-        { "name": "hone_editor_ts_parse", "params": ["i64", "f64"], "returns": "f64" },
-        { "name": "hone_editor_ts_clear", "params": [], "returns": "void" },
-        { "name": "hone_editor_ts_token_count", "params": [], "returns": "f64" },
-        { "name": "hone_editor_ts_token_start", "params": ["f64"], "returns": "f64" },
-        { "name": "hone_editor_ts_token_end", "params": ["f64"], "returns": "f64" },
-        { "name": "hone_editor_ts_token_scope", "params": ["f64"], "returns": "i64" },
-
-        { "name": "hone_editor_set_tokenizer_language", "params": ["f64"], "returns": "void" },
-        { "name": "hone_editor_set_token_colors", "params": ["f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64"], "returns": "void" }
+        {
+          "name": "hone_editor_create",
+          "params": ["f64", "f64"],
+          "returns": "i64"
+        },
+        {
+          "name": "hone_editor_destroy",
+          "params": ["i64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_set_font",
+          "params": ["i64", "i64", "f64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_render_line",
+          "params": ["i64", "f64", "i64", "i64", "f64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_set_cursor",
+          "params": ["i64", "f64", "f64", "f64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_set_selection",
+          "params": ["i64", "i64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_scroll",
+          "params": ["i64", "f64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_measure_text",
+          "params": ["i64", "i64"],
+          "returns": "f64"
+        },
+        {
+          "name": "hone_editor_invalidate",
+          "params": ["i64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_begin_frame",
+          "params": ["i64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_end_frame",
+          "params": ["i64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_render_ghost_text",
+          "params": ["i64", "i64", "f64", "f64", "i64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_render_decorations",
+          "params": ["i64", "i64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_set_find_highlights",
+          "params": ["i64", "i64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_clear_find_highlights",
+          "params": ["i64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_set_cursors",
+          "params": ["i64", "i64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_attach_to_view",
+          "params": ["i64", "i64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_nsview",
+          "params": ["i64"],
+          "returns": "i64"
+        },
+        {
+          "name": "hone_editor_set_event_callback",
+          "params": ["i64", "i64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_pending_event_count",
+          "params": ["i64"],
+          "returns": "f64"
+        },
+        {
+          "name": "hone_editor_get_event_type",
+          "params": ["i64", "f64"],
+          "returns": "f64"
+        },
+        {
+          "name": "hone_editor_get_event_char",
+          "params": ["i64", "f64"],
+          "returns": "f64"
+        },
+        {
+          "name": "hone_editor_get_event_action",
+          "params": ["i64", "f64"],
+          "returns": "f64"
+        },
+        {
+          "name": "hone_editor_get_event_x",
+          "params": ["i64", "f64"],
+          "returns": "f64"
+        },
+        {
+          "name": "hone_editor_get_event_y",
+          "params": ["i64", "f64"],
+          "returns": "f64"
+        },
+        {
+          "name": "hone_editor_clear_events",
+          "params": ["i64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_set_ts_mode",
+          "params": ["i64", "f64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_is_ios",
+          "params": [],
+          "returns": "f64"
+        },
+        {
+          "name": "hone_editor_poll_touch",
+          "params": ["i64"],
+          "returns": "f64"
+        },
+        {
+          "name": "hone_editor_set_gutter_width",
+          "params": ["i64", "f64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_set_read_only",
+          "params": ["i64", "f64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_set_line_background",
+          "params": ["i64", "f64", "f64", "f64", "f64", "f64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_clear_line_backgrounds",
+          "params": ["i64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_set_line_diagnostics",
+          "params": ["i64", "i64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_clear_diagnostics",
+          "params": ["i64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_set_breakpoints",
+          "params": ["i64", "i64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_set_fold_ranges",
+          "params": ["i64", "i64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_get_scroll_delta",
+          "params": ["i64"],
+          "returns": "f64"
+        },
+        {
+          "name": "hone_editor_get_view_width",
+          "params": ["i64"],
+          "returns": "f64"
+        },
+        {
+          "name": "hone_editor_get_view_height",
+          "params": ["i64"],
+          "returns": "f64"
+        },
+        {
+          "name": "hone_editor_clear_scroll_delta",
+          "params": ["i64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_get_scroll_delta_x",
+          "params": ["i64"],
+          "returns": "f64"
+        },
+        {
+          "name": "hone_editor_clear_scroll_delta_x",
+          "params": ["i64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_get_scroll_x",
+          "params": ["i64"],
+          "returns": "f64"
+        },
+        {
+          "name": "hone_editor_needs_lines",
+          "params": ["i64"],
+          "returns": "f64"
+        },
+        {
+          "name": "hone_editor_clear_line_cache",
+          "params": ["i64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_cache_line",
+          "params": ["i64", "f64", "i64", "i64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_invalidate_line",
+          "params": ["i64", "f64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_set_viewport",
+          "params": ["i64", "f64", "f64", "f64", "f64", "f64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_begin_selections",
+          "params": ["i64", "f64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_add_selection_rect",
+          "params": ["i64", "f64", "f64", "f64", "f64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_set_bg_color",
+          "params": ["i64", "f64", "f64", "f64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_set_fg_color",
+          "params": ["i64", "f64", "f64", "f64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_set_gutter_fg_color",
+          "params": ["i64", "f64", "f64", "f64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_set_selection_color",
+          "params": ["i64", "f64", "f64", "f64", "f64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_set_cursor_color",
+          "params": ["i64", "f64", "f64", "f64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_copy_to_clipboard",
+          "params": ["i64", "i64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_paste_from_clipboard",
+          "params": ["i64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_ts_parse",
+          "params": ["i64", "f64"],
+          "returns": "f64"
+        },
+        {
+          "name": "hone_editor_ts_clear",
+          "params": [],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_ts_token_count",
+          "params": [],
+          "returns": "f64"
+        },
+        {
+          "name": "hone_editor_ts_token_start",
+          "params": ["f64"],
+          "returns": "f64"
+        },
+        {
+          "name": "hone_editor_ts_token_end",
+          "params": ["f64"],
+          "returns": "f64"
+        },
+        {
+          "name": "hone_editor_ts_token_scope",
+          "params": ["f64"],
+          "returns": "i64"
+        },
+        {
+          "name": "hone_editor_set_tokenizer_language",
+          "params": ["f64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_set_token_colors",
+          "params": ["f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64"],
+          "returns": "void"
+        }
       ],
       "targets": {
         "macos": {
@@ -158,8 +424,9 @@
           "lib": "libhone_editor_harmonyos.a"
         },
         "web": {
-          "crate": "native/web/",
-          "lib": "hone_editor_web.wasm"
+          "ffi": "native/web/dom-ffi.ts",
+          "kind": "ts-host",
+          "notes": "Perry web target compiles TS to WASM; hone_editor_* FFI symbols are imports satisfied by the JS host. dom-ffi.ts implements the contract against the DOM."
         }
       }
     }

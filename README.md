@@ -8,7 +8,10 @@ All editor logic is written in TypeScript and shared across every platform. Nati
 
 - **Piece table text buffer** with B-tree rope indexing — O(log n) for all operations
 - **Multi-cursor editing** with selections, word boundaries, and cursor merging
-- **Syntax highlighting** for 10 languages via Lezer (TypeScript, JavaScript, HTML, CSS, JSON, Python, Rust, C++, Markdown, and more)
+- **Syntax highlighting** via two engines:
+  - **Tree-sitter** on macOS/iOS/web (via web-tree-sitter on web) for TypeScript, JavaScript, Python, Rust, JSON, CSS
+  - **Keyword tokenizer** fallback for 20+ languages — no grammar needed
+- **Bracket-pair colorization** — three-color VS Code-style cycle
 - **Search and replace** — literal, regex, case-sensitive, whole-word, incremental
 - **Code folding** — indent-based and syntax-based
 - **Undo/redo** with time-based coalescing
@@ -18,18 +21,21 @@ All editor logic is written in TypeScript and shared across every platform. Nati
 - **LSP client** — completion, hover, go-to-definition, references, diagnostics, formatting
 - **DAP client** — breakpoints, stepping, stack inspection, variable evaluation
 - **Ghost text** — inline AI completion rendering
-- **Minimap**, **find/replace widget**, **autocomplete overlays**, **diagnostic decorations**
+- **Overlay layers** — find highlights, Error Lens diagnostics, breakpoint gutter, fold chevrons, decorations
+- **Minimap**, **find/replace widget**, **autocomplete overlays**
 
 ## Platform Support
 
-| Platform | Text Rendering | Status |
-|----------|---------------|--------|
-| macOS | Core Text + Core Animation | Working (interactive demo) |
-| iOS | Core Text + UIKit | Working (interactive demo) |
-| Windows | DirectWrite + Direct2D | Working (interactive demo) |
-| Linux | Pango + Cairo | Scaffolded |
-| Android | Canvas + Skia (JNI) | Working (interactive demo) |
-| Web | Canvas + DOM | Working (interactive demo) |
+| Platform | Renderer | Renderer language | Status |
+|----------|---------|---|--------|
+| macOS | Core Text + Core Animation | Rust | Working (interactive demo) |
+| iOS | Core Text + UIKit | Rust | Working (interactive demo) |
+| Windows | DirectWrite + Direct2D | Rust | Working (interactive demo) |
+| Linux | Pango + Cairo | Rust | Scaffolded |
+| Android | Canvas + Skia (JNI) | Rust | Working (interactive demo) |
+| Web | DOM | TypeScript | **Working — `mount()` API, tree-sitter, full overlays** |
+
+On every platform the editor is a single TypeScript codebase compiled by [Perry](https://github.com/PerryTS/perry); each platform provides a "dumb renderer" that implements the same `hone_editor_*` FFI contract against its native rendering primitive. On the web the rendering primitive is the DOM, so that renderer is also TypeScript (see `native/web/dom-ffi.ts`).
 
 ## Architecture
 
@@ -58,13 +64,14 @@ view-model/         Reactive state bridging core -> rendering
   overlays.ts             Autocomplete, hover, parameter hints
   decorations.ts          Search highlights, selections, diagnostics
 
-native/             Platform-specific rendering (Rust FFI crates)
-  macos/            Core Text + NSView + Metal
-  ios/              Core Text + UIKit
-  windows/          DirectWrite + Direct2D + DirectComposition
-  linux/            Pango + Cairo
-  android/          Canvas + Skia via JNI
-  web/              DOM + WASM (wasm-bindgen)
+native/             Platform-specific renderers — implement hone_editor_* against the platform's rendering primitive
+  macos/            Rust:       Core Text + NSView + Metal
+  ios/              Rust:       Core Text + UIKit
+  windows/          Rust:       DirectWrite + Direct2D + DirectComposition
+  linux/            Rust:       Pango + Cairo
+  android/          Rust:       Canvas + Skia via JNI
+  web/              TypeScript: DOM (no Rust crate — Perry's web target compiles
+                                the editor itself to WASM and imports JS FFI)
 ```
 
 ## Quick Start
@@ -102,11 +109,45 @@ Opens a window with a fully interactive editor — type, navigate with arrow key
 ### Run the Web Demo
 
 ```bash
-cd native/web
-bash run-demo.sh
+bun run examples/web/build.ts
+python3 -m http.server -d examples/web/dist 8765
+open http://localhost:8765/index.html
 ```
 
-Opens a browser with a fully interactive Canvas-based editor — type, navigate with arrow keys, select with Shift+arrows, copy/paste with Cmd/Ctrl+C/V, mouse click to position cursor, scroll.
+Produces in `examples/web/dist/`:
+
+- `hone-editor.wasm` (~1.4 MB) — editor TypeScript compiled to WebAssembly via Perry
+- `hone-editor.js` (~340 KB) — Perry runtime bridge + DOM FFI + tree-sitter bridge + `mount()` API
+- `index.html` — minimal consumer page
+- `tree-sitter.wasm` + per-language grammar wasms (TypeScript, JavaScript, Python, Rust, JSON, CSS)
+
+### Use from a web project
+
+```js
+import { mount } from './hone-editor.js';
+
+const ed = await mount(document.getElementById('editor'), {
+  content: '// your code here',
+  language: 'typescript',     // typescript, javascript, python, rust, json, css, markdown, …
+  theme: 'dark',              // 'dark' | 'light'
+  fontSize: 14,
+  fontFamily: 'JetBrains Mono, Menlo, Monaco, monospace',
+  readOnly: false,
+  treeSitter: true,           // tree-sitter parsing (default: keyword tokenizer only)
+});
+
+// The returned controller drives the overlay layers:
+ed.setFindHighlights('[{"line":2,"col":13,"len":6,"current":1}]');
+ed.setLineDiagnostics('5:1:#f87171:type error message\n');     // line:severity:color:message
+ed.setBreakpoints('3\n7');                                       // newline-separated 1-based lines
+ed.setFoldRanges('5:0\n10:1');                                   // line:collapsed pairs
+ed.clearFindHighlights();
+ed.clearDiagnostics();
+```
+
+The TypeScript editor runs in WebAssembly; `mount()` wires the Perry-emitted bridge to the DOM renderer in `native/web/dom-ffi.ts` and to the web-tree-sitter bridge in `native/web/tree-sitter-bridge.ts`. The renderer is the exact analog of the per-platform Rust crates everywhere else — same `hone_editor_*` FFI contract, DOM as the platform's rendering primitive.
+
+See `examples/web/` for the full build pipeline and `examples/web/entry.ts` for the Perry-side entry point.
 
 ### Run the Android Demo
 

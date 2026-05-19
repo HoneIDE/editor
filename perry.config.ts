@@ -11,7 +11,7 @@
  *   perry compile src/index.ts --target linux    --bundle-ffi native/linux/
  *   perry compile src/index.ts --target ios      --bundle-ffi native/ios/
  *   perry compile src/index.ts --target android  --bundle-ffi native/android/
- *   perry compile src/index.ts --target web      --bundle-ffi native/web/
+ *   perry compile perry/editor-component.ts --target web --output dist/hone-editor.wasm
  */
 
 export default {
@@ -67,9 +67,13 @@ export default {
       // separate follow-up.
     },
     web: {
-      ffi: 'native/web/',
-      wasmTarget: 'wasm32-unknown-unknown',
-      wasmBindgen: true,
+      // Perry web target compiles the TS editor to WASM. There is NO Rust crate
+      // for web — Perry treats hone_editor_* symbols as WASM imports satisfied
+      // by the JS host. The "platform renderer" for web is the DOM, implemented
+      // in TypeScript at native/web/dom-ffi.ts (analogous role to the Rust
+      // editor_view.rs on macOS/iOS/Windows/etc.).
+      ffi: 'native/web/dom-ffi.ts',
+      kind: 'ts-host',
       optimizeSize: true,
     },
   },

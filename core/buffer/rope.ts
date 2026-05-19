@@ -85,7 +85,7 @@ interface PieceLocation {
   /** The leaf node containing the piece. */
   leaf: LeafNode;
   /** Path from root to leaf (for tree modifications). */
-  path: { node: InternalNode; childIndex: number }[];
+  nodePath: { node: InternalNode; childIndex: number }[];
 }
 
 /**
@@ -155,7 +155,7 @@ export class Rope {
       return this.findEndPosition();
     }
 
-    const path: { node: InternalNode; childIndex: number }[] = [];
+    const nodePath: { node: InternalNode; childIndex: number }[] = [];
     let node = this.root;
     let remaining = offset;
 
@@ -164,7 +164,7 @@ export class Rope {
       for (let i = 0; i < node.children.length; i++) {
         const child = node.children[i];
         if (remaining < child.charCount) {
-          path.push({ node, childIndex: i });
+          nodePath.push({ node, childIndex: i });
           node = child;
           found = true;
           break;
@@ -175,7 +175,7 @@ export class Rope {
         // Edge: offset equals total, go to last child
         const intNode = node as InternalNode;
         const lastIdx = intNode.children.length - 1;
-        path.push({ node: intNode, childIndex: lastIdx });
+        nodePath.push({ node: intNode, childIndex: lastIdx });
         remaining = intNode.children[lastIdx].charCount;
         node = intNode.children[lastIdx];
       }
@@ -186,34 +186,34 @@ export class Rope {
     for (let i = 0; i < leaf.pieces.length; i++) {
       const piece = leaf.pieces[i];
       if (remaining < piece.len) {
-        return { pieceIndex: i, offsetInPiece: remaining, leaf, path };
+        return { pieceIndex: i, offsetInPiece: remaining, leaf, nodePath };
       }
       remaining -= piece.len;
     }
     // Offset is exactly at the end of the last piece
     if (leaf.pieces.length > 0) {
       const lastIdx = leaf.pieces.length - 1;
-      return { pieceIndex: lastIdx, offsetInPiece: leaf.pieces[lastIdx].len, leaf, path };
+      return { pieceIndex: lastIdx, offsetInPiece: leaf.pieces[lastIdx].len, leaf, nodePath };
     }
     return null;
   }
 
   private findEndPosition(): PieceLocation | null {
-    const path: { node: InternalNode; childIndex: number }[] = [];
+    const nodePath: { node: InternalNode; childIndex: number }[] = [];
     let node = this.root;
 
     while (node.kind === 'internal') {
       const lastIdx = node.children.length - 1;
-      path.push({ node, childIndex: lastIdx });
+      nodePath.push({ node, childIndex: lastIdx });
       node = node.children[lastIdx];
     }
 
     const leaf = node;
     if (leaf.pieces.length === 0) {
-      return { pieceIndex: 0, offsetInPiece: 0, leaf, path };
+      return { pieceIndex: 0, offsetInPiece: 0, leaf, nodePath };
     }
     const lastIdx = leaf.pieces.length - 1;
-    return { pieceIndex: lastIdx, offsetInPiece: leaf.pieces[lastIdx].len, leaf, path };
+    return { pieceIndex: lastIdx, offsetInPiece: leaf.pieces[lastIdx].len, leaf, nodePath };
   }
 
   /**
@@ -366,12 +366,12 @@ export class Rope {
 
     // Update stats up the tree
     updateNodeStats(leaf);
-    for (let i = loc.path.length - 1; i >= 0; i--) {
-      updateNodeStats(loc.path[i].node);
+    for (let i = loc.nodePath.length - 1; i >= 0; i--) {
+      updateNodeStats(loc.nodePath[i].node);
     }
 
     // Check if leaf needs splitting
-    this.maybeRebalance(leaf, loc.path);
+    this.maybeRebalance(leaf, loc.nodePath);
   }
 
   /**
@@ -385,7 +385,7 @@ export class Rope {
     const actualLength = Math.min(length, this.root.charCount - offset);
     const deletedText = this.getText(offset, offset + actualLength);
 
-    // Fast path: deletion within a single piece in one leaf
+    // Fast nodePath: deletion within a single piece in one leaf
     const loc = this.findByOffset(offset);
     if (loc && loc.offsetInPiece + actualLength <= loc.leaf.pieces[loc.pieceIndex].len) {
       const leaf = loc.leaf;
@@ -423,15 +423,15 @@ export class Rope {
 
       // Update stats up the tree
       updateNodeStats(leaf);
-      for (let i = loc.path.length - 1; i >= 0; i--) {
-        updateNodeStats(loc.path[i].node);
+      for (let i = loc.nodePath.length - 1; i >= 0; i--) {
+        updateNodeStats(loc.nodePath[i].node);
       }
       // Sync piece table
       this.pieceTable.setPieces(this.collectAllPieces());
       return deletedText;
     }
 
-    // Slow path: multi-piece delete — collect all pieces, delete range, rebuild
+    // Slow nodePath: multi-piece delete — collect all pieces, delete range, rebuild
     const allPieces = this.collectAllPieces();
     const newPieces = this.deletePiecesInRange(allPieces, offset, actualLength);
 
@@ -568,12 +568,12 @@ export class Rope {
 
   private appendPiece(piece: PieceDescriptor): void {
     // Navigate to the last leaf
-    const path: { node: InternalNode; childIndex: number }[] = [];
+    const nodePath: { node: InternalNode; childIndex: number }[] = [];
     let node = this.root;
 
     while (node.kind === 'internal') {
       const lastIdx = node.children.length - 1;
-      path.push({ node: node, childIndex: lastIdx });
+      nodePath.push({ node: node, childIndex: lastIdx });
       node = node.children[lastIdx];
     }
 
@@ -582,21 +582,21 @@ export class Rope {
 
     // Update stats up the tree
     updateNodeStats(leaf);
-    for (let i = path.length - 1; i >= 0; i--) {
-      updateNodeStats(path[i].node);
+    for (let i = nodePath.length - 1; i >= 0; i--) {
+      updateNodeStats(nodePath[i].node);
     }
 
     // Check if leaf needs splitting
-    this.maybeRebalance(leaf, path);
+    this.maybeRebalance(leaf, nodePath);
   }
 
   private prependPiece(piece: PieceDescriptor): void {
     // Navigate to the first leaf
-    const path: { node: InternalNode; childIndex: number }[] = [];
+    const nodePath: { node: InternalNode; childIndex: number }[] = [];
     let node = this.root;
 
     while (node.kind === 'internal') {
-      path.push({ node: node, childIndex: 0 });
+      nodePath.push({ node: node, childIndex: 0 });
       node = node.children[0];
     }
 
@@ -606,15 +606,15 @@ export class Rope {
 
     // Update stats up the tree
     updateNodeStats(leaf);
-    for (let i = path.length - 1; i >= 0; i--) {
-      updateNodeStats(path[i].node);
+    for (let i = nodePath.length - 1; i >= 0; i--) {
+      updateNodeStats(nodePath[i].node);
     }
 
     // Check if leaf needs splitting
-    this.maybeRebalance(leaf, path);
+    this.maybeRebalance(leaf, nodePath);
   }
 
-  private maybeRebalance(leaf: LeafNode, path: { node: InternalNode; childIndex: number }[]): void {
+  private maybeRebalance(leaf: LeafNode, nodePath: { node: InternalNode; childIndex: number }[]): void {
     if (leaf.pieces.length <= MAX_CHILDREN) return;
 
     // Split the leaf into two halves
@@ -625,30 +625,30 @@ export class Rope {
     updateNodeStats(leaf);
 
     // Insert rightLeaf into parent
-    if (path.length === 0) {
+    if (nodePath.length === 0) {
       // Leaf is the root — create a new internal root
       this.root = createInternal([leaf, rightLeaf]);
       return;
     }
 
-    const parentEntry = path[path.length - 1];
+    const parentEntry = nodePath[nodePath.length - 1];
     const parent = parentEntry.node;
     parent.children.splice(parentEntry.childIndex + 1, 0, rightLeaf);
     updateNodeStats(parent);
 
     // If parent overflows, split it too (propagate up)
     if (parent.children.length > MAX_CHILDREN) {
-      this.splitInternal(path, path.length - 1);
+      this.splitInternal(nodePath, nodePath.length - 1);
     } else {
-      // Just update stats up the rest of the path
-      for (let i = path.length - 2; i >= 0; i--) {
-        updateNodeStats(path[i].node);
+      // Just update stats up the rest of the nodePath
+      for (let i = nodePath.length - 2; i >= 0; i--) {
+        updateNodeStats(nodePath[i].node);
       }
     }
   }
 
-  private splitInternal(path: { node: InternalNode; childIndex: number }[], pathIndex: number): void {
-    const node = path[pathIndex].node;
+  private splitInternal(nodePath: { node: InternalNode; childIndex: number }[], pathIndex: number): void {
+    const node = nodePath[pathIndex].node;
     const mid = Math.floor(node.children.length / 2);
     const rightChildren = node.children.splice(mid);
     const rightNode = createInternal(rightChildren);
@@ -661,17 +661,17 @@ export class Rope {
     }
 
     // Insert rightNode into grandparent
-    const gpEntry = path[pathIndex - 1];
+    const gpEntry = nodePath[pathIndex - 1];
     const grandparent = gpEntry.node;
     grandparent.children.splice(gpEntry.childIndex + 1, 0, rightNode);
     updateNodeStats(grandparent);
 
     if (grandparent.children.length > MAX_CHILDREN) {
-      this.splitInternal(path, pathIndex - 1);
+      this.splitInternal(nodePath, pathIndex - 1);
     } else {
       // Update stats for remaining ancestors
       for (let i = pathIndex - 2; i >= 0; i--) {
-        updateNodeStats(path[i].node);
+        updateNodeStats(nodePath[i].node);
       }
     }
   }

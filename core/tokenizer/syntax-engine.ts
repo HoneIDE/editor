@@ -10,7 +10,7 @@ import { highlightTree } from '@lezer/highlight';
 import { classHighlighter } from '@lezer/highlight';
 import { tags, Tag, tagHighlighter } from '@lezer/highlight';
 import { TextBuffer } from '../buffer/text-buffer';
-import { resolveTagColor, resolveTagStyle } from './token-theme';
+import { resolveTagColor, resolveTagStyle } from './tag-theme';
 import type { EditorTheme } from '../../view-model/theme';
 import type { LineToken } from '../../view-model/line-layout';
 
