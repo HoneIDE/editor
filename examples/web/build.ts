@@ -135,8 +135,12 @@ async function loadWasmAsBase64(url) {
  * @param {string} [opts.wasmUrl]     URL of hone-editor.wasm. Default: sibling of hone-editor.js.
  * @param {boolean|object} [opts.treeSitter]  Enable tree-sitter syntax highlighting.
  *     true: load grammars for the requested language(s) from sibling URLs.
- *     object: explicit URL map, e.g. { typescript: '...', javascript: '...' }.
+ *     object: explicit URL map, e.g. { typescript: '...', javascript: '...' },
+ *       plus an optional { initTimeoutMs } (default 5000) for the init race.
  *     false / omit: use keyword tokenizer only.
+ *     If tree-sitter init fails or times out (e.g. web-tree-sitter's Emscripten
+ *     runtime won't instantiate in Firefox — gh#5), mount() does NOT reject:
+ *     it falls back to the keyword tokenizer so the editor still appears.
  *
  * Returns a controller object:
  *   handle              {number}
@@ -177,6 +181,13 @@ export async function mount(el, opts = {}) {
   // Initialize tree-sitter first (async, must finish before the WASM boot
   // because entry.ts queries hone_get_init_use_tree_sitter and constructs
   // the engine at module load).
+  //
+  // Init is best-effort (gh#5): web-tree-sitter 0.20.x's Emscripten runtime
+  // fails to instantiate in some browsers (Firefox: reportUndefinedSymbols) and
+  // can hang. initTreeSitterSafe races it against a timeout and resolves
+  // false on failure, so we fall back to the keyword tokenizer rather than
+  // failing the whole editor mount. Override the timeout with
+  // treeSitter: { initTimeoutMs }.
   let tsFns = null;
   const ts = opts.treeSitter;
   if (ts) {
@@ -192,9 +203,15 @@ export async function mount(el, opts = {}) {
       css:           urls.css           ?? base + 'tree-sitter-css.wasm',
       tsx:           urls.tsx           ?? base + 'tree-sitter-typescript.wasm',
     };
-    await initTreeSitter(grammarUrls);
-    tsFns = createTreeSitterFFI();
-    opts.useTreeSitter = true;
+    const timeoutMs = (typeof ts === 'object' && typeof ts.initTimeoutMs === 'number')
+      ? ts.initTimeoutMs : 5000;
+    if (await initTreeSitterSafe(grammarUrls, timeoutMs)) {
+      tsFns = createTreeSitterFFI();
+      opts.useTreeSitter = true;
+    } else {
+      // Tree-sitter unavailable in this browser — keyword tokenizer takes over.
+      opts.useTreeSitter = false;
+    }
   }
 
   const ctx = createDomFfiCtx(el, opts);

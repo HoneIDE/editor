@@ -90,6 +90,55 @@ export async function initTreeSitter(urls: GrammarUrls): Promise<void> {
   ]);
 }
 
+/** Reject `p` if it hasn't settled within `ms` (`ms <= 0` disables the timeout). */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  if (!(ms > 0)) return p;
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error('tree-sitter init timed out after ' + ms + 'ms')),
+      ms,
+    );
+    p.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
+  });
+}
+
+/**
+ * Best-effort tree-sitter init (gh#5). Resolves `true` on success, `false` if
+ * initialization throws or doesn't complete within `timeoutMs`.
+ *
+ * web-tree-sitter 0.20.x ships its runtime as an Emscripten dynamic-link module
+ * whose glue fails to instantiate in some browsers (Firefox throws
+ * `reportUndefinedSymbols` during instantiation; Chromium is fine) and can hang.
+ * Because `mount()` awaits init before constructing the editor, a raw throw/hang
+ * fails the *entire* editor mount. Callers use this wrapper and fall back to the
+ * keyword tokenizer when it returns `false`, so the editor always mounts —
+ * with keyword highlighting instead of tree-sitter on browsers that can't load
+ * the runtime.
+ *
+ * `init` is injectable for testing; production callers omit it.
+ */
+export async function initTreeSitterSafe(
+  urls: GrammarUrls,
+  timeoutMs: number = 5000,
+  init: (u: GrammarUrls) => Promise<void> = initTreeSitter,
+): Promise<boolean> {
+  try {
+    await withTimeout(init(urls), timeoutMs);
+    return true;
+  } catch (err) {
+    if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+      console.warn(
+        '[hone-editor] tree-sitter init failed; falling back to keyword highlighting (gh#5).',
+        err,
+      );
+    }
+    return false;
+  }
+}
+
 /**
  * Build the subset of FFI functions that the editor's TreeSitterEngine calls.
  * Merge the returned object into your `createDomFfi(...)` FFI before passing
