@@ -159,10 +159,27 @@ ALL interaction directly by mutating `frame_lines` in place and calling `setNeed
 - Android: ⬜ Canvas/Skia JNI — needs `tokenizer.rs` port + same EditorView patterns
 - Web: ✅ TypeScript DOM renderer at `native/web/dom-ffi.ts`. No Rust crate — Perry's
   web target compiles the editor TS to WASM and imports JS-side `hone_editor_*`. Find
-  highlights / diagnostics / breakpoints / fold ranges render as DOM overlay layers.
-  Syntax highlighting works structurally but token COLORS are blocked on Perry
-  PerryTS/perry#1071 (cross-module nested-object access returns `undefined`). Build:
+  highlights / line diagnostics / per-range diagnostics / breakpoints / fold ranges render
+  as DOM overlay layers. Syntax highlighting works structurally but token COLORS are blocked
+  on Perry PerryTS/perry#1071 (cross-module nested-object access returns `undefined`). Build:
   `bun run examples/web/build.ts` → `examples/web/dist/{hone-editor.wasm, hone-editor.js, index.html}`.
+
+### `mount()` controller bridge (gh#1, gh#2)
+The `mount(el, opts)` controller spans the WASM↔JS realm boundary: the buffer lives in the
+Perry-compiled WASM, the controller in plain JS. Two FFI patterns bridge them, both polled by
+the editor's existing 8ms `setInterval` (which **does** fire on web, unlike macOS):
+- **Push (editor → host):** the Editor calls `hone_editor_set_buffer_text` after every change;
+  dom-ffi stores it (`ed.bufferText`) and fires `onTextChange` listeners. `getText()` reads it.
+- **Pull (host → editor):** `setText`/`setCursor` queue a request on the EditorState; the WASM
+  poll loop drains it via `hone_editor_has_pending_*` / `take_pending_*` (see
+  `Editor.flushEvents`). On **native** the host holds the Editor directly so the `has_*` probes
+  return 0 — these FFIs are link-resolving no-ops in every Rust crate (same status as line
+  diagnostics: only macOS + web render).
+- **Per-range diagnostics** (`setRangeDiagnostics`): squiggle the exact span (severity-colored
+  wavy underline) + a pointer-hit-tested hover tooltip. Implemented on web (`dom-ffi.ts`,
+  full incl. hover) and macOS (`editor_view.rs`, squiggle rendering; native hover is a follow-up).
+  Pure helpers `computeDiagSegments` / `rangeDiagAtPosition` / `severityColor` are unit-tested in
+  `tests/web-controller.test.ts`.
 
 ## Commands
 Run tests: `bun test`
@@ -176,7 +193,7 @@ Build Windows crate: `cd native/windows && cargo build`
 Run Windows interactive demo: `cd native/windows && cargo run --example demo_editor`
 Run iOS interactive demo: `cd native/ios && cargo run --example demo_editor_ios`
 Run Android interactive demo: `cd native/android && bash run-demo.sh`
-Build for web: `bun run examples/web/build.ts` — produces `examples/web/dist/{hone-editor.wasm, hone-editor.js, index.html}`. The build orchestrates: (1) `perry compile examples/web/entry.ts --target web --output hone-editor.wasm` for the raw WASM; (2) a second Perry compile to .html to extract the JS runtime bridge; (3) bundles `native/web/dom-ffi.ts` + the bridge + a `mount()` API into `hone-editor.js`. Consumers: `import { mount } from './hone-editor.js'; await mount(document.getElementById('editor'));`
+Build for web: `bun run examples/web/build.ts` — produces `examples/web/dist/{hone-editor.wasm, hone-editor.js, index.html}`. The build orchestrates: (1) `perry compile examples/web/entry.ts --target web --output hone-editor.wasm` for the raw WASM; (2) a second Perry compile to .html to extract the JS runtime bridge; (3) bundles `native/web/dom-ffi.ts` + the bridge + a `mount()` API into `hone-editor.js`. Consumers: `import { mount } from './hone-editor.js'; const ed = await mount(document.getElementById('editor'));`. The returned controller exposes overlay setters plus `getText()`, `setText(v)`, `onTextChange(cb)`, `setCursor(line,col)`, `focus()` (gh#1) and `setRangeDiagnostics(json)` / `clearRangeDiagnostics()` (gh#2).
 
 ## Development Phases (from PROJECT_PLAN.md)
 

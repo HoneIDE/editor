@@ -138,8 +138,22 @@ async function loadWasmAsBase64(url) {
  *     object: explicit URL map, e.g. { typescript: '...', javascript: '...' }.
  *     false / omit: use keyword tokenizer only.
  *
- * Returns a controller object exposing the underlying Editor instance for
- * setting find highlights, diagnostics, breakpoints, etc.
+ * Returns a controller object:
+ *   handle              {number}
+ *   // overlays
+ *   setFindHighlights(json), clearFindHighlights()
+ *   setLineDiagnostics(packed), clearDiagnostics()
+ *   setBreakpoints(packed), setFoldRanges(packed)
+ *   // text I/O + change observation (gh#1)
+ *   getText()                       -> string   current buffer text
+ *   setText(value)                              replace all text (loads examples / permalinks)
+ *   onTextChange(cb)                -> () => void  subscribe to edits; returns unsubscribe
+ *   setCursor(line, column)                     0-based; scrolls the line into view
+ *   focus()                                     give the editor keyboard focus
+ *   // per-range diagnostics: squiggles + hover tooltip (gh#2)
+ *   setRangeDiagnostics(json)                   json (string or array) of
+ *       [{startLine,startCol,endLine,endCol,severity,message,code?}, …] (0-based)
+ *   clearRangeDiagnostics()
  */
 export async function mount(el, opts = {}) {
   if (!el || typeof el.appendChild !== 'function') {
@@ -198,12 +212,23 @@ export async function mount(el, opts = {}) {
   const ffi = ctx.ffi;
   return {
     handle: h,
+    // Overlay setters
     setFindHighlights: (json) => ffi.hone_editor_set_find_highlights(h, json),
     clearFindHighlights: () => ffi.hone_editor_clear_find_highlights(h),
     setLineDiagnostics: (packed) => ffi.hone_editor_set_line_diagnostics(h, packed),
     clearDiagnostics: () => ffi.hone_editor_clear_diagnostics(h),
     setBreakpoints: (packed) => ffi.hone_editor_set_breakpoints(h, packed),
     setFoldRanges: (packed) => ffi.hone_editor_set_fold_ranges(h, packed),
+    // Text I/O + change observation (gh#1)
+    getText: () => ctx.getText(h),
+    setText: (value) => ctx.requestSetText(h, value),
+    onTextChange: (cb) => ctx.onTextChange(h, cb),
+    setCursor: (line, column) => ctx.requestSetCursor(h, line, column),
+    focus: () => ffi.hone_editor_focus(h),
+    // Per-range diagnostics: squiggles + hover tooltip (gh#2)
+    setRangeDiagnostics: (json) =>
+      ffi.hone_editor_set_range_diagnostics(h, typeof json === 'string' ? json : JSON.stringify(json)),
+    clearRangeDiagnostics: () => ffi.hone_editor_clear_range_diagnostics(h),
   };
 }
 `;
@@ -252,8 +277,22 @@ export class Editor {
     });
     // Drive the overlay layers to demonstrate them at runtime.
     ed.setFindHighlights('[{"line":2,"col":13,"len":6,"current":1}]');
-    ed.setLineDiagnostics('5:2:#f87171:cursorLine is implicitly typed as number — declare it\\n13:1:#f87171:Type \\'string\\' is not assignable to parameter of type \\'number\\'');
     ed.setBreakpoints('3\\n7');
+
+    // Per-range diagnostics (gh#2): squiggle the exact span + hover tooltip.
+    ed.setRangeDiagnostics([
+      { startLine: 4, startCol: 10, endLine: 4, endCol: 20, severity: 2,
+        message: 'cursorLine is implicitly typed as number — declare it', code: 'ts(7008)' },
+      { startLine: 12, startCol: 24, endLine: 12, endCol: 28, severity: 1,
+        message: "Argument of type 'string' is not assignable to parameter of type 'number'", code: 'ts(2345)' },
+    ]);
+
+    // Text I/O (gh#1): read the live buffer + observe edits.
+    ed.onTextChange((text) => {
+      console.log('buffer changed — ' + text.length + ' chars');
+    });
+    // e.g. read on demand: const source = ed.getText();
+    // e.g. jump to a diagnostic: ed.setCursor(12, 24); ed.focus();
   </script>
 </body>
 </html>

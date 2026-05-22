@@ -637,6 +637,31 @@ pub extern "C" fn hone_editor_set_fold_ranges(
     // Stub — fold indicators not yet implemented on Linux
 }
 
+// === gh#1 host bridge + gh#2 range diagnostics (link-resolving stubs) ===
+// Range-diagnostic squiggles and the host text/cursor bridge are implemented
+// on macOS + web; these exist so Perry apps embedding the editor link cleanly.
+// (Linux already stubs line diagnostics above — same status.)
+#[no_mangle]
+pub extern "C" fn hone_editor_set_range_diagnostics(_view: *mut EditorView, _json: i64) {}
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_range_diagnostics(_view: *mut EditorView) {}
+#[no_mangle]
+pub extern "C" fn hone_editor_focus(_view: *mut EditorView) {}
+#[no_mangle]
+pub extern "C" fn hone_editor_set_buffer_text(_view: *mut EditorView, _text: i64) {}
+#[no_mangle]
+pub extern "C" fn hone_editor_has_pending_set_text(_view: *mut EditorView) -> f64 { 0.0 }
+#[no_mangle]
+pub extern "C" fn hone_editor_take_pending_set_text(_view: *mut EditorView) -> i64 { 0 }
+#[no_mangle]
+pub extern "C" fn hone_editor_has_pending_cursor(_view: *mut EditorView) -> f64 { 0.0 }
+#[no_mangle]
+pub extern "C" fn hone_editor_pending_cursor_line(_view: *mut EditorView) -> f64 { 0.0 }
+#[no_mangle]
+pub extern "C" fn hone_editor_pending_cursor_col(_view: *mut EditorView) -> f64 { 0.0 }
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_pending_cursor(_view: *mut EditorView) {}
+
 /// Copy text to clipboard (called by TypeScript).
 /// Perry params: ["i64", "i64"]
 #[no_mangle]

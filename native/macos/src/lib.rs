@@ -762,6 +762,65 @@ pub extern "C" fn hone_editor_clear_diagnostics(view: *mut EditorView) {
     view.invalidate();
 }
 
+/// Set per-range diagnostics (gh#2). `json` is a Perry StringHeader holding a
+/// JSON array of {startLine,startCol,endLine,endCol,severity,message,code?}
+/// (0-based). Rendered as severity-colored wavy underlines under the span.
+#[no_mangle]
+pub extern "C" fn hone_editor_set_range_diagnostics(view: *mut EditorView, json: *const u8) {
+    let view = unsafe { &mut *view };
+    let data = str_from_header(json);
+    view.set_range_diagnostics(data);
+    view.invalidate();
+}
+
+/// Clear all per-range diagnostics.
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_range_diagnostics(view: *mut EditorView) {
+    let view = unsafe { &mut *view };
+    view.clear_range_diagnostics();
+    view.invalidate();
+}
+
+/// Give the editor view keyboard focus (gh#1).
+#[no_mangle]
+pub extern "C" fn hone_editor_focus(view: *mut EditorView) {
+    let view = unsafe { &*view };
+    view.focus();
+}
+
+// === Host → editor bridge (gh#1) ===
+// On native platforms the embedding host holds the TypeScript Editor instance
+// and calls getContent()/setContent()/setCursor() directly, so these are no-ops
+// that simply exist for link resolution. The web FFI implements them against
+// the JS controller; see native/web/dom-ffi.ts.
+
+/// Push the current buffer text out to the host (no-op on macOS).
+#[no_mangle]
+pub extern "C" fn hone_editor_set_buffer_text(_view: *mut EditorView, _text: *const u8) {}
+
+/// Is a host-queued setText pending? Always 0 on native.
+#[no_mangle]
+pub extern "C" fn hone_editor_has_pending_set_text(_view: *mut EditorView) -> f64 { 0.0 }
+
+/// Drain a host-queued setText (returns empty string on native).
+#[no_mangle]
+pub extern "C" fn hone_editor_take_pending_set_text(_view: *mut EditorView) -> i64 {
+    perry_ffi::alloc_string("").as_raw() as i64
+}
+
+/// Is a host-queued cursor move pending? Always 0 on native.
+#[no_mangle]
+pub extern "C" fn hone_editor_has_pending_cursor(_view: *mut EditorView) -> f64 { 0.0 }
+
+#[no_mangle]
+pub extern "C" fn hone_editor_pending_cursor_line(_view: *mut EditorView) -> f64 { 0.0 }
+
+#[no_mangle]
+pub extern "C" fn hone_editor_pending_cursor_col(_view: *mut EditorView) -> f64 { 0.0 }
+
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_pending_cursor(_view: *mut EditorView) {}
+
 /// Poll touch events (iOS only — no-op on macOS).
 #[no_mangle]
 pub extern "C" fn hone_editor_poll_touch(_view: *mut EditorView) -> f64 {

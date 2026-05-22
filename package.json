@@ -1,6 +1,6 @@
 {
   "name": "@honeide/editor",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "High-performance, cross-platform code editor surface",
   "main": "core/index.ts",
   "types": "core/index.ts",
@@ -393,6 +393,56 @@
         {
           "name": "hone_editor_set_token_colors",
           "params": ["f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_set_buffer_text",
+          "params": ["i64", "i64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_has_pending_set_text",
+          "params": ["i64"],
+          "returns": "f64"
+        },
+        {
+          "name": "hone_editor_take_pending_set_text",
+          "params": ["i64"],
+          "returns": "i64"
+        },
+        {
+          "name": "hone_editor_has_pending_cursor",
+          "params": ["i64"],
+          "returns": "f64"
+        },
+        {
+          "name": "hone_editor_pending_cursor_line",
+          "params": ["i64"],
+          "returns": "f64"
+        },
+        {
+          "name": "hone_editor_pending_cursor_col",
+          "params": ["i64"],
+          "returns": "f64"
+        },
+        {
+          "name": "hone_editor_clear_pending_cursor",
+          "params": ["i64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_focus",
+          "params": ["i64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_set_range_diagnostics",
+          "params": ["i64", "i64"],
+          "returns": "void"
+        },
+        {
+          "name": "hone_editor_clear_range_diagnostics",
+          "params": ["i64"],
           "returns": "void"
         }
       ],

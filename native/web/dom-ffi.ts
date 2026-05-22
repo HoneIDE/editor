@@ -30,6 +30,17 @@ interface PendingEvent {
   y: number;
 }
 
+/** Per-range diagnostic (gh#2). All line/col fields are 0-based. */
+export interface RangeDiag {
+  startLine: number;
+  startCol: number;
+  endLine: number;
+  endCol: number;
+  severity: number;   // 1=error, 2=warning, 3=info, 4=hint
+  message: string;
+  code?: string;
+}
+
 interface EditorState {
   root: HTMLDivElement;
   linesContainer: HTMLDivElement;
@@ -65,6 +76,15 @@ interface EditorState {
   selectionColor: string;
   breakpoints: Set<number>;            // 1-based line numbers
   foldedLines: Set<number>;            // 1-based line numbers that are currently folded
+  // --- Host ↔ editor bridge (gh#1) ---
+  bufferText: string;                  // last text pushed from WASM via set_buffer_text
+  textChangeListeners: Array<(text: string) => void>;
+  pendingSetText: string | null;       // queued by the host; drained by the WASM poll loop
+  pendingCursor: { line: number; col: number } | null;
+  // --- Per-range diagnostics (gh#2) ---
+  rangeDiagnostics: RangeDiag[];
+  rangeTooltipEl: HTMLDivElement | null;
+  rangeHoverHandler: ((e: globalThis.MouseEvent) => void) | null;
 }
 
 let cssInjected = false;
@@ -106,6 +126,15 @@ function injectCSS(): void {
 .hone-editor-fold { position: absolute; pointer-events: none;
   color: rgba(255,255,255,0.4); font-size: 10px; line-height: 1;
   width: 12px; height: 12px; text-align: center; }
+.hone-editor-range-squiggle { position: absolute; pointer-events: none;
+  background-repeat: repeat-x; background-position: left bottom; background-size: 6px 3px; }
+.hone-editor-range-tooltip { position: absolute; z-index: 10; pointer-events: none;
+  max-width: 480px; padding: 6px 9px; border-radius: 4px;
+  background: #252526; color: #d4d4d4; border: 1px solid #454545;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.45); font-size: 0.85em; line-height: 1.4;
+  white-space: pre-wrap; word-break: break-word; }
+.hone-editor-range-tooltip .hone-editor-range-code { display: block; margin-top: 3px;
+  opacity: 0.6; font-size: 0.9em; }
 @keyframes hone-blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
 `;
   document.head.appendChild(style);
@@ -186,6 +215,69 @@ function renderTokenizedLine(div: HTMLDivElement, text: string, packedTokens: st
   }
 }
 
+// ── Per-range diagnostics: pure helpers (exported for unit tests) ──────────
+
+/** Severity → squiggle/underline color (VS Code editorError/Warning/Info palette). */
+export function severityColor(severity: number): string {
+  if (severity === 1) return '#f14c4c'; // error
+  if (severity === 2) return '#cca700'; // warning
+  if (severity === 3) return '#3794ff'; // info
+  return '#888888';                     // hint / unknown
+}
+
+/** A wavy-underline CSS `background` shorthand value for the given color. */
+export function squiggleBackground(color: string): string {
+  const svg =
+    "<svg xmlns='http://www.w3.org/2000/svg' width='6' height='3'>" +
+    "<path d='M0 2.5 Q1.5 0 3 2.5 T6 2.5' fill='none' stroke='" + color +
+    "' stroke-width='0.9'/></svg>";
+  return "url(\"data:image/svg+xml," + encodeURIComponent(svg) + "\")";
+}
+
+/**
+ * Break a multi-line range diagnostic into one drawable segment per spanned
+ * line. `lineLengths[i]` is the character length of line i; used to extend a
+ * segment to end-of-line for the interior lines of a multi-line range.
+ * Each segment is guaranteed at least 1 column wide so the squiggle is visible.
+ */
+export function computeDiagSegments(
+  diag: RangeDiag,
+  lineLengths: number[],
+): Array<{ line: number; startCol: number; endCol: number }> {
+  const out: Array<{ line: number; startCol: number; endCol: number }> = [];
+  const startLine = diag.startLine < 0 ? 0 : diag.startLine;
+  const endLine = diag.endLine < startLine ? startLine : diag.endLine;
+  for (let line = startLine; line <= endLine; line++) {
+    const lineLen = line < lineLengths.length ? lineLengths[line] : 0;
+    let startCol = line === startLine ? diag.startCol : 0;
+    if (startCol < 0) startCol = 0;
+    let endCol = line === endLine ? diag.endCol : lineLen;
+    // Interior/empty lines: fall back to line length, then a 1-col minimum.
+    if (endCol <= startCol) endCol = lineLen > startCol ? lineLen : startCol + 1;
+    out.push({ line, startCol, endCol });
+  }
+  return out;
+}
+
+/**
+ * Find the first range diagnostic whose span contains the 0-based (line, col),
+ * or null. Used to drive the hover tooltip via pointer hit-testing.
+ */
+export function rangeDiagAtPosition(
+  diags: RangeDiag[],
+  line: number,
+  col: number,
+): RangeDiag | null {
+  for (let i = 0; i < diags.length; i++) {
+    const d = diags[i];
+    if (line < d.startLine || line > d.endLine) continue;
+    if (line === d.startLine && col < d.startCol) continue;
+    if (line === d.endLine && col > d.endCol) continue;
+    return d;
+  }
+  return null;
+}
+
 /**
  * The FFI object Perry's WASM module imports. Keys are the `hone_editor_*`
  * symbols Perry will call. Pass to `bootPerryWasm(wasmBase64, ffi)`.
@@ -221,6 +313,87 @@ export interface FfiContext {
   latestHandle(): number;
   /** The full set of FFI functions to pass to bootPerryWasm via __ffiImports. */
   ffi: HoneEditorFFI;
+  // ── Host bridge (gh#1) ── These read/write editor state on the JS side
+  // without a round-trip through the WASM Editor instance.
+  /** Current buffer text (last pushed from WASM via set_buffer_text). */
+  getText(handle: number): string;
+  /** Queue a full-text replacement; drained by the WASM poll loop. */
+  requestSetText(handle: number, value: string): void;
+  /** Subscribe to text changes. Returns an unsubscribe function. */
+  onTextChange(handle: number, cb: (text: string) => void): () => void;
+  /** Queue a 0-based cursor move; drained by the WASM poll loop. */
+  requestSetCursor(handle: number, line: number, column: number): void;
+}
+
+// ── Per-range diagnostics: DOM rendering + hover (gh#2) ────────────────────
+
+/** Repaint the squiggle overlays for `ed.rangeDiagnostics`. */
+function renderRangeSquiggles(ed: EditorState): void {
+  ed.overlayContainer.querySelectorAll('.hone-editor-range-squiggle').forEach(n => n.remove());
+  if (ed.rangeDiagnostics.length === 0) return;
+  const lineLengths = ed.bufferText.length > 0
+    ? ed.bufferText.split('\n').map(l => l.length)
+    : [];
+  for (const diag of ed.rangeDiagnostics) {
+    const bg = squiggleBackground(severityColor(diag.severity));
+    const segs = computeDiagSegments(diag, lineLengths);
+    for (const seg of segs) {
+      const div = document.createElement('div');
+      div.className = 'hone-editor-range-squiggle';
+      div.style.left = (ed.gutterWidth + seg.startCol * ed.charWidth) + 'px';
+      div.style.top = (seg.line * ed.lineHeight - ed.scrollOffsetY) + 'px';
+      div.style.width = ((seg.endCol - seg.startCol) * ed.charWidth) + 'px';
+      div.style.height = ed.lineHeight + 'px';
+      div.style.backgroundImage = bg;
+      ed.overlayContainer.appendChild(div);
+    }
+  }
+}
+
+function hideRangeTooltip(ed: EditorState): void {
+  if (ed.rangeTooltipEl) ed.rangeTooltipEl.style.display = 'none';
+}
+
+function showRangeTooltip(ed: EditorState, diag: RangeDiag, pointerX: number, line: number): void {
+  let tip = ed.rangeTooltipEl;
+  if (!tip) {
+    tip = document.createElement('div');
+    tip.className = 'hone-editor-range-tooltip';
+    ed.root.appendChild(tip);
+    ed.rangeTooltipEl = tip;
+  }
+  tip.innerHTML = '';
+  tip.appendChild(document.createTextNode(diag.message));
+  if (diag.code && diag.code.length > 0) {
+    const codeEl = document.createElement('span');
+    codeEl.className = 'hone-editor-range-code';
+    codeEl.textContent = diag.code;
+    tip.appendChild(codeEl);
+  }
+  tip.style.display = '';
+  // Anchor under the hovered line; track the pointer's x, clamped to the view.
+  const maxLeft = Math.max(0, ed.root.clientWidth - tip.offsetWidth - 8);
+  tip.style.left = Math.min(Math.max(0, pointerX), maxLeft) + 'px';
+  tip.style.top = ((line + 1) * ed.lineHeight - ed.scrollOffsetY + 2) + 'px';
+}
+
+/** Register the one pointer-move hit-test that drives the hover tooltip. */
+function attachRangeHover(ed: EditorState): void {
+  if (ed.rangeHoverHandler) return;
+  const handler = (e: globalThis.MouseEvent) => {
+    if (ed.rangeDiagnostics.length === 0) { hideRangeTooltip(ed); return; }
+    const rect = ed.root.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const line = Math.floor((y + ed.scrollOffsetY) / ed.lineHeight);
+    const col = Math.round((x - ed.gutterWidth) / ed.charWidth);
+    const diag = rangeDiagAtPosition(ed.rangeDiagnostics, line, col);
+    if (diag) showRangeTooltip(ed, diag, x, line);
+    else hideRangeTooltip(ed);
+  };
+  ed.root.addEventListener('mousemove', handler);
+  ed.root.addEventListener('mouseleave', () => hideRangeTooltip(ed));
+  ed.rangeHoverHandler = handler;
 }
 
 /**
@@ -374,6 +547,13 @@ export function createDomFfiCtx(mount: HTMLElement, initOpts: InitOpts = {}): Ff
         selectionColor: 'rgba(38,79,120,0.5)',
         breakpoints: new Set(),
         foldedLines: new Set(),
+        bufferText: '',
+        textChangeListeners: [],
+        pendingSetText: null,
+        pendingCursor: null,
+        rangeDiagnostics: [],
+        rangeTooltipEl: null,
+        rangeHoverHandler: null,
       };
 
       ctx.font = ed.fontSize + 'px ' + ed.fontFamily;
@@ -927,6 +1107,74 @@ export function createDomFfiCtx(mount: HTMLElement, initOpts: InitOpts = {}): Ff
       if (ed) ed.overlayContainer.querySelectorAll('.hone-editor-diag-line, .hone-editor-diag-msg').forEach(n => n.remove());
     },
 
+    // --- Per-range diagnostics: squiggles + hover tooltip (gh#2) ---
+    // json = [{startLine,startCol,endLine,endCol,severity,message,code?}, …] (0-based)
+    hone_editor_set_range_diagnostics(h: number, json: string): void {
+      const ed = get(h);
+      if (!ed) return;
+      let diags: RangeDiag[] = [];
+      if (typeof json === 'string' && json.length > 2) {
+        try { const parsed = JSON.parse(json); if (Array.isArray(parsed)) diags = parsed; } catch {}
+      }
+      ed.rangeDiagnostics = diags;
+      renderRangeSquiggles(ed);
+      attachRangeHover(ed);
+    },
+
+    hone_editor_clear_range_diagnostics(h: number): void {
+      const ed = get(h);
+      if (!ed) return;
+      ed.rangeDiagnostics = [];
+      ed.overlayContainer.querySelectorAll('.hone-editor-range-squiggle').forEach(n => n.remove());
+      hideRangeTooltip(ed);
+    },
+
+    // --- Host ↔ editor bridge (gh#1) ---
+    // Push from WASM: store the latest buffer text and notify host listeners.
+    hone_editor_set_buffer_text(h: number, text: string): void {
+      const ed = get(h);
+      if (!ed) return;
+      ed.bufferText = typeof text === 'string' ? text : '';
+      // Multi-line range squiggles depend on line lengths — repaint if shown.
+      if (ed.rangeDiagnostics.length > 0) renderRangeSquiggles(ed);
+      for (let i = 0; i < ed.textChangeListeners.length; i++) {
+        try { ed.textChangeListeners[i](ed.bufferText); } catch {}
+      }
+    },
+    // Pull by WASM poll loop: drain a queued setText request.
+    hone_editor_has_pending_set_text(h: number): number {
+      const ed = get(h);
+      return ed && ed.pendingSetText !== null ? 1 : 0;
+    },
+    hone_editor_take_pending_set_text(h: number): string {
+      const ed = get(h);
+      if (!ed || ed.pendingSetText === null) return '';
+      const t = ed.pendingSetText;
+      ed.pendingSetText = null;
+      return t;
+    },
+    // Pull by WASM poll loop: drain a queued cursor move.
+    hone_editor_has_pending_cursor(h: number): number {
+      const ed = get(h);
+      return ed && ed.pendingCursor !== null ? 1 : 0;
+    },
+    hone_editor_pending_cursor_line(h: number): number {
+      const ed = get(h);
+      return ed && ed.pendingCursor !== null ? ed.pendingCursor.line : 0;
+    },
+    hone_editor_pending_cursor_col(h: number): number {
+      const ed = get(h);
+      return ed && ed.pendingCursor !== null ? ed.pendingCursor.col : 0;
+    },
+    hone_editor_clear_pending_cursor(h: number): void {
+      const ed = get(h);
+      if (ed) ed.pendingCursor = null;
+    },
+    hone_editor_focus(h: number): void {
+      const ed = get(h);
+      if (ed && typeof ed.root.focus === 'function') ed.root.focus();
+    },
+
     // --- Breakpoints ---
     // Newline-separated 1-based line numbers.
     hone_editor_set_breakpoints(h: number, packedLines: string): void {
@@ -1035,5 +1283,26 @@ export function createDomFfiCtx(mount: HTMLElement, initOpts: InitOpts = {}): Ff
   return {
     ffi,
     latestHandle: () => _latestHandle,
+    getText: (h: number) => {
+      const ed = get(h);
+      return ed ? ed.bufferText : '';
+    },
+    requestSetText: (h: number, value: string) => {
+      const ed = get(h);
+      if (ed) ed.pendingSetText = typeof value === 'string' ? value : String(value);
+    },
+    onTextChange: (h: number, cb: (text: string) => void) => {
+      const ed = get(h);
+      if (!ed) return () => {};
+      ed.textChangeListeners.push(cb);
+      return () => {
+        const i = ed.textChangeListeners.indexOf(cb);
+        if (i >= 0) ed.textChangeListeners.splice(i, 1);
+      };
+    },
+    requestSetCursor: (h: number, line: number, column: number) => {
+      const ed = get(h);
+      if (ed) ed.pendingCursor = { line, col: column };
+    },
   };
 }

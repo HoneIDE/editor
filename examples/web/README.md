@@ -16,6 +16,41 @@ Produces `examples/web/dist/index.html`. Open it directly in a browser:
 open examples/web/dist/index.html
 ```
 
+## Controller API
+
+`mount(el, opts)` returns a controller:
+
+```js
+import { mount } from './hone-editor.js';
+const ed = await mount(document.getElementById('editor'), {
+  content: 'const x = 1;', language: 'typescript', theme: 'dark',
+});
+
+// Text I/O + change observation (gh#1)
+const src = ed.getText();                 // current buffer text
+ed.setText('// loaded example\n');         // replace all text
+const off = ed.onTextChange((text) => {    // observe edits; returns unsubscribe
+  localStorage.setItem('draft', text);
+});
+ed.setCursor(12, 4);                       // 0-based; scrolls the line into view
+ed.focus();
+
+// Per-range diagnostics: squiggles + hover tooltip (gh#2). 0-based ranges.
+ed.setRangeDiagnostics([
+  { startLine: 4, startCol: 10, endLine: 4, endCol: 20, severity: 1,
+    message: "Type 'string' is not assignable to type 'number'", code: 'ts(2322)' },
+]);
+ed.clearRangeDiagnostics();
+
+// Overlays (existing)
+ed.setFindHighlights('[{"line":2,"col":13,"len":6,"current":1}]');
+ed.setLineDiagnostics('5:2:#cca700:unused variable');
+ed.setBreakpoints('3\n7');
+ed.setFoldRanges('2:1');
+```
+
+`severity`: 1=error, 2=warning, 3=info, 4=hint.
+
 ## What the build does
 
 1. `perry compile perry/editor-component.ts --target web` → a self-contained

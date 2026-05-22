@@ -464,6 +464,31 @@ pub extern "C" fn hone_editor_set_fold_ranges(_view: *mut EditorView, _packed_da
 #[no_mangle]
 pub extern "C" fn hone_editor_clear_diagnostics(_view: *mut EditorView) {}
 
+// === gh#1 host bridge + gh#2 range diagnostics (link-resolving stubs) ===
+// As with every other symbol in this crate, these exist purely so Perry apps
+// embedding @honeide/editor load on HarmonyOS. Real rendering + the host
+// text/cursor bridge land with the ArkTS-side renderer.
+#[no_mangle]
+pub extern "C" fn hone_editor_set_range_diagnostics(_view: *mut EditorView, _json: *const u8) {}
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_range_diagnostics(_view: *mut EditorView) {}
+#[no_mangle]
+pub extern "C" fn hone_editor_focus(_view: *mut EditorView) {}
+#[no_mangle]
+pub extern "C" fn hone_editor_set_buffer_text(_view: *mut EditorView, _text: *const u8) {}
+#[no_mangle]
+pub extern "C" fn hone_editor_has_pending_set_text(_view: *mut EditorView) -> f64 { 0.0 }
+#[no_mangle]
+pub extern "C" fn hone_editor_take_pending_set_text(_view: *mut EditorView) -> i64 { 0 }
+#[no_mangle]
+pub extern "C" fn hone_editor_has_pending_cursor(_view: *mut EditorView) -> f64 { 0.0 }
+#[no_mangle]
+pub extern "C" fn hone_editor_pending_cursor_line(_view: *mut EditorView) -> f64 { 0.0 }
+#[no_mangle]
+pub extern "C" fn hone_editor_pending_cursor_col(_view: *mut EditorView) -> f64 { 0.0 }
+#[no_mangle]
+pub extern "C" fn hone_editor_clear_pending_cursor(_view: *mut EditorView) {}
+
 #[no_mangle]
 pub extern "C" fn hone_editor_poll_touch(_view: *mut EditorView) -> f64 {
     0.0

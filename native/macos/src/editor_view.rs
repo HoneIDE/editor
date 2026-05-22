@@ -174,6 +174,36 @@ pub struct FindHighlight {
     pub current: i32,   // 1 = current match, 0 = other
 }
 
+/// Per-range diagnostic (gh#2). All line/col fields are 0-based. Rendered as a
+/// severity-colored wavy underline under the exact span; pixel positions are
+/// computed at draw time so scrolling stays correct.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RangeDiagnostic {
+    pub start_line: i32,
+    pub start_col: i32,
+    pub end_line: i32,
+    pub end_col: i32,
+    #[serde(default = "default_severity")]
+    pub severity: i32,   // 1=error, 2=warning, 3=info, 4=hint
+    #[serde(default)]
+    pub message: String,
+    #[serde(default)]
+    pub code: Option<String>,
+}
+
+fn default_severity() -> i32 { 1 }
+
+/// Severity → squiggle color, matching the web renderer's severityColor().
+fn severity_rgb(severity: i32) -> (f64, f64, f64) {
+    match severity {
+        1 => (0.945, 0.298, 0.298), // #f14c4c error
+        2 => (0.800, 0.654, 0.000), // #cca700 warning
+        3 => (0.216, 0.580, 1.000), // #3794ff info
+        _ => (0.533, 0.533, 0.533), // #888888 hint
+    }
+}
+
 struct LineRenderData {
     line_number: i32,
     text: String,
@@ -273,6 +303,8 @@ pub struct EditorView {
     pub line_diagnostics: HashMap<i32, (i32, String, String)>,
     // Gutter diagnostics: Key = 1-based line number, Value = severity (1=error, 2=warning, 3=info).
     pub gutter_diagnostics: HashMap<i32, i32>,
+    // Per-range diagnostics (gh#2): squiggle the exact span.
+    pub range_diagnostics: Vec<RangeDiagnostic>,
     // Breakpoint lines (1-based). Red circles in gutter.
     pub breakpoint_lines: HashSet<i32>,
     // Fold ranges: start line (1-based) → collapsed (true/false).
@@ -328,6 +360,7 @@ impl EditorView {
             needs_lines: false,
             line_diagnostics: HashMap::new(),
             gutter_diagnostics: HashMap::new(),
+            range_diagnostics: Vec::new(),
             breakpoint_lines: HashSet::new(),
             fold_indicators: HashMap::new(),
             context_menu_items: Vec::new(),
@@ -872,6 +905,29 @@ impl EditorView {
         self.find_highlights.clear();
     }
 
+    /// Set per-range diagnostics (gh#2). JSON array of
+    /// {startLine,startCol,endLine,endCol,severity,message,code?} (0-based).
+    pub fn set_range_diagnostics(&mut self, json: &str) {
+        self.range_diagnostics = serde_json::from_str(json).unwrap_or_default();
+    }
+
+    /// Clear per-range diagnostics.
+    pub fn clear_range_diagnostics(&mut self) {
+        self.range_diagnostics.clear();
+    }
+
+    /// Give the editor view keyboard focus (gh#1).
+    pub fn focus(&self) {
+        if self.nsview != nil {
+            unsafe {
+                let window: id = msg_send![self.nsview, window];
+                if window != nil {
+                    let _: () = msg_send![window, makeFirstResponder: self.nsview];
+                }
+            }
+        }
+    }
+
     pub fn render_ghost_text(&mut self, text: &str, x: f64, y: f64, color: &str) {
         self.ghost_text = Some(GhostTextData {
             text: text.to_string(),
@@ -1114,6 +1170,38 @@ impl EditorView {
                     self.renderer.ascent,
                     (mr, mg, mb),
                 );
+            }
+
+            // Draw per-range diagnostic squiggles (gh#2) under the exact span.
+            // 0-based diagnostic lines vs. 1-based frame line_number.
+            let dl = line.line_number - 1;
+            for diag in &self.range_diagnostics {
+                if dl < diag.start_line || dl > diag.end_line { continue; }
+                let line_char_len = line.text.chars().count() as i32;
+                let start_col = if dl == diag.start_line { diag.start_col.max(0) } else { 0 };
+                let mut end_col = if dl == diag.end_line { diag.end_col } else { line_char_len };
+                if end_col <= start_col {
+                    end_col = if line_char_len > start_col { line_char_len } else { start_col + 1 };
+                }
+                let char_w = self.renderer.char_width;
+                let hx = (gutter_w + start_col as f64 * char_w - sx).round();
+                let hw = ((end_col - start_col) as f64 * char_w).round();
+                let (r, g, b) = severity_rgb(diag.severity);
+                ctx.set_rgb_stroke_color(r, g, b, 1.0);
+                ctx.set_line_width(1.0);
+                let y_base = ly + ts_line_h - 1.0;
+                let wave_height = 2.0;
+                let wave_len = 4.0;
+                let mut x = hx;
+                ctx.move_to_point(x, y_base);
+                let mut up = true;
+                while x < hx + hw {
+                    let y_target = if up { y_base - wave_height } else { y_base };
+                    x += wave_len;
+                    ctx.add_line_to_point(x, y_target);
+                    up = !up;
+                }
+                ctx.stroke_path();
             }
         }
 

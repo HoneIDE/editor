@@ -112,6 +112,31 @@ declare function hone_editor_set_viewport(handle: number, startLine: number, end
 declare function hone_editor_begin_selections(handle: number, count: number): void;
 declare function hone_editor_add_selection_rect(handle: number, x: number, y: number, w: number, h: number): void;
 
+// === Host ↔ editor bridge FFI (gh#1) ===
+// Lets an embedding host (e.g. the web `mount()` controller, which lives in a
+// separate JS realm from the WASM-compiled editor) read/replace the buffer and
+// observe edits without a direct reference to this Editor instance.
+//
+// Push (editor → host): hone_editor_set_buffer_text is called after every
+// content change; the web FFI stores it and fires onTextChange listeners.
+// Pull (host → editor): the host queues a setText/setCursor request which the
+// poll loop drains via the has_/take_ functions below. On native platforms the
+// host calls Editor methods directly, so these resolve to "nothing pending".
+declare function hone_editor_set_buffer_text(handle: number, text: number): void;
+declare function hone_editor_has_pending_set_text(handle: number): number;
+declare function hone_editor_take_pending_set_text(handle: number): string;
+declare function hone_editor_has_pending_cursor(handle: number): number;
+declare function hone_editor_pending_cursor_line(handle: number): number;
+declare function hone_editor_pending_cursor_col(handle: number): number;
+declare function hone_editor_clear_pending_cursor(handle: number): void;
+declare function hone_editor_focus(handle: number): void;
+
+// === Per-range diagnostics (gh#2) ===
+// json = [{startLine,startCol,endLine,endCol,severity,message,code?}, …] (0-based).
+// Renders a severity-colored squiggle under the exact span + a hover tooltip.
+declare function hone_editor_set_range_diagnostics(handle: number, json: number): void;
+declare function hone_editor_clear_range_diagnostics(handle: number): void;
+
 // === Action IDs (must match Rust action_id constants) ===
 const ACTION_MOVE_LEFT = 1;
 const ACTION_MOVE_RIGHT = 2;
@@ -448,6 +473,10 @@ export class Editor {
     _currentBufferText = initialContent;
     this._directRenderText(initialContent);
 
+    // Surface the initial text to the host so getText()/onTextChange work
+    // before the first edit (gh#1).
+    this._pushBufferText();
+
     // Clear TS-side cache so next render() re-sends lines with proper tokens.
     coordinator.clearLineCache();
 
@@ -524,6 +553,46 @@ export class Editor {
     _currentBufferText = text;
     this._directRenderText(text);
     this._coordinator.clearLineCache();
+    // Notify host listeners (gh#1) that the buffer was replaced.
+    this._pushBufferText();
+  }
+
+  /**
+   * Read the current buffer text (gh#1). Alias of getContent() — present so
+   * hosts that surface a `getText()` (e.g. the web `mount()` controller) map
+   * 1:1 onto the editor API.
+   */
+  getText(): string {
+    return this._doc.buffer.getText();
+  }
+
+  /** Replace all buffer text (gh#1). Alias of setContent(). */
+  setText(value: string): void {
+    this.setContent(value);
+  }
+
+  /**
+   * Subscribe to text changes (gh#1). The callback receives the full buffer
+   * text after every edit. Returns an unsubscribe function.
+   *
+   * Native hosts hold the Editor directly so this wraps the view-model change
+   * stream. The web controller can't reach this instance across the WASM↔JS
+   * boundary — it registers on the DOM FFI, fed by hone_editor_set_buffer_text.
+   */
+  onTextChange(cb: (text: string) => void): () => void {
+    const doc = this._doc;
+    return this._vm.onChange(() => { cb(doc.buffer.getText()); });
+  }
+
+  /**
+   * Push the current buffer text out to the host FFI so an embedding controller
+   * can read it / fire onTextChange listeners. Called after every change.
+   */
+  private _pushBufferText(): void {
+    const handle = this.nativeHandle;
+    if (handle !== null) {
+      hone_editor_set_buffer_text(handle as number, this._doc.buffer.getText() as any);
+    }
   }
 
   /** Switch the syntax highlighting language. */
@@ -639,6 +708,27 @@ export class Editor {
   }
 
   /**
+   * Set per-range diagnostics (gh#2): Monaco-style squiggles on an exact span
+   * plus a hover tooltip with message/code.
+   * json = [{startLine,startCol,endLine,endCol,severity,message,code?}, …] (0-based).
+   * severity: 1=error, 2=warning, 3=info, 4=hint.
+   */
+  setRangeDiagnostics(json: string): void {
+    const handle = this.nativeHandle;
+    if (handle !== null) {
+      hone_editor_set_range_diagnostics(handle as number, json as any);
+    }
+  }
+
+  /** Clear all per-range diagnostics. */
+  clearRangeDiagnostics(): void {
+    const handle = this.nativeHandle;
+    if (handle !== null) {
+      hone_editor_clear_range_diagnostics(handle as number);
+    }
+  }
+
+  /**
    * Get the character width in pixels (for column→pixel conversion).
    */
   getCharWidth(): number {
@@ -673,7 +763,47 @@ export class Editor {
    * SHIP-V1-GAPS.md #43: used by the IDE to restore cursor on session reload.
    */
   setCursorPosition(line: number, col: number): void {
-    setPerryCursorPos(line, col);
+    this.setCursor(line, col);
+  }
+
+  /**
+   * Move the cursor to a 0-based (line, column), clamping to buffer bounds,
+   * scrolling the target line into view, and re-rendering (gh#1). Used for
+   * click-to-jump from a diagnostics list and by the IDE for session restore.
+   */
+  setCursor(line: number, col: number): void {
+    const buf = this._doc.buffer;
+    const lineCount = buf.getLineCount();
+    let l = line < 0 ? 0 : line;
+    if (l > lineCount - 1) l = lineCount - 1;
+    const lineLen = buf.getLineLength(l);
+    let c = col < 0 ? 0 : col;
+    if (c > lineLen) c = lineLen;
+
+    const vm = this._vm;
+    vm.cursorManager.reset(l, c);
+    setPerryCursorPos(l, c);
+
+    // Reveal the target line: scroll just enough to bring it on-screen.
+    const sz = 14;
+    const lh = sz + sz / 2;
+    const lineTop = l * lh;
+    const scroll = vm.viewport.scroll;
+    const scrollTop = scroll.scrollTop;
+    if (lineTop < scrollTop) {
+      scroll.scrollTo(lineTop);
+    } else if (lineTop + lh > scrollTop + this._height) {
+      scroll.scrollTo(lineTop + lh - this._height);
+    }
+    vm.touch(); // public wrapper around notifyChange() — fires onChange listeners
+  }
+
+  /** Give the editor surface keyboard focus (gh#1). */
+  focus(): void {
+    const handle = this.nativeHandle;
+    if (handle !== null) {
+      hone_editor_focus(handle as number);
+    }
   }
 
   /** Read the editor's vertical scroll offset in pixels. */
@@ -771,6 +901,23 @@ export class Editor {
     const h = this.nativeHandle as number;
     if (h === null || h < 1) return; // Guard against uninitialized/freed handle
 
+    // Drain host → editor control requests (gh#1). On web the mount() controller
+    // queues these; on native the host calls Editor methods directly and the
+    // has_* probes return 0, so this is a couple of cheap no-op FFI reads.
+    let hostRequestedRender = 0;
+    if (hone_editor_has_pending_set_text(h) > 0) {
+      const newText = hone_editor_take_pending_set_text(h);
+      this.setContent(newText);
+      hostRequestedRender = 1;
+    }
+    if (hone_editor_has_pending_cursor(h) > 0) {
+      const cl = hone_editor_pending_cursor_line(h);
+      const cc = hone_editor_pending_cursor_col(h);
+      hone_editor_clear_pending_cursor(h);
+      this.setCursor(cl, cc);
+      hostRequestedRender = 1;
+    }
+
     // Sync view dimensions
     let sizeChanged = 0;
     const actualW = hone_editor_get_view_width(h);
@@ -821,7 +968,7 @@ export class Editor {
     } else {
       // Desktop path — render only when needed
       const rustNeedsLines = hone_editor_needs_lines(h);
-      if (hadEvents > 0 || scrollChanged > 0 || sizeChanged > 0 || needsRender > 0 || rustNeedsLines > 0) {
+      if (hadEvents > 0 || scrollChanged > 0 || sizeChanged > 0 || needsRender > 0 || rustNeedsLines > 0 || hostRequestedRender > 0) {
         hone_editor_set_gutter_width(h, this._vm.gutterWidth);
         // Use direct FFI render (coordinator.render() uses interface dispatch
         // which doesn't work in Perry's AOT mode on Windows/Linux).
@@ -951,6 +1098,8 @@ export class Editor {
     hone_editor_clear_events(handle as number);
     if (hadContentChange > 0) {
       _currentBufferText = vm.document.buffer.getText();
+      // Surface the edit to the host (gh#1): drives getText()/onTextChange.
+      this._pushBufferText();
     }
     return hadContentChange > 0 ? 2 : 1;
   }
