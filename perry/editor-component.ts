@@ -1270,7 +1270,17 @@ export class Editor {
             for (let _ti = 0; _ti < tokens.length; _ti++) {
               if (_ti > 0) parts += ',';
               const t = tokens[_ti];
-              parts += '{"s":' + t.startColumn + ',"e":' + t.endColumn + ',"c":"' + t.color + '","st":"' + t.fontStyle + '"}';
+              // Include the scope string ("sc") when present so the web DOM
+              // renderer can resolve the color itself — theme.tokens.* reads as
+              // undefined inside WASM (PerryTS/perry#1071), so "c" is unreliable
+              // on web. Native renderers keep using "c". Scopes are safe ASCII
+              // (e.g. keyword.control), so no JSON escaping is needed.
+              const sc = t.scope;
+              let scPart = '';
+              if (sc !== undefined && sc !== null && sc.length > 0) {
+                scPart = ',"sc":"' + sc + '"';
+              }
+              parts += '{"s":' + t.startColumn + ',"e":' + t.endColumn + ',"c":"' + t.color + '","st":"' + t.fontStyle + '"' + scPart + '}';
             }
             parts += ']';
             tokensJson = parts;

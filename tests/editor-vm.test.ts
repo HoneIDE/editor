@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { EditorDocument } from '../core/document/document';
-import { EditorViewModel } from '../view-model/editor-view-model';
+import { EditorViewModel, getPerryCursorState } from '../view-model/editor-view-model';
 
 describe('EditorViewModel', () => {
   function makeEditor(text: string) {
@@ -112,6 +112,63 @@ describe('EditorViewModel', () => {
       ctrlKey: false, shiftKey: false, altKey: false, metaKey: true,
     });
     expect(vm.document.buffer.getText()).toBe('ahello');
+  });
+
+  // gh#4: in Perry mode (native + web) the caret is rendered from the
+  // module-level _perryCursor* state. On web there's no Rust to own the cursor,
+  // and the CommandRegistry's dynamic dispatch doesn't fire under Perry's AOT
+  // runtime — so executeCommand falls through to the Perry-safe fallback
+  // movement handlers. Those move the internal cursor but historically left the
+  // _perryCursor* state stale, so arrow keys moved nothing on screen.
+  // We emulate the AOT dispatch miss by forcing the registry to report "not
+  // handled", which routes movement through exactly that fallback path.
+  function makePerryEditor(text: string) {
+    const vm = makeEditor(text);
+    vm.setPerryMode(true);
+    (vm.commandRegistry as any).execute = () => false;
+    return vm;
+  }
+  const press = (vm: EditorViewModel, key: string, shiftKey = false) => vm.onKeyDown({
+    key, code: key, ctrlKey: false, shiftKey, altKey: false, metaKey: false,
+  });
+
+  test('arrow-key navigation syncs the Perry cursor state (gh#4)', () => {
+    const vm = makePerryEditor('hello\nworld');
+
+    press(vm, 'ArrowRight');
+    press(vm, 'ArrowRight');
+    press(vm, 'ArrowDown');
+
+    const cur = vm.cursors[0];
+    expect(cur.line).toBe(1);
+    expect(cur.column).toBe(2);
+
+    // The rendered (Perry) cursor must mirror the internal cursor.
+    const perry = getPerryCursorState();
+    expect(perry.line).toBe(cur.line);
+    expect(perry.col).toBe(cur.column);
+  });
+
+  test('Home/End navigation syncs the Perry cursor state (gh#4)', () => {
+    const vm = makePerryEditor('hello world');
+    press(vm, 'End');
+    expect(getPerryCursorState().col).toBe(vm.cursors[0].column);
+    expect(getPerryCursorState().col).toBe(11);
+    press(vm, 'Home');
+    expect(getPerryCursorState().col).toBe(0);
+  });
+
+  test('shift+arrow selection syncs the Perry anchor (gh#4)', () => {
+    const vm = makePerryEditor('hello world');
+
+    press(vm, 'ArrowRight');           // cursor → col 1, no selection
+    expect(getPerryCursorState().anchorLine).toBe(-1);
+
+    press(vm, 'ArrowRight', true);     // shift+right: start selecting
+    press(vm, 'ArrowRight', true);
+    const perry = getPerryCursorState();
+    expect(perry.col).toBe(vm.cursors[0].column);
+    expect(perry.anchorLine).toBeGreaterThanOrEqual(0); // anchor now set
   });
 
   test('visibleLines', () => {

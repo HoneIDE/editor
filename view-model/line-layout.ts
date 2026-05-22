@@ -10,6 +10,14 @@ export interface LineToken {
   endColumn: number;
   color: string;
   fontStyle: 'normal' | 'italic' | 'bold' | 'bold-italic' | 'heading-lg' | 'heading-md';
+  /**
+   * TextMate-style scope string (e.g. `keyword.control`) when this token came
+   * from the scope-based tree-sitter engine. Carried through to the renderer so
+   * the web target can resolve the color JS-side: `theme.tokens.*` reads return
+   * undefined inside Perry's WASM (PerryTS/perry#1071), so `color` above is
+   * unreliable on web — the renderer falls back to resolving `scope` itself.
+   */
+  scope?: string;
 }
 
 export interface LineDecoration {

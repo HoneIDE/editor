@@ -148,11 +148,15 @@ export class TreeSitterEngine implements ISyntaxEngine {
       const endCol = clipEnd - lineStart;
       const scope = scopes[i];
       const color = resolveTokenScope(theme, scope);
+      // Carry the scope string through alongside the resolved color: on web the
+      // color resolves to undefined inside WASM (PerryTS/perry#1071), so the DOM
+      // renderer re-resolves from `scope` JS-side. Native renderers use `color`.
       out.push({
         startColumn: startCol,
         endColumn: endCol,
         color: color,
         fontStyle: '',
+        scope: scope,
       } as unknown as LineToken);
     }
     return out;

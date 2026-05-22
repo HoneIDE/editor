@@ -1690,6 +1690,14 @@ export class EditorViewModel {
     const cmd = this.resolveKeybinding(event);
     if (cmd) {
       this.executeCommand(cmd);
+      // gh#4: cursor-movement/selection commands (arrows, word jumps, Home/End,
+      // PageUp/Down, Shift+arrow) mutate the CursorManager and call
+      // notifyChange() but — unlike the edit commands routed through
+      // afterEdit() — never refresh the module-level _perryCursor* state.
+      // On native, Rust owns the cursor so the omission is invisible; on web
+      // _syncCursor() reads exactly that state to position the caret, so
+      // without this the cursor never moves. Re-sync after every key command.
+      this._syncPerryCursor();
       return true;
     }
 

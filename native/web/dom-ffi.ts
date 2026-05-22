@@ -17,6 +17,9 @@
  * editors per process).
  */
 
+import { resolveTokenScope } from '../../core/tokenizer/token-theme';
+import { DARK_THEME, LIGHT_THEME } from '../../view-model/theme';
+
 const EVENT_TYPE_TEXT = 1;
 const EVENT_TYPE_ACTION = 2;
 const EVENT_TYPE_SCROLL = 3;
@@ -170,6 +173,20 @@ function mapKeyToAction(key: string, ctrl: boolean, shift: boolean, meta: boolea
   if (mod && key === 'z' && shift) return 26;
   if (mod && key === 'z') return 25;
   return 0;
+}
+
+/**
+ * Resolve a TextMate scope string (e.g. `keyword.control`) to a hex color for
+ * the active theme. Used as the web fallback when a token's WASM-resolved color
+ * came through as `undefined` — `theme.tokens.*` reads return undefined inside
+ * Perry's WASM (PerryTS/perry#1071), so the editor ships the scope string and
+ * we resolve it here in plain JS where object access works. Delegates to the
+ * same `resolveTokenScope` table the native renderers use, so web and native
+ * highlight identically.
+ */
+export function scopeColor(scope: string, themeName: string | undefined): string {
+  const theme = themeName === 'light' ? LIGHT_THEME : DARK_THEME;
+  return resolveTokenScope(theme, scope);
 }
 
 function renderTokenizedLine(div: HTMLDivElement, text: string, packedTokens: string): void {
@@ -632,7 +649,7 @@ export function createDomFfiCtx(mount: HTMLElement, initOpts: InitOpts = {}): Ff
       // Tokens use the short-key form from editor-component.ts:_directRenderText:
       //   {"s": startCol, "e": endCol, "c": "#hexColor", "st": "normal|italic|bold|bold-italic"}
       // The Rust renderers (macOS/iOS/etc.) parse the same shape.
-      let tokens: Array<{ s?: number; e?: number; c?: string; st?: string }> | null = null;
+      let tokens: Array<{ s?: number; e?: number; c?: string; st?: string; sc?: string }> | null = null;
       if (typeof tokensJson === 'string' && tokensJson.length > 2) {
         try { tokens = JSON.parse(tokensJson); } catch {}
       }
@@ -652,11 +669,17 @@ export function createDomFfiCtx(mount: HTMLElement, initOpts: InitOpts = {}): Ff
             lineEl.appendChild(document.createTextNode(text.substring(lastEnd, s)));
           }
           const span = document.createElement('span');
-          // Color of "undefined" is the marker for PerryTS/perry#1071 — the
-          // upstream theme.tokens.* field reads as undefined on web until that
-          // lands. Treat as unset so the text falls through to the inherited
-          // foreground color.
-          if (tok.c && tok.c !== 'undefined') span.style.color = tok.c;
+          // A color of "undefined" is the marker for PerryTS/perry#1071 — the
+          // editor's theme.tokens.* reads return undefined inside WASM, so the
+          // resolved `c` is unusable on web. When the editor also shipped the
+          // scope string (`sc`), resolve the color here in JS instead of falling
+          // through to the inherited foreground. (gh#3)
+          if (tok.c && tok.c !== 'undefined') {
+            span.style.color = tok.c;
+          } else if (tok.sc && tok.sc.length > 0) {
+            const resolved = scopeColor(tok.sc, initOpts.theme);
+            if (resolved && resolved.length > 0) span.style.color = resolved;
+          }
           const st = tok.st;
           if (st === 'italic') span.style.fontStyle = 'italic';
           else if (st === 'bold') span.style.fontWeight = 'bold';

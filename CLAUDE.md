@@ -160,8 +160,10 @@ ALL interaction directly by mutating `frame_lines` in place and calling `setNeed
 - Web: ✅ TypeScript DOM renderer at `native/web/dom-ffi.ts`. No Rust crate — Perry's
   web target compiles the editor TS to WASM and imports JS-side `hone_editor_*`. Find
   highlights / line diagnostics / per-range diagnostics / breakpoints / fold ranges render
-  as DOM overlay layers. Syntax highlighting works structurally but token COLORS are blocked
-  on Perry PerryTS/perry#1071 (cross-module nested-object access returns `undefined`). Build:
+  as DOM overlay layers. Syntax highlighting (incl. token COLORS) works: `theme.tokens.*`
+  reads return `undefined` inside Perry's WASM (PerryTS/perry#1071), so the tree-sitter
+  engine ships the TextMate scope string alongside the (broken) color and `dom-ffi.ts`
+  re-resolves the color JS-side via the shared `resolveTokenScope` table (gh#3). Build:
   `bun run examples/web/build.ts` → `examples/web/dist/{hone-editor.wasm, hone-editor.js, index.html}`.
 
 ### `mount()` controller bridge (gh#1, gh#2)

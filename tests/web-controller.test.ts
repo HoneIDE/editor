@@ -78,6 +78,7 @@ import {
   squiggleBackground,
   computeDiagSegments,
   rangeDiagAtPosition,
+  scopeColor,
   type RangeDiag,
 } from '../native/web/dom-ffi';
 
@@ -136,6 +137,68 @@ describe('range-diagnostic helpers (gh#2)', () => {
     expect(rangeDiagAtPosition(diags, 3, 3)?.message).toBe('a'); // end col inclusive
     expect(rangeDiagAtPosition(diags, 3, 4)).toBeNull();        // end line, past endCol
     expect(rangeDiagAtPosition(diags, 4, 0)).toBeNull();        // after
+  });
+});
+
+// ── Syntax color resolution (gh#3) ─────────────────────────────────────────
+describe('syntax color resolution (gh#3)', () => {
+  // Collect the <span> children of the most-recently rendered line.
+  function renderLineSpans(
+    ctx: any, h: number, mount: any, text: string,
+    tokens: Array<{ s: number; e: number; c?: string; st?: string; sc?: string }>,
+  ) {
+    ctx.ffi.hone_editor_render_line(h, 1, text, JSON.stringify(tokens), 0);
+    const lines: any[] = [];
+    mount.querySelectorAll('.hone-editor-line').forEach((e: any) => lines.push(e));
+    const lineDiv = lines[lines.length - 1];
+    return lineDiv ? lineDiv.children.filter((c: any) => c.tagName === 'span') : [];
+  }
+
+  test('scopeColor resolves TextMate scopes via the shared theme table', () => {
+    // Dark theme (default).
+    expect(scopeColor('keyword.control', 'dark')).toBe('#569cd6');
+    expect(scopeColor('entity.name.function', 'dark')).toBe('#dcdcaa');
+    expect(scopeColor('string', 'dark')).toBe('#ce9178');
+    expect(scopeColor('variable.other.property', 'dark')).toBe('#9cdcfe');
+    // Light theme picks the light palette.
+    expect(scopeColor('keyword.control', 'light')).toBe('#d73a49');
+    // Unknown scope falls back to the theme foreground; undefined theme → dark.
+    expect(scopeColor('no.such.scope', undefined)).toBe('#d4d4d4');
+  });
+
+  test('render_line resolves color from the scope when the WASM color is undefined', () => {
+    const mount = new FakeElement('div');
+    const ctx = createDomFfiCtx(mount as any, { theme: 'dark' });
+    const h = ctx.ffi.hone_editor_create(800, 600) as number;
+    // Emulate the editor's web emit: color came back as the string "undefined"
+    // (perry#1071) but the scope string is intact.
+    const spans = renderLineSpans(ctx, h, mount as any, 'function test', [
+      { s: 0, e: 8, c: 'undefined', st: 'normal', sc: 'keyword.control' },
+      { s: 9, e: 13, c: 'undefined', st: 'normal', sc: 'entity.name.function' },
+    ]);
+    expect(spans.map((s: any) => s.textContent)).toEqual(['function', 'test']);
+    expect(spans[0].style.color).toBe('#569cd6'); // keyword
+    expect(spans[1].style.color).toBe('#dcdcaa'); // function name
+  });
+
+  test('render_line prefers a valid WASM color over the scope (native path)', () => {
+    const mount = new FakeElement('div');
+    const ctx = createDomFfiCtx(mount as any, { theme: 'dark' });
+    const h = ctx.ffi.hone_editor_create(800, 600) as number;
+    const spans = renderLineSpans(ctx, h, mount as any, 'abc', [
+      { s: 0, e: 3, c: '#abcdef', st: 'normal', sc: 'keyword.control' },
+    ]);
+    expect(spans[0].style.color).toBe('#abcdef');
+  });
+
+  test('render_line honors the light theme when resolving scopes', () => {
+    const mount = new FakeElement('div');
+    const ctx = createDomFfiCtx(mount as any, { theme: 'light' });
+    const h = ctx.ffi.hone_editor_create(800, 600) as number;
+    const spans = renderLineSpans(ctx, h, mount as any, 'const', [
+      { s: 0, e: 5, c: 'undefined', st: 'normal', sc: 'keyword.control' },
+    ]);
+    expect(spans[0].style.color).toBe('#d73a49');
   });
 });
 

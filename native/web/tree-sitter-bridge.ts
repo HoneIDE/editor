@@ -216,6 +216,13 @@ function mapTypeScriptNode(node: any, _cursor: any): string | null {
       return 'entity.name.function';
     }
     if (p && p.type === 'call_expression') return 'entity.name.function.call';
+    // `obj.method()` — the property is the called method when its
+    // member_expression is itself the callee of a call_expression. Color it
+    // like a function call rather than a plain property (gh#3).
+    if (p && p.type === 'member_expression') {
+      const gp = p.parent;
+      if (gp && gp.type === 'call_expression') return 'entity.name.function.call';
+    }
     return 'variable.other.property';
   }
   if (t === 'identifier') {
