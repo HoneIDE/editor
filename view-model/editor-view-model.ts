@@ -586,7 +586,7 @@ function _tokenizeCodeLine(line: string, inBlockComment: number): LineToken[] {
     // Whitespace and other
     let j = i;
     while (j < len &&
-           !_WORD_CHARS.indexOf(line.charAt(j)) >= 0 &&
+           _WORD_CHARS.indexOf(line.charAt(j)) < 0 &&
            _OPERATORS.indexOf(line.charAt(j)) < 0 &&
            '{}[]().,;@#'.indexOf(line.charAt(j)) < 0 &&
            line.charAt(j) !== '/' &&
@@ -920,12 +920,9 @@ export class EditorViewModel {
     // Rust clears frame_lines on begin_frame and only needs lines that
     // will actually be drawn. Sending ALL lines was O(N) per frame which
     // made scrolling laggy on files with hundreds of lines.
-    const visRange = this.viewport.getVisibleRange();
-
-    const lineNumbers: number[] = [];
-    for (let i = visRange.startLine; i < visRange.endLine; i++) {
-      lineNumbers.push(i);
-    }
+    // Use the hidden-line-aware iteration so folded lines are actually excluded
+    // from the rendered set (a plain start..end range ignores folding).
+    const lineNumbers: number[] = this.viewport.getVisibleLineNumbers();
 
     // Direct tokenization path: inline tokenization using module-level functions.
     if (_perryUseDirectTokens === 1) {

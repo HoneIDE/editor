@@ -1,0 +1,19 @@
+# Regenerable Perry/Android build outputs — never commit these.
+# Source (.ts/.kt/.gradle.kts, gradle wrapper, manifests, res/) stays tracked.
+
+# Compiled bare binaries (Mach-O/ELF)
+perry-app/demo
+perry-app/main
+perry-test/test-android
+perry-test/test-app
+
+# Compiled app bundles
+*.app/
+
+# Android APKs
+*.apk
+
+# Gradle build caches / outputs
+perry-test/android-build/.gradle/
+perry-test/android-build/app/build/
+perry-test/android-build/build/

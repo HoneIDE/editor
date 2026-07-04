@@ -1,7 +1,7 @@
 # hone-editor
 
 ## Project Overview
-High-performance, cross-platform code editor surface published as `@honeide/editor`. Designed to be embeddable by other developers for markdown editors, config editors, query consoles, etc. Compiled to native binaries via **Perry** (TypeScript-to-native compiler, v0.2.x).
+High-performance, cross-platform code editor surface published as `@honeide/editor`. Designed to be embeddable by other developers for markdown editors, config editors, query consoles, etc. Compiled to native binaries via **Perry** (TypeScript-to-native compiler, v0.5.1235).
 
 **Key constraint**: Perry's Canvas widget has no text-on-canvas capability. The editor uses custom Rust FFI crates per platform for native text rendering (Core Text on macOS/iOS, DirectWrite on Windows, Pango/Cairo on Linux, Skia on Android, DOM on Web).
 
@@ -153,10 +153,10 @@ ALL interaction directly by mutating `frame_lines` in place and calling `setNeed
 
 **Platform status:**
 - macOS: ✅ Complete — `native/macos/src/editor_view.rs` + `tokenizer.rs`
-- iOS: ⬜ Shares Core Text with macOS — needs `tokenizer.rs` port + same EditorView patterns
-- Windows: ⬜ DirectWrite — needs `tokenizer.rs` port + same EditorView patterns
-- Linux: ⬜ Pango/Cairo — needs `tokenizer.rs` port + same EditorView patterns
-- Android: ⬜ Canvas/Skia JNI — needs `tokenizer.rs` port + same EditorView patterns
+- iOS: 🚧 `tokenizer.rs` + `editor_view.rs` ported (shares Core Text with macOS) — parity with macOS not yet verified
+- Windows: 🚧 `tokenizer.rs` + `editor_view.rs` ported (DirectWrite) — parity with macOS not yet verified
+- Linux: 🚧 `tokenizer.rs` + `editor_view.rs` ported (Pango/Cairo) — parity with macOS not yet verified
+- Android: 🚧 `tokenizer.rs` + `editor_view.rs` ported (Canvas/Skia JNI) — parity with macOS not yet verified
 - Web: ✅ TypeScript DOM renderer at `native/web/dom-ffi.ts`. No Rust crate — Perry's
   web target compiles the editor TS to WASM and imports JS-side `hone_editor_*`. Find
   highlights / line diagnostics / per-range diagnostics / breakpoints / fold ranges render
