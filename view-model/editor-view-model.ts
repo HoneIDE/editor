@@ -898,7 +898,9 @@ export class EditorViewModel {
     return () => { this._listener = null; };
   }
 
-  private notifyChange(): void {
+  // Public so the Perry editor component can signal a change after driving
+  // cursor/selection directly (e.g. touch hit-testing).
+  notifyChange(): void {
     if (this._listener !== null && this._listener !== undefined) {
       this._listener();
     }

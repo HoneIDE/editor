@@ -522,7 +522,7 @@ export class Editor {
     const vm = this._vm;
     vm.viewport.setTotalLines(lineCount);
     // Reset scroll and cursor to top of new content
-    vm.viewport.scroll.scrollTo(0, 0);
+    vm.viewport.scroll.scrollTo(0);
     vm.cursorManager.reset(0, 0);
     const engine = vm.syntaxEngine;
     engine.parse(buf);

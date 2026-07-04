@@ -4,5 +4,10 @@
   "private": true,
   "dependencies": {
     "@honeide/editor": "file:../.."
+  },
+  "perry": {
+    "allow": {
+      "nativeLibrary": ["@honeide/editor/perry"]
+    }
   }
 }
